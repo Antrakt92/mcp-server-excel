@@ -1,4 +1,5 @@
 using System.Reflection;
+using Sbroenne.ExcelMcp.Service;
 using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 
@@ -115,7 +116,7 @@ internal sealed class CliServiceTray : IDisposable
                 ShowBalloon(
                     "Update Available",
                     $"ExcelMCP CLI {latestVersion} is available (current: {currentVersion}).\n" +
-                    "Download: github.com/sbroenne/mcp-server-excel/releases/latest");
+                    $"Download: {DistributionInfo.ReleasesUrl}");
             }
         }
         catch
@@ -336,7 +337,7 @@ internal sealed class CliServiceTray : IDisposable
             AccessibleRole = AccessibleRole.StaticText
         };
 
-        const string githubUrl = "https://github.com/sbroenne/mcp-server-excel";
+        const string githubUrl = DistributionInfo.RepositoryUrl;
         const string docsUrl = "https://excelmcpserver.dev/";
 
         var githubLabel = new Label
@@ -394,7 +395,7 @@ internal sealed class CliServiceTray : IDisposable
 
             var updateCmd = new TextBox
             {
-                Text = "https://github.com/sbroenne/mcp-server-excel/releases/latest",
+                Text = DistributionInfo.ReleasesUrl,
                 ReadOnly = true,
                 BorderStyle = BorderStyle.None,
                 BackColor = form.BackColor,

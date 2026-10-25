@@ -32,9 +32,13 @@ public sealed class ServiceBridge : IDisposable
     private readonly ILogger<ServiceBridge> _logger;
     private IServiceBridgeBackend? _current;
     private bool _disposed;
+    private readonly SemaphoreSlim _dispatchSlots;
 
-    internal ServiceBridge(Func<IServiceBridgeBackend> serviceFactory, ILogger<ServiceBridge>? logger = null)
+    internal ServiceBridge(Func<IServiceBridgeBackend> serviceFactory, ILogger<ServiceBridge>? logger = null,
+        int maxOutstandingDispatches = 8)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxOutstandingDispatches, 1);
+        _dispatchSlots = new SemaphoreSlim(maxOutstandingDispatches, maxOutstandingDispatches);
         _serviceFactory = serviceFactory;
         _logger = logger ?? NullLogger<ServiceBridge>.Instance;
     }
@@ -77,8 +81,6 @@ public sealed class ServiceBridge : IDisposable
         }
     }
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "Service startup failures are logged and transported as Success=false ServiceStartup responses; caller cancellation and disposal are explicitly excluded from this boundary.")]
     public async Task<ServiceResponse> SendAsync(
         string command,
         string? sessionId = null,
@@ -87,6 +89,38 @@ public sealed class ServiceBridge : IDisposable
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (timeoutSeconds.HasValue)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(timeoutSeconds.Value, nameof(timeoutSeconds));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(timeoutSeconds.Value, 4_294_967, nameof(timeoutSeconds));
+        }
+        lock (_stateLock)
+            ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_dispatchSlots.Wait(0))
+            return new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = "ServiceBusy",
+                ErrorMessage = "The service has reached its outstanding operation limit. Wait for active operations to finish."
+            };
+        var lease = new DispatchLease(_dispatchSlots);
+        try
+        {
+            return await SendAdmittedAsync(command, sessionId, args, timeoutSeconds, cancellationToken, lease);
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Service startup failures are logged and transported as Success=false ServiceStartup responses; caller cancellation and disposal are explicitly excluded from this boundary.")]
+    private async Task<ServiceResponse> SendAdmittedAsync(string command, string? sessionId,
+        object? args, int? timeoutSeconds, CancellationToken cancellationToken, DispatchLease lease)
+    {
         IServiceBridgeBackend instance;
         try
         {
@@ -106,9 +140,13 @@ public sealed class ServiceBridge : IDisposable
             };
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (timeoutSeconds.HasValue && command is not ("session.open" or "session.create" or "session.test"))
-            deadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds.Value));
+        {
+            if (timeoutSeconds == 0) deadline.Cancel();
+            else deadline.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds.Value));
+        }
 
         var request = new ServiceRequest
         {
@@ -118,8 +156,9 @@ public sealed class ServiceBridge : IDisposable
             CallerCancellation = deadline.Token
         };
 
-        // Service dispatch includes synchronous COM waits. Keep those off the SDK's request loop.
-        var processTask = Task.Run(() => instance.ProcessAsync(request), CancellationToken.None);
+        // Caller, dispatch and late recovery jointly retain admission until they finish.
+        lease.Retain();
+        var processTask = DispatchAsync(instance, request, lease, deadline.Token);
 
         ServiceResponse? completedCancellation = null;
         try
@@ -132,7 +171,7 @@ public sealed class ServiceBridge : IDisposable
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            if (!cancellationToken.IsCancellationRequested && processTask.IsCompleted)
+            if (!cancellationToken.IsCancellationRequested && processTask.IsCompleted && !processTask.IsCanceled)
             {
                 var response = await processTask;
                 if (response.ErrorCategory != "Cancelled")
@@ -141,10 +180,13 @@ public sealed class ServiceBridge : IDisposable
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(sessionId))
-            RevealSession(instance, sessionId);
         if (completedCancellation is null)
-            _ = ObserveCancelledRequestAsync(instance, processTask, command);
+        {
+            lease.Retain();
+            _ = ObserveCancelledRequestAsync(instance, processTask, command, lease);
+        }
+        if (lease.HasStarted && !string.IsNullOrWhiteSpace(sessionId))
+            RevealSession(instance, sessionId);
         cancellationToken.ThrowIfCancellationRequested();
         return new ServiceResponse
         {
@@ -162,10 +204,56 @@ public sealed class ServiceBridge : IDisposable
         };
     }
 
+    private static async Task<ServiceResponse> DispatchAsync(IServiceBridgeBackend instance,
+        ServiceRequest request, DispatchLease lease, CancellationToken token)
+    {
+        try
+        {
+            // Synchronous COM waits stay off the SDK request loop, behind bounded admission.
+            return await Task.Run(() =>
+            {
+                lease.BeginDispatch(token);
+                return instance.ProcessAsync(request);
+            }, CancellationToken.None);
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
+    private sealed class DispatchLease(SemaphoreSlim slots)
+    {
+        private int _references = 1;
+        private readonly object _startLock = new();
+        private bool _started;
+        internal bool HasStarted
+        {
+            get
+            {
+                lock (_startLock)
+                    return _started;
+            }
+        }
+        internal void BeginDispatch(CancellationToken token)
+        {
+            lock (_startLock)
+            {
+                token.ThrowIfCancellationRequested();
+                _started = true;
+            }
+        }
+        internal void Retain() => Interlocked.Increment(ref _references);
+        internal void Release()
+        {
+            if (Interlocked.Decrement(ref _references) == 0) slots.Release();
+        }
+    }
+
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Observes late completion after the caller stopped waiting; errors are logged and a late opened session is revealed, never closed.")]
     private async Task ObserveCancelledRequestAsync(
-        IServiceBridgeBackend instance, Task<ServiceResponse> task, string command)
+        IServiceBridgeBackend instance, Task<ServiceResponse> task, string command, DispatchLease lease)
     {
         try
         {
@@ -187,9 +275,17 @@ public sealed class ServiceBridge : IDisposable
                     command, response.ErrorCategory);
             }
         }
+        catch (OperationCanceledException) when (task.IsCanceled)
+        {
+            _logger.LogDebug("Cancelled {Command} did not dispatch; no workbook needs recovery.", command);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Late observation of cancelled {Command} failed; workbook ownership is retained.", command);
+        }
+        finally
+        {
+            lease.Release();
         }
     }
 

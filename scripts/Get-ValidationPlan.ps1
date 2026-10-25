@@ -165,6 +165,9 @@ function Get-ValidationPlan {
                 Add-Filter Tooling ScriptSafety 'FullyQualifiedName~DocumentationAnalyzerTests'
                 $plan.DocumentationCounts = $true; $plan.FullSolutionBuild = $true; break
             }
+            '^scripts/Build-ForkRelease\.ps1$' {
+                Add-Owner Packaging; Add-Filter Tooling ScriptSafety 'Feature=PreCommit'; break
+            }
             '^scripts/Publish-GitHubRelease\.ps1$' {
                 Add-Filter Tooling Packaging 'FullyQualifiedName~Sbroenne.ExcelMcp.Packaging.Tests.ReleaseMetadataScriptTests.GitHubRelease_'; break
             }

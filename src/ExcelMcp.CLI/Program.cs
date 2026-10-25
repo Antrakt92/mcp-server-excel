@@ -1,4 +1,5 @@
 using System.Reflection;
+using Sbroenne.ExcelMcp.Service;
 using Sbroenne.ExcelMcp.CLI.Commands;
 using Sbroenne.ExcelMcp.CLI.Generated;
 using Sbroenne.ExcelMcp.CLI.Infrastructure;
@@ -262,7 +263,7 @@ internal sealed class Program
         {
             var output = CreateOutputConsole();
             output.MarkupLine($"[yellow]⚠ Update available:[/] [dim]{currentVersion}[/] → [green]{latestVersion}[/]");
-            output.MarkupLine($"[cyan]Download:[/] [blue]https://github.com/sbroenne/mcp-server-excel/releases/latest[/]");
+            output.MarkupLine($"[cyan]Download:[/] [blue]{DistributionInfo.ReleasesUrl}[/]");
         }
         else if (latestVersion != null)
         {

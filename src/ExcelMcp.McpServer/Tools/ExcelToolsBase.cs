@@ -77,9 +77,18 @@ public static class ExcelToolsBase
             cancellationToken.ThrowIfCancellationRequested();
             var json = await operation();
             cancellationToken.ThrowIfCancellationRequested();
-            invocation = ClassifyToolResponse(toolName, actionName, json);
-            var result = resultFactory?.Invoke(json)
-                ?? CreateToolResult(json, invocation.Outcome == ToolInvocationOutcome.Failed);
+            CallToolResult result;
+            if (resultFactory is null)
+            {
+                using var document = JsonDocument.Parse(json);
+                invocation = ClassifyToolResponse(toolName, actionName, document.RootElement);
+                result = CreateToolResult(json, document.RootElement, invocation.Outcome == ToolInvocationOutcome.Failed);
+            }
+            else
+            {
+                invocation = ClassifyToolResponse(toolName, actionName, json);
+                result = resultFactory(json) ?? CreateToolResult(json, invocation.Outcome == ToolInvocationOutcome.Failed);
+            }
             if (result.IsError is true && invocation.Outcome != ToolInvocationOutcome.Failed)
                 invocation = new(ToolInvocationOutcome.Failed, ToolFailureClass.Unclassified);
             return result;
@@ -87,8 +96,9 @@ public static class ExcelToolsBase
         catch (ArgumentException ex)
         {
             var json = SerializeToolError(actionName, null, ex);
-            invocation = ClassifyToolResponse(toolName, actionName, json);
-            return CreateToolResult(json, isError: true);
+            using var document = JsonDocument.Parse(json);
+            invocation = ClassifyToolResponse(toolName, actionName, document.RootElement);
+            return CreateToolResult(json, document.RootElement, isError: true);
         }
         catch (Exception ex)
         {
@@ -110,7 +120,11 @@ public static class ExcelToolsBase
     internal static CallToolResult CreateToolResult(string json, bool? isError = null)
     {
         using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
+        return CreateToolResult(json, document.RootElement, isError);
+    }
+
+    private static CallToolResult CreateToolResult(string json, JsonElement root, bool? isError)
+    {
         var failed = root.ValueKind == JsonValueKind.Object &&
             ((root.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False) ||
              (root.TryGetProperty("isError", out var error) && error.ValueKind == JsonValueKind.True));
@@ -128,7 +142,11 @@ public static class ExcelToolsBase
     private static ToolInvocationResult ClassifyToolResponse(string toolName, string actionName, string response)
     {
         using var document = JsonDocument.Parse(response);
-        var root = document.RootElement;
+        return ClassifyToolResponse(toolName, actionName, document.RootElement);
+    }
+
+    private static ToolInvocationResult ClassifyToolResponse(string toolName, string actionName, JsonElement root)
+    {
         if (root.ValueKind != JsonValueKind.Object)
             return new(ToolInvocationOutcome.Succeeded, null);
 

@@ -9,8 +9,11 @@ internal sealed class DaemonHost : IDisposable
     internal static readonly TimeSpan InitialBackoff = TimeSpan.FromMilliseconds(100);
     internal static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(5);
     internal const int MaximumConnections = 64;
+    internal static readonly TimeSpan ConnectionDrainGrace = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan ConnectionAbortWait = TimeSpan.FromSeconds(1);
 
     private readonly ConcurrentDictionary<Task, byte> _activeConnectionTasks = new();
+    private readonly ConcurrentDictionary<NamedPipeServerStream, byte> _activeConnections = new();
     private readonly ConcurrentDictionary<string, byte> _busySessions = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Func<ServiceRequest, Task<ServiceResponse>> _requestHandler;
@@ -58,6 +61,7 @@ internal sealed class DaemonHost : IDisposable
 
                 var clientServer = server;
                 server = null;
+                _activeConnections.TryAdd(clientServer, 0);
                 var connectionTask = RunConnectionAsync(clientServer);
                 _activeConnectionTasks.TryAdd(connectionTask, 0);
                 _ = connectionTask.ContinueWith(
@@ -109,7 +113,34 @@ internal sealed class DaemonHost : IDisposable
         _acceptLoopStopped.TrySetResult();
         if (!_activeConnectionTasks.IsEmpty)
         {
-            await Task.WhenAll(_activeConnectionTasks.Keys.Select(ObserveConnectionTaskAsync));
+            var drain = Task.WhenAll(_activeConnectionTasks.Keys.Select(ObserveConnectionTaskAsync));
+            using var gracefulWait = new CancellationTokenSource();
+            var deadline = _delay(ConnectionDrainGrace, gracefulWait.Token);
+            if (await Task.WhenAny(drain, deadline) == drain)
+            {
+                await gracefulWait.CancelAsync();
+                await drain;
+                return;
+            }
+            await deadline;
+            // Close only transport pipes; pending Excel work remains owned by the Service.
+            foreach (var connection in _activeConnections.Keys)
+            {
+                try { connection.Dispose(); }
+                catch (IOException ex)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Pipe shutdown cleanup failed: {0}", ex.Message);
+                }
+            }
+            try
+            {
+                await drain.WaitAsync(ConnectionAbortWait);
+            }
+            catch (TimeoutException)
+            {
+                System.Diagnostics.Trace.TraceWarning("Daemon connection drain exceeded its shutdown grace; pending operations retain their owners.");
+                _ = ObserveConnectionTaskAsync(drain);
+            }
         }
     }
 
@@ -167,6 +198,10 @@ internal sealed class DaemonHost : IDisposable
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Pipe disposal cleanup failed: {ex.Message}");
+            }
+            finally
+            {
+                _activeConnections.TryRemove(clientServer, out _);
             }
         }
     }
