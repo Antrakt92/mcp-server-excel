@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Sbroenne.ExcelMcp.Service;
 
 namespace Sbroenne.ExcelMcp.CLI.Infrastructure;
 
@@ -8,7 +9,7 @@ namespace Sbroenne.ExcelMcp.CLI.Infrastructure;
 /// </summary>
 internal static class NuGetVersionChecker
 {
-    private const string LatestReleaseUrl = "https://api.github.com/repos/sbroenne/mcp-server-excel/releases/latest";
+    private const string LatestReleaseUrl = DistributionInfo.LatestReleaseApiUrl;
     private const string UserAgent = "ExcelMcp-CLI";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
@@ -16,15 +17,19 @@ internal static class NuGetVersionChecker
     /// Checks GitHub Releases for the latest version.
     /// </summary>
     /// <returns>Latest version string, or null if check failed.</returns>
+    public static async Task<string?> GetLatestVersionAsync(CancellationToken cancellationToken = default)
+    {
+        using var httpClient = new HttpClient { Timeout = Timeout };
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        return await GetLatestVersionAsync(httpClient, cancellationToken);
+    }
+
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Optional release-notification lookup must not fail daemon startup or command execution; unavailable version metadata is omitted, never used as a workbook operation result.")]
-    public static async Task<string?> GetLatestVersionAsync(CancellationToken cancellationToken = default)
+    internal static async Task<string?> GetLatestVersionAsync(HttpClient httpClient, CancellationToken cancellationToken = default)
     {
         try
         {
-            using var httpClient = new HttpClient { Timeout = Timeout };
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
-
             var response = await httpClient.GetFromJsonAsync<GitHubReleaseResponse>(LatestReleaseUrl, cancellationToken);
 
             if (response?.TagName == null)

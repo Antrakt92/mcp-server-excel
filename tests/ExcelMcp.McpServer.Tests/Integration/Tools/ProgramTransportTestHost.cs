@@ -12,7 +12,7 @@ internal static class ProgramTransportTestHost
     private static readonly TimeSpan ClientInitializationTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ServerReadyTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ServerReadyRetryDelay = TimeSpan.FromMilliseconds(50);
-    // Host disposal auto-saves before the close callback, STA shutdown, and natural process-exit wait.
+    // Host disposal closes saved workbooks or hands unsaved workbooks back without saving.
     private static readonly TimeSpan ServerShutdownTimeout =
         TimeSpan.FromSeconds(30)
         + ComInteropConstants.DefaultOperationTimeout
