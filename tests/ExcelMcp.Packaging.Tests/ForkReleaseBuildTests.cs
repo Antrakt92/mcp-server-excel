@@ -73,4 +73,82 @@ public sealed class ForkReleaseBuildTests
         }
         finally { DeleteDirectoryIfExists(sandbox); }
     }
+
+    [Fact(Timeout = 45000)]
+    public async Task SourceGuard_RejectsWorktreeAndCommittedChangesWithoutTouchingOutput()
+    {
+        var sandbox = CreateSandbox("fork-source-guard");
+        try
+        {
+            var runner = Path.Combine(sandbox, "guard.ps1");
+            var builder = Builder.Replace("'", "''", StringComparison.Ordinal);
+            var helpers = Path.Combine(RepoRoot, "scripts", "PackageHelpers.ps1")
+                .Replace("'", "''", StringComparison.Ordinal);
+            File.WriteAllText(runner, $$"""
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                . '{{helpers}}'
+                $tokens = $null; $errors = $null
+                $ast = [Management.Automation.Language.Parser]::ParseFile('{{builder}}', [ref]$tokens, [ref]$errors)
+                if ($errors.Count) { throw 'Builder parse failed.' }
+                foreach ($name in @('Read-ForkGit', 'Assert-ForkSourceUnchanged')) {
+                    $functions = @($ast.FindAll({ param($node)
+                        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+                    }, $true))
+                    if ($functions.Count -ne 1) { throw "Expected exactly one product function: $name" }
+                    . ([scriptblock]::Create($functions[0].Extent.Text))
+                }
+                $root = Join-Path $PSScriptRoot 'repo'
+                [IO.Directory]::CreateDirectory($root) | Out-Null
+                $null = Read-ForkGit -GitArguments @('init', '--quiet')
+                $null = Read-ForkGit -GitArguments @('config', 'core.hooksPath', (Join-Path $PSScriptRoot 'no-hooks'))
+                $payload = Join-Path $root 'payload.txt'
+                [IO.File]::WriteAllText($payload, 'original')
+                $null = Read-ForkGit -GitArguments @('add', 'payload.txt')
+                $commitArgs = @('-c', 'commit.gpgsign=false', '-c', 'user.name=Fork Release Fixture',
+                    '-c', 'user.email=fork-fixture@example.invalid', 'commit', '--quiet', '-m')
+                $null = Read-ForkGit -GitArguments ($commitArgs + 'initial')
+                $commit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
+                $tree = Read-ForkGit -GitArguments @('rev-parse', 'HEAD^{tree}')
+                $sourceStatus = Read-ForkGit -GitArguments @('status', '--porcelain=v1', '--untracked-files=normal')
+                Assert-ForkSourceUnchanged
+                $output = Join-Path $PSScriptRoot 'release'
+                [IO.Directory]::CreateDirectory($output) | Out-Null
+                $sentinel = Join-Path $output 'sentinel.txt'
+                [IO.File]::WriteAllText($sentinel, 'verified prior output')
+                function Assert-SourceChangeRejected {
+                    $rejected = $false
+                    try { Assert-ForkSourceUnchanged }
+                    catch {
+                        if ($_.Exception.Message -notlike '*Source changed during packaging; release output was not installed.*') { throw }
+                        $rejected = $true
+                    }
+                    if (-not $rejected) { throw 'Changed source was accepted.' }
+                    if ([IO.File]::ReadAllText($sentinel) -cne 'verified prior output' -or
+                        @(Get-ChildItem -LiteralPath $output -Force).Count -ne 1) { throw 'Prior output changed.' }
+                }
+                [IO.File]::WriteAllText($payload, 'uncommitted change')
+                Assert-SourceChangeRejected
+                [IO.File]::WriteAllText($payload, 'original')
+                Assert-ForkSourceUnchanged
+                $null = Read-ForkGit -GitArguments ($commitArgs + @('new revision', '--allow-empty'))
+                Assert-SourceChangeRejected
+                Write-Output 'PASS clean source, worktree change, restored content, and changed HEAD guard'
+                """);
+            var result = await RunPowerShellFileAsync(runner, [], timeoutMs: 30000);
+            Assert.True(result.ExitCode == 0, result.CombinedOutput);
+            Assert.Contains("PASS clean source, worktree change, restored content, and changed HEAD guard",
+                result.CombinedOutput, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // Git object files are read-only on Windows; normalize only this owned fixture.
+            foreach (var file in Directory.EnumerateFiles(sandbox, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            DeleteDirectoryIfExists(sandbox);
+        }
+    }
+
 }

@@ -41,7 +41,8 @@ function Read-ForkGit {
 }
 $commit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
 $tree = Read-ForkGit -GitArguments @('rev-parse', 'HEAD^{tree}')
-$dirty = -not [string]::IsNullOrWhiteSpace((Read-ForkGit -GitArguments @('status', '--porcelain=v1', '--untracked-files=normal')))
+$sourceStatus = Read-ForkGit -GitArguments @('status', '--porcelain=v1', '--untracked-files=normal')
+$dirty = -not [string]::IsNullOrWhiteSpace($sourceStatus)
 if ($dirty -and -not $AllowDirtySource) { throw 'Release source is dirty. Commit intended changes first, or use -AllowDirtySource for a development package.' }
 $epoch = [long](Read-ForkGit -GitArguments @('show', '-s', '--format=%ct', 'HEAD'))
 $stamp = [DateTimeOffset]::FromUnixTimeSeconds($epoch)
@@ -51,6 +52,15 @@ $expectedSdk = (Read-PackageJson (Join-Path $root 'global.json')).sdk.version
 if ($sdk -cne $expectedSdk) { throw "Use the pinned SDK $expectedSdk; selected SDK is $sdk." }
 if ($root.IndexOfAny([char[]]@(',', ';')) -ge 0) { throw 'The source path contains characters that cannot be mapped safely by this release builder.' }
 $repository = 'https://github.com/Antrakt92/mcp-server-excel'
+
+function Assert-ForkSourceUnchanged {
+    $currentCommit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
+    $currentTree = Read-ForkGit -GitArguments @('rev-parse', 'HEAD^{tree}')
+    $currentStatus = Read-ForkGit -GitArguments @('status', '--porcelain=v1', '--untracked-files=normal')
+    if ($currentCommit -cne $commit -or $currentTree -cne $tree -or $currentStatus -cne $sourceStatus) {
+        throw 'Source changed during packaging; release output was not installed.'
+    }
+}
 
 function New-ForkZip {
     param([string]$Source, [string]$Destination, [DateTimeOffset]$Timestamp)
@@ -140,6 +150,7 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
             executableSHA256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
+    Assert-ForkSourceUnchanged
     $manifest = [ordered]@{
         schemaVersion = 1
         name = 'ExcelMCP - Antrakt Fork'
@@ -177,6 +188,7 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
     try {
         Copy-PackageItem $release $pending
         # Directory.Move fails if the final output already exists; never replace it.
+        Assert-ForkSourceUnchanged
         [IO.Directory]::Move($pending, $output)
     } finally {
         if ([IO.Directory]::Exists($pending)) { Remove-PackageStaging $pending }

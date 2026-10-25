@@ -164,8 +164,9 @@ def stdout_case(exe):
         process.stdout.close()
         send(process, 3, "tools/list", {})
         # The stdin writer remains open throughout this exit check.
-        process.wait(timeout=8)
-        return {"case": "broken-stdout-stdin-held-open", "passed": True}
+        code = process.wait(timeout=8)
+        require(code == 0, "Broken-stdout shutdown returned a failure")
+        return {"case": "broken-stdout-stdin-held-open", "passed": True, "exitCode": code}
     finally:
         cleanup(process, [out, err])
 
@@ -223,7 +224,11 @@ def parent_case(exe):
             ack.write_text("owned")
             require(helper.wait(timeout=5) == 0, "Parent helper failed")
             require(kernel.WaitForSingleObject(owned, 8000) == 0, "Parent-exit shutdown deadline expired")
-            return {"case": "parent-exit-stdin-held-open", "passed": True}
+            code = ctypes.c_ulong()
+            kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+            require(kernel.GetExitCodeProcess(owned, ctypes.byref(code)), "Cannot read child exit status")
+            require(code.value == 0, "Parent-exit shutdown returned a failure")
+            return {"case": "parent-exit-stdin-held-open", "passed": True, "exitCode": code.value}
         finally:
             primary = sys.exception()
             failures = []

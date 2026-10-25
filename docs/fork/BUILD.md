@@ -18,6 +18,11 @@ Use `-DotNetExecutable` to select the pinned SDK executable explicitly. The buil
 
 `-AllowDirtySource` is for development experiments only. Its manifest records `sourceDirty: true`; `sourceCommit` and `sourceTree` identify HEAD, not the uncommitted filesystem. Public release packages should come from the committed, clean source revision being tagged.
 
+Build in a checkout with no other writers. The builder rechecks HEAD, its tree
+and Git status before installing packages and refuses observed source changes.
+Development builds with dirty source do not identify or reproduce uncommitted
+file contents through their HEAD metadata.
+
 The builder checks native PE architecture and version metadata. These are packaging checks, not protocol, lifecycle, workbook or numerical acceptance. Run the relevant tests and actual process checks separately and retain sanitized release verification evidence. Rebuild after any source change; the manifest must describe the packages actually uploaded.
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).

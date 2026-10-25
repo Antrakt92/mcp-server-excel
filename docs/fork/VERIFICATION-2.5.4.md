@@ -15,7 +15,7 @@ Windows x64 build 10.0.26300.0 and installed Excel 16.0.20527.20088.
 | Excel-free MCP suite | 705 passed |
 | Excel-free Service suite, after connection-drain repair | 188 passed |
 | Script safety / PreCommit group, including fork selection | 222 passed |
-| Fork builder refusal and preservation guards | 4 passed |
+| Fork builder refusal, source provenance and preservation guards | 5 passed |
 | Real CLI startup, concurrent startup, stop and restart | 4 passed |
 | Native MCP cancellation, unsaved handover/discard and independent ownership | 6 passed |
 | Native MCP create/write/save/reopen workflow | 1 passed |
