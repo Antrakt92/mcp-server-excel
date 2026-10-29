@@ -221,8 +221,9 @@ public sealed class ServiceClient : IDisposable
             : remaining;
     }
 
-    private static int ToTimeoutMilliseconds(TimeSpan timeout) =>
-        Math.Max(1, checked((int)Math.Ceiling(timeout.TotalMilliseconds)));
+    internal static int ToTimeoutMilliseconds(TimeSpan timeout) =>
+        timeout == Timeout.InfiniteTimeSpan ? Timeout.Infinite
+            : Math.Max(1, checked((int)Math.Ceiling(timeout.TotalMilliseconds)));
 
     private static ServiceResponse CreateTimeoutResponse(
         ServiceRequest request,

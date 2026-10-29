@@ -11,6 +11,14 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed class ServiceClientDeadlineTests
 {
     [Fact]
+    public void ConnectTimeoutConversion_PreservesInfiniteAndPositiveRounding()
+    {
+        Assert.Equal(Timeout.Infinite, ServiceClient.ToTimeoutMilliseconds(Timeout.InfiniteTimeSpan));
+        Assert.Equal(1, ServiceClient.ToTimeoutMilliseconds(TimeSpan.FromTicks(1)));
+        Assert.Equal(2, ServiceClient.ToTimeoutMilliseconds(TimeSpan.FromMilliseconds(1.1)));
+        Assert.Equal(6000, ServiceClient.ToTimeoutMilliseconds(TimeSpan.FromSeconds(6)));
+    }
+    [Fact]
     public void ControlledTimer_InfiniteDueTimeRemainsDisabledUntilChanged()
     {
         var clock = new ManualTimerTimeProvider();
