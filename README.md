@@ -9,7 +9,7 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Download](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [MCP setup](#connect-an-mcp-client) · [CLI](#use-the-cli) · [Agent workflows](docs/fork/AGENT-WORKFLOWS.md) · [Features](FEATURES.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
+[Download](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [MCP setup](#connect-an-mcp-client) · [CLI](#use-the-cli) · [Agent workflows](docs/fork/AGENT-WORKFLOWS.md) · [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
 
 ## Choose a package
 
