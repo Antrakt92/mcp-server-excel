@@ -1,6 +1,6 @@
-# Contributing to ExcelMcp
+# Contributing to ExcelMCP - Antrakt Fork
 
-Thank you for your interest in contributing to Sbroenne.ExcelMcp! This project is designed to be extended by the community, especially to support coding agents like GitHub Copilot.
+This guide covers contributions to [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The fork retains upstream assembly names and the original MIT license. Target `main` for fork pull requests; see [AGENTS.md](../AGENTS.md) for the governing rules and [the fork overview](fork/OVERVIEW.md) for distribution boundaries.
 
 ## 🎯 Project Vision
 
@@ -16,34 +16,42 @@ ExcelMcp aims to be the go-to command-line tool for coding agents to interact wi
 ### Development Environment
 
 1. **Prerequisites**:
-   - Windows OS (required for Excel COM)
-   - Visual Studio 2022 or VS Code
-   - .NET 10 SDK
+   - Windows with desktop Microsoft Excel for native COM checks
+   - The exact .NET SDK selected by `global.json`
    - PowerShell 7.4 or later (`pwsh`)
-   - Microsoft Excel installed
+   - Microsoft TlbImp 4.8.9037.0 from the .NET Framework 4.8.1 SDK
 
-2. **Setup**:
+   See [Windows setup](agents/development.md#windows-setup) and
+   [isolated importer setup](fork/BUILD.md) before restoring or building. Do not
+   change global Office security settings to make tests pass.
+
+2. **Clone and build the fork**:
    ```powershell
-   git clone https://github.com/sbroenne/mcp-server-excel.git
+   git clone --branch main https://github.com/Antrakt92/mcp-server-excel.git
    cd mcp-server-excel
-   dotnet restore
-   dotnet build
+   dotnet restore Sbroenne.ExcelMcp.sln
+   dotnet build Sbroenne.ExcelMcp.sln -c Release --no-restore
    ```
 
-3. **Test your setup** (surgical — don't run the full integration suite, it takes 45+ minutes):
+3. **Run a focused setup probe without Excel**:
    ```powershell
-   dotnet test --filter "Feature=Sheet&RunType!=OnDemand"
+   dotnet test tests\ExcelMcp.Core.Tests\ExcelMcp.Core.Tests.csproj -c Release --no-build --no-restore --settings tests\strict.runsettings --filter 'RequiresExcel=false&FullyQualifiedName~FormulaValidationSyntaxTests' --blame-hang-timeout 2m --logger trx
    ```
+
+   This checks one pure regression class, not native Excel readiness. Choose
+   additional checks for the changed behavior using [the test guide](../tests/README.md).
+   Run Excel-dependent checks sequentially on the local Windows desktop. Hosted
+   CI is not a substitute for Excel and is not launched by these setup commands.
 
 ## 🚨 **CRITICAL: Pull Request Workflow Required**
 
 **All changes must be made through Pull Requests (PRs).** Direct commits to `main` are prohibited.
 
-**Merge Strategy: Squash Merge** — All PRs are merged via squash merge (single commit to `main`). This keeps the history clean.
+Target this fork's `main` branch. A maintainer chooses an enabled merge method after the required review and checks; opening a PR does not automatically merge or squash it.
 
 ### Quick PR Process
 
-1. **Create feature branch**: `git checkout -b feature/your-feature`
+1. **Create feature branch**: `git switch -c codex/your-feature`
 2. **Make changes**: Code, tests, documentation
 3. **Run the pre-commit hook**: follow the
    [pre-commit setup guide](PRE-COMMIT-SETUP.md), then let it run on every
@@ -53,12 +61,12 @@ ExcelMcp aims to be the go-to command-line tool for coding agents to interact wi
    affected process checks locally when changing their boundary and selected
    Excel checks on a desktop with Excel. The hook never installs packages.
    Never bypass it with `--no-verify`.
-4. **Push branch**: `git push origin feature/your-feature`
+4. **Push branch**: `git push origin codex/your-feature`
 5. **Create PR**: Use GitHub's PR template
 6. **Address review**: Investigate human and automated comments, fix verified defects, and explain why an incorrect or inapplicable suggestion was not applied. Do not make unrelated style changes simply because a bot suggested them.
-7. **Merge**: After approval and CI checks pass — **GitHub will squash commits automatically**
-   - Verify the final commit message accurately describes the changes
-   - After merge, your feature branch can be safely deleted
+7. **Merge**: After the required review and verification, with maintainer authorization
+   - Verify the resulting commit accurately describes the changes
+   - Delete a finished branch only after confirming it contains no unique unmerged work and no active worktree needs it
 
 📋 **Detailed workflow**: See [DEVELOPMENT.md](DEVELOPMENT.md) for complete instructions.
 
@@ -126,9 +134,12 @@ change the user's NuGet configuration or solution restore sources.
 ExcelMcp has **two equal entry points** — an MCP Server and a CLI — sharing one Core layer:
 
 ```
-MCP Server ──► In-process ExcelMcpService ──► Core Commands ──► Excel COM
-CLI ─────────► CLI Daemon (named pipe) ─────► Core Commands ──► Excel COM
+MCP Server -> owned Service bridge/controller -> private worker -> Excel COM
+CLI client -> named pipe -> CLI controller -> private worker -> Excel COM
 ```
+
+Each private worker hosts `ExcelMcpService` and Core commands; Excel COM does not
+run in the controller. See [the system map](../CONTEXT.md) for ownership and lifecycle.
 
 - **`ExcelMcp.ComInterop`** - Reusable COM automation primitives (STA threading, session/batch management)
 - **`ExcelMcp.Core`** - Excel business logic (Power Query, VBA, worksheets, PivotTables, etc.)
@@ -220,7 +231,7 @@ New operations are added to the **Core** interface/implementation; CLI commands 
 
 1. **Add the method to the relevant Core interface** (e.g. `Commands/Sheet/ISheetCommands.cs`), with XML doc comments (these become the MCP tool/parameter descriptions).
 2. **Implement it** in the corresponding partial class (e.g. `SheetCommands.Lifecycle.cs`), following the batch-API pattern above.
-3. **Build the solution** - the source generators (`ExcelMcp.Generators`, `ExcelMcp.Generators.CLI`) produce the CLI verb and MCP tool automatically from the interface.
+3. **Build the solution** - the source generators (`ExcelMcp.Generators.Cli`, `ExcelMcp.Generators.Mcp`) produce the CLI verb and MCP tool automatically from the interface.
 4. **Add integration tests** for the new operation (TDD: write them first).
 5. **Update the appropriate `docs/features/*.md` file** with the new operation. Use EXL030's exact expected values to update affected section counts, `doc-counts.json`, and headline claims; review the changes and rebuild.
 
@@ -359,8 +370,11 @@ When reporting bugs, please include:
 - **Excel version** and Windows version
 - **Command used** and arguments
 - **Expected behavior** vs actual behavior
-- **Sample Excel file** (if possible)
-- **Error messages** (full text)
+- **Synthetic or sanitized reproduction** that contains no customer workbook data
+- **Error details** with credentials, connection strings and private paths removed
+
+Report suspected vulnerabilities through [the security policy](../SECURITY.md),
+not a public issue or PR.
 
 ## 💡 Feature Requests
 
@@ -395,4 +409,5 @@ Great feature requests include:
 
 ---
 
-Thank you for contributing to Sbroenne.ExcelMcp! Together we're making Excel automation more accessible to coding agents and developers worldwide. 🚀
+Fork maintenance is by Antrakt92. Preserve the original upstream attribution and
+[MIT license](../LICENSE); see [FORK-NOTICE.md](../FORK-NOTICE.md).

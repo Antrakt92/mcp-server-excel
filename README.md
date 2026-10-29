@@ -1,4 +1,4 @@
-# ExcelMCP â€” Antrakt Fork
+# ExcelMCP — Antrakt Fork
 
 Automate desktop Microsoft Excel through MCP or the `excelcli` command line, using Excel's native COM interface.
 
@@ -6,7 +6,7 @@ This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https:
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) Â· [Fork overview](docs/fork/OVERVIEW.md) Â· [Release verification](docs/fork/VERIFICATION-3.0.0.md) Â· [Recovery](docs/fork/RECOVERY.md) Â· [Upstream documentation](README.upstream.md) Â· [MIT license](LICENSE)
+[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.0.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
 
 ## Choose a package
 
@@ -15,7 +15,7 @@ This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https:
 | [ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
 | [ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
-Download **SHA256SUMS** and **RELEASE-MANIFEST.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and recorded verification. GitHub also provides source ZIP and tar archives on the release page.
+Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
 PowerShell download example:
 
@@ -25,7 +25,9 @@ Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip" -OutFile 'Ex
 Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
+Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
 Get-FileHash .\ExcelMcp-Antrakt-*-3.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 
 Compare each hash with `SHA256SUMS` before extracting. Keep releases in separate folders when upgrading. See [recovery and verification](docs/fork/RECOVERY.md) for the full procedure.
@@ -94,7 +96,7 @@ The combined catalogue provides **63 MCP tools across 33 feature areas, with 434
 
 The fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). Report fork-specific lifecycle or packaging problems in [this fork's issue tracker](https://github.com/Antrakt92/mcp-server-excel/issues), with the release version and a minimal reproduction. Exclude workbook contents, credentials, private paths and unsanitized logs.
 
-Build and verification ownership is described in [the fork overview](docs/fork/OVERVIEW.md). The original upstream README is preserved in [README.upstream.md](README.upstream.md); its upstream installers and marketplace links install upstream distributions.
+Contributions target `main`; start with [the contributor guide](CONTRIBUTING.md). Report suspected vulnerabilities through [the security policy](SECURITY.md), rather than public issues. Build and verification ownership is described in [the fork overview](docs/fork/OVERVIEW.md). The original upstream README is preserved in [README.upstream.md](README.upstream.md); its upstream installers and marketplace links install upstream distributions.
 
 ## Credits and license
 

@@ -1,20 +1,28 @@
 # Privacy Policy
 
-**Last Updated:** October 15, 2026
+**Last Updated:** October 29, 2026
 
 ## Overview
 
-MCP Server for Excel ("ExcelMcp") is an open-source tool that enables AI assistants to interact with Microsoft Excel. This privacy policy explains how the software handles your data.
+This policy describes the [Antrakt ExcelMCP fork](https://github.com/Antrakt92/mcp-server-excel),
+which lets agents use installed desktop Excel through MCP or the CLI. See
+[FORK-NOTICE.md](FORK-NOTICE.md) for upstream attribution and distribution scope.
+
+The fork's portable release builder does not embed an Application Insights
+connection string, so those packages default to telemetry **off**. You can also
+set `EXCELMCP_TELEMETRY_MODE=off` explicitly. The optional inherited telemetry
+implementation is described below; packages from other distribution channels
+must be checked against their own build configuration and policy.
 
 ## Data Collection Summary
 
-ExcelMcp's MCP Server and CLI collect **limited, pseudonymous telemetry** to improve
-the software. The existing CLI background daemon records and sends operations
-that it handles; short-lived `excelcli` command processes do not send telemetry.
+ExcelMcp's MCP Server and CLI support **limited, pseudonymous telemetry** when
+reporting is enabled. The existing CLI background daemon sends operation metrics;
+short-lived `excelcli` command processes do not send telemetry.
 The statements below describe telemetry collection, not the workbook data
 that a tool returns to your chosen AI assistant.
 
-### What We DO Collect (Pseudonymous Telemetry)
+### Telemetry fields when reporting is enabled
 
 - **Tool usage statistics** - Which tools and actions are used (e.g., "range/get-values").
   Only known ExcelMcp commands are reported; anything else is reported as "other/other"
@@ -46,26 +54,27 @@ that a tool returns to your chosen AI assistant.
 - **Unhandled exceptions (MCP Server)** - Error type names, approved source, and
   project-owned failure site only (never exception messages or stack traces)
 
-### What We DO NOT Collect
+### Data excluded from telemetry
 
-- ❌ **File contents** - Workbook content is never included in telemetry
-- ❌ **File names or paths** - File paths are not included in telemetry
-- ❌ **Personal information** - No raw names, emails, or account information
-- ❌ **Spreadsheet data** - Cell values, formulas, and query results are never included in telemetry
-- ❌ **Prompts or messages** - Requests and conversations are never transmitted
-- ❌ **Host or client details** - Computer names, working directories, and MCP client names are not collected
-- ❌ **User accounts** - No registration or sign-in required
-- ❌ **Error details** - Error messages, response content, and stack traces are
+- **File contents** - Workbook content is never included in telemetry
+- **File names or paths** - File paths are not included in telemetry
+- **Personal information** - No raw names, emails, or account information
+- **Spreadsheet data** - Cell values, formulas, and query results are never included in telemetry
+- **Prompts or messages** - Requests and conversations are never transmitted
+- **Host or client details** - Computer names, working directories, and MCP client names are not collected
+- **User accounts** - No registration or sign-in required
+- **Error details** - Error messages, response content, and stack traces are
   never included. Exception type names appear only in the unhandled-exception
   reports listed above, not in invocation outcome telemetry
-- ❌ **Workbook session IDs or tool arguments** - Telemetry never includes the
+- **Workbook session IDs or tool arguments** - Telemetry never includes the
   Excel workbook `workbook_session_id` (MCP) / `sessionId` (CLI) value, workbook path, request
   arguments, or user content. The random process telemetry session ID listed
   above is separate from workbook identity.
 
 ### Purpose of Telemetry
 
-We use pseudonymous telemetry to:
+Pseudonymous telemetry is intended to:
+
 - Understand which features are most used
 - Identify and fix performance issues
 - Prioritize development of new features
@@ -77,15 +86,16 @@ does not inspect response or error text. Unknown or missing categories remain
 
 ### Telemetry Infrastructure
 
-By default, released packages with an embedded connection string send telemetry
-to **Azure Application Insights**, a Microsoft service. Data is:
-- Transmitted over HTTPS
-- Stored in accordance with Microsoft's data handling policies
-- Retained for analytics purposes only
-- Filtered at ingestion so exception records without ExcelMcp's explicit
-  sanitization marker are discarded (sanitized failures are custom events; raw
-  exception records are rejected in full)
-- Filtered at ingestion so framework trace logs are discarded in full
+A build with an embedded connection string defaults to sending telemetry to
+**Azure Application Insights**, a Microsoft service. The fork portable builder
+leaves that connection string empty. Azure reporting uses HTTPS; storage and
+retention depend on the configured receiving service. Its operator is responsible
+for the destination and its data-handling settings.
+
+The repository's upstream Azure infrastructure configuration defines ingestion
+filters that discard framework trace logs and raw exception records, and retain
+only explicitly sanitized failure events. These are deployment controls;
+building this fork does not deploy or verify an Azure ingestion configuration.
 
 Set `EXCELMCP_TELEMETRY_MODE=off` to disable telemetry collection and delivery in
 either the CLI or MCP Server. Contributor builds without an embedded connection
@@ -120,12 +130,16 @@ client-side connection, output-file writing, or argument parsing.
 ExcelMcp drives the Excel application on your local machine:
 
 1. **Local Processing** - All Excel operations are performed locally via Microsoft's COM API
-2. **Your Files Stay Local** - Excel files are read from and written to your local filesystem only
+2. **Workbook locations** - Excel can read or write selected local, network or
+   cloud-hosted workbooks using the current user's file permissions and Office
+   authentication. Opening or refreshing a workbook may contact its data sources
+   or Office services; local COM automation is not network isolation.
 3. **Tool Results** - Data requested by your AI assistant is returned through
-   your MCP client or CLI process; your assistant's privacy policy governs how
-   it handles that data
-4. **Optional Network Features** - Remote M/DAX formatting and Python in Excel
-   use external services only when you request those features
+   your MCP client or CLI process. Results can include requested cell data,
+   formulas, VBA/Power Query code and paths; your client and assistant's privacy
+   policies govern how they handle those results.
+4. **Optional remote code services** - M/DAX formatting and Python in Excel use
+   the external services described below when you request those features.
 5. **Telemetry** - Release builds of the MCP Server and CLI can send the
    pseudonymous usage metrics listed above to Azure Application Insights
 
@@ -139,7 +153,11 @@ When you use ExcelMcp with an AI assistant (like Claude):
 4. Requested results are returned to the AI assistant through your MCP client
 5. The MCP Server or CLI can send pseudonymous usage telemetry to Azure Application Insights
 
-Some operations have additional data flows:
+Workbook access and data connections can involve network storage, cloud sync,
+Office authentication and external data sources. Their permissions, retention
+and privacy terms are controlled by those services and the workbook configuration.
+
+Some explicitly requested code operations have additional data flows:
 
 - Setting `formatMCode=true` sends the supplied M code to
   [powerqueryformatter.com](https://powerqueryformatter.com/).
@@ -175,7 +193,9 @@ Other Excel processes started while it is on may also write trace files.
 
 ## Third-Party Services
 
-- **Azure Application Insights** - Pseudonymous telemetry is sent to this Microsoft service. See [Microsoft's Privacy Statement](https://privacy.microsoft.com/privacystatement).
+- **Azure Application Insights** - A build configured for Azure reporting can
+  send pseudonymous telemetry to this service. Fork portable packages default to
+  off. See [Microsoft's Privacy Statement](https://privacy.microsoft.com/privacystatement).
 - **Microsoft Excel** - ExcelMcp requires Microsoft Excel installed on your machine. Excel is subject to Microsoft's privacy policy.
 - **Microsoft Python in Excel** - Python code and referenced worksheet data run
   in Microsoft's cloud when you use the Python in Excel operations.
@@ -188,17 +208,13 @@ Other Excel processes started while it is on may also write trace files.
 ## Open Source
 
 ExcelMcp is open source software. You can review the complete source code at:
-https://github.com/sbroenne/mcp-server-excel
+https://github.com/Antrakt92/mcp-server-excel
 
 ## Security
 
 - ExcelMcp runs with the same permissions as your user account
 - It can only access files and Excel instances that your user account can access
 - No elevated privileges are required or requested
-
-## Children's Privacy
-
-ExcelMcp does not knowingly collect any information from anyone, including children under 13 years of age.
 
 ## Changes to This Policy
 
@@ -208,15 +224,20 @@ If we make changes to this privacy policy, we will update the "Last Updated" dat
 
 For questions about this privacy policy or the ExcelMcp project:
 
-- **GitHub Issues:** https://github.com/sbroenne/mcp-server-excel/issues
-- **Repository:** https://github.com/sbroenne/mcp-server-excel
+- **GitHub Issues:** https://github.com/Antrakt92/mcp-server-excel/issues
+- **Repository:** https://github.com/Antrakt92/mcp-server-excel
+
+Use [private security reporting](SECURITY.md#supported-releases-and-reporting) for
+suspected vulnerabilities. Do not include private workbook data or credentials
+in public issues.
 
 ---
 
-**Summary:** ExcelMcp drives local Excel and reads or writes workbook files on
-your machine. Requested tool results can be returned to your chosen AI
-assistant. Remote code formatting and Python in Excel use external services only
-when requested. The MCP Server and CLI can send pseudonymous usage telemetry.
+**Summary:** ExcelMcp controls local Excel, which can access selected local or
+remote workbook locations and data sources. Requested tool results can be
+returned to your chosen AI assistant. Remote code formatting and Python in Excel
+have the separate service flows above. Fork portable packages default to telemetry
+off; configured builds can send pseudonymous usage telemetry.
 It excludes workbook contents, file names, paths, arguments, and raw machine or
 user names. A one-time migration event may include the previous name-derived
 hash so older usage can be counted under the new random ID.
