@@ -8,6 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ExcelMcp.Service\ExcelMcp.Service.csproj" />
     <ProjectReference Include="..\..\src\ExcelMcp.ComInterop\ExcelMcp.ComInterop.csproj" />
+    <!-- Process tests launch this worker; build it with the controller's Service assembly. -->
+    <ProjectReference Include="..\..\src\ExcelMcp.CLI\ExcelMcp.CLI.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
