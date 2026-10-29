@@ -47,7 +47,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "Value/formula writes attempt to restore the prior calculation mode; restoration can fail without failing the write. Verify the mode when later work depends on it; manual mode needs calculation_mode calculate. " +
         "To create an Excel Table use table create, not range. Use range_edit for insert/delete/find/sort/fill, range_format for styling/validation, and range_link for hyperlinks/protection.")]
 [McpReadOnlyActions("get-values", "get-formulas", "get-spill-info", "validate-formulas", "get-number-formats",
-    "get-used-range", "get-current-region", "get-info", "get-special-cells", "trace-precedents", "trace-dependents")]
+    "get-used-range", "get-current-region", "get-info", "get-used-range-info", "get-values-page", "get-special-cells", "trace-precedents", "trace-dependents")]
 public interface IRangeCommands
 {
     /// <summary>
@@ -89,9 +89,28 @@ public interface IRangeCommands
     RangeFormulaTraceResult TraceDependents(IExcelBatch batch, [AllowEmptyString] string sheetName,
         [RequiredParameter] string rangeAddress, int maxDepth = 3, int maxNodes = 50, int maxPreviewCharacters = 256);
 
+    /// <summary>Reads native UsedRange bounds without values or recalculation. Formatting-only cells may enlarge the bounds.</summary>
+    /// <param name="batch">Excel session</param>
+    /// <param name="sheetName">Worksheet to inspect</param>
+    [ServiceAction("get-used-range-info")]
+    RangeBoundsResult GetUsedRangeInfo(IExcelBatch batch, [RequiredParameter] string sheetName);
+
+    /// <summary>Reads at most 10,000 cells from an explicit rectangular scope within a conservative 4 MiB response budget; long text may require smaller pages. Continue with returned offsets and the same scope/page sizes. Calls do not form a snapshot; no calculation or silent truncation is performed.</summary>
+    /// <param name="batch">Excel session</param>
+    /// <param name="sheetName">Worksheet, or empty string for a named range</param>
+    /// <param name="rangeAddress">Complete rectangular scope; offsets are relative to this scope</param>
+    /// <param name="rowOffset">Zero-based row offset, default zero</param>
+    /// <param name="columnOffset">Zero-based column offset, default zero</param>
+    /// <param name="pageRows">Requested rows, default 100; product with pageColumns must not exceed 10,000</param>
+    /// <param name="pageColumns">Requested columns, default 100; product with pageRows must not exceed 10,000</param>
+    [ServiceAction("get-values-page")]
+    RangeReadPageResult GetValuesPage(IExcelBatch batch, [AllowEmptyString] string sheetName,
+        [RequiredParameter] string rangeAddress, int rowOffset = 0, int columnOffset = 0, int pageRows = 100, int pageColumns = 100);
+
     // === VALUE OPERATIONS ===
 
     /// <summary>
+    /// Reads at most 1,000,000 cells within a conservative 4 MiB response budget, using native tiles of at most 1000 cells. Oversized responses fail without returning partial values. Use get-values-page for larger scopes.
     /// Gets values from a range as a 2D array. Formula errors are returned as canonical Excel
     /// names such as #REF! and are also listed in cellErrors with the affected cell, formula,
     /// raw COM code, and suggested fix.
@@ -131,6 +150,7 @@ public interface IRangeCommands
     // === FORMULA OPERATIONS ===
 
     /// <summary>
+    /// Reads at most 1,000,000 cells within a conservative 4 MiB response budget in native tiles of at most 1000 cells; use smaller explicit ranges for larger scopes or long text.
     /// Gets formulas from a range as a 2D array (empty string if no formula), together with
     /// calculated values. Formula errors are returned as canonical Excel names such as #REF!
     /// and are also listed in cellErrors with the affected cell, formula, raw COM code, and
@@ -295,6 +315,7 @@ public interface IRangeCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet</param>
+    /// <remarks>Rejects more than 1,000,000 cells before reading values; tiled response assembly enforces a conservative 4 MiB budget; use get-used-range-info and get-values-page.</remarks>
     [ServiceAction("get-used-range")]
     RangeValueResult GetUsedRange(IExcelBatch batch, string sheetName);
 
@@ -304,6 +325,7 @@ public interface IRangeCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="cellAddress">Single cell address (e.g., 'B5') - expands to contiguous data region around this cell</param>
+    /// <remarks>Rejects more than 1,000,000 cells before reading values; tiled response assembly enforces a conservative 4 MiB budget; page an explicit scope instead.</remarks>
     [ServiceAction("get-current-region")]
     RangeValueResult GetCurrentRegion(IExcelBatch batch, string sheetName, [RequiredParameter] string cellAddress);
 

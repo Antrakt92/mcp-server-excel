@@ -33,78 +33,7 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                // Get actual address from Excel
-                result.RangeAddress = range.Address;
-                // Get values as 2D array - handle single cell case
-                object valueOrArray = range.Value2;
-                object? formulaOrArray = null;
-                bool formulasRead = false;
-                int startRow = Convert.ToInt32(range.Row);
-                int startColumn = Convert.ToInt32(range.Column);
-
-                if (valueOrArray is object[,] values)
-                {
-                    // Multi-cell range - process as 2D array
-                    result.RowCount = values.GetLength(0);
-                    result.ColumnCount = values.GetLength(1);
-
-                    for (int r = 1; r <= result.RowCount; r++)
-                    {
-                        var row = new List<object?>();
-                        for (int c = 1; c <= result.ColumnCount; c++)
-                        {
-                            object? cellValue = values[r, c];
-                            if (!ExcelErrorMapper.TryGet(cellValue, out int errorCode, out var error))
-                            {
-                                row.Add(cellValue);
-                                continue;
-                            }
-
-                            if (!formulasRead)
-                            {
-                                formulaOrArray = ReadFormulas(ctx, range);
-                                formulasRead = true;
-                            }
-
-                            string formula = formulaOrArray is object[,] formulas
-                                ? GetReturnedFormula(formulas[r, c])
-                                : string.Empty;
-                            row.Add(ConvertMappedErrorForRead(
-                                cellValue,
-                                formula,
-                                startRow + r - 1,
-                                startColumn + c - 1,
-                                result.CellErrors,
-                                errorCode,
-                                error));
-                        }
-                        result.Values.Add(row);
-                    }
-                }
-                else
-                {
-                    // Single cell - wrap value in 1x1 array
-                    result.RowCount = 1;
-                    result.ColumnCount = 1;
-                    if (ExcelErrorMapper.TryGet(valueOrArray, out int errorCode, out var error))
-                    {
-                        formulaOrArray = ReadFormulas(ctx, range);
-                        result.Values.Add([
-                            ConvertMappedErrorForRead(
-                                valueOrArray,
-                                GetReturnedFormula(formulaOrArray),
-                                startRow,
-                                startColumn,
-                                result.CellErrors,
-                                errorCode,
-                                error)
-                        ]);
-                    }
-                    else
-                    {
-                        result.Values.Add([valueOrArray]);
-                    }
-                }
+                ReadValueGrid(ctx, range, result, ct);
 
                 result.Success = true;
                 return result;

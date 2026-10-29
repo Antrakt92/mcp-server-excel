@@ -12,8 +12,9 @@ For an extended inspection, open with MCP `file` action `open` and
 The response and session list report `auditOnly:true`. Excel opens the file
 read-only with opening macros and external-link updates disabled. The Service
 refuses workbook mutations, explicit calculation, macro execution, security
-changes and saving before dispatching them to Excel. Close with `save:false`
-when inspection is finished. Editing requires a separately authorized normal
+changes and saving before dispatching them to Excel. Close an unchanged owned
+audit with `save:false`. Explicit close discards unsaved interactive edits; resolve
+their owner and handover/save policy first if they appeared. Editing requires a separately authorized normal
 session after the audit session closes.
 
 This is a restriction on the agent API, not a lock against interactive Excel
@@ -51,3 +52,24 @@ requires the existing security approval; invoking does not enable macros.
 Returned arrays are limited to 10,000 elements and results have a conservative
 4 MiB transport budget. If return conversion is refused, execution has already
 completed: inspect its workbook effects before considering another invocation.
+
+## Bounded workbook reads
+
+Use `range_read` action `get-used-range-info` for native bounds without values;
+formatting-only cells can inflate UsedRange. Fix a rectangular scope and call
+`get-values-page` with zero-based `row_offset`/`column_offset` and at most 10,000
+`page_rows * page_columns`. Follow the returned next offsets until `hasMore` is
+false. Separate calls are not snapshot isolation. CLI options use hyphens; batch
+JSON uses camelCase.
+
+Eager value/formula reads cap geometry at 1,000,000 cells, and all value/formula
+responses have a conservative 4 MiB transport budget. Long text can require much
+smaller ranges. Oversized reads fail without returning truncated values; reduce
+the explicit scope instead of retrying the same request. Native arrays are read
+in tiles of at most 1,000 cells. Reads preserve cached results without requesting
+calculation. Excel errors retain canonical representation and actual cell
+addresses; ordinary numeric constants matching COM error codes remain numbers.
+
+Use `range_format_read` action `get-format-summary` for aggregate stored,
+displayed or both views, including mixed fields. It is not a per-cell histogram;
+detailed `get-format` permits at most 10,000 cells.

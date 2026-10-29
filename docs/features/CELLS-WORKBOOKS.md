@@ -56,7 +56,10 @@ Disabling it cannot restore lost digits.
 
 ---
 
-## Ranges (64 operations)
+## Ranges (67 operations)
+
+- **Inspect large sheets:** Read UsedRange bounds without values, then page a fixed rectangle within cell/byte limits.
+- **Inspect formatting:** Read aggregate stored/displayed properties and mixed fields without per-cell formatting output.
 
 - **Work with data:** Read and write values or formulas, search and replace, copy selected content, and insert or remove cells, rows, and columns.
 - **Discover workbook state:** Inspect used regions, matching cell categories, formula errors, spilled arrays, and native formula relationships.

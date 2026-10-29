@@ -34,7 +34,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "set-visibility: axis rows/columns and hidden true/false; keeps stored sizes, filters, and groups. Disjoint gaps remain unchanged. " +
         "DATA VALIDATION: for list, formula1 is the source (=$A$1:$A$10 or \"A,B,C\"). MERGE: only the top-left value is kept. " +
         "Do not format Excel Table cells (use table set-style) or PivotTable cells (refresh overwrites the formatting).")]
-[McpReadOnlyActions("get-visibility", "get-format", "get-style", "get-validation", "get-merge-info")]
+[McpReadOnlyActions("get-format-summary", "get-visibility", "get-format", "get-style", "get-validation", "get-merge-info")]
 public interface IRangeFormatCommands
 {
     /// <summary>
@@ -72,7 +72,7 @@ public interface IRangeFormatCommands
     /// Stored reads report workbook formatting; displayed reads include conditional
     /// formatting. Both returns the two snapshots without changing cells or selection.
     /// Mixed rich-text properties are identified explicitly, not replaced with defaults.
-    /// There is no preview limit. Use get-style only when the style name is sufficient.
+    /// Rejects scopes above 10,000 cells before inspecting formatting. Use smaller explicit ranges for details or get-format-summary for native aggregate properties.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name, or empty string for a named range</param>
@@ -80,6 +80,15 @@ public interface IRangeFormatCommands
     /// <param name="view">stored (default), displayed, or both formatting snapshots</param>
     [ServiceAction("get-format")]
     RangeFormatReadResult GetFormat(IExcelBatch batch, [AllowEmptyString] string sheetName,
+        [RequiredParameter] string rangeAddress, [FromString] FormatView view = FormatView.Stored);
+
+    /// <summary>Reads aggregate native formatting for one rectangle without visiting individual cells. Null properties and mixedFields describe Excel mixed values, not a complete per-cell style inventory. Stored/displayed/both views preserve selection and do not calculate.</summary>
+    /// <param name="batch">Excel session</param>
+    /// <param name="sheetName">Worksheet, or empty string for a named range</param>
+    /// <param name="rangeAddress">Exact rectangular scope</param>
+    /// <param name="view">stored (default), displayed, or both</param>
+    [ServiceAction("get-format-summary")]
+    RangeFormatSummaryResult GetFormatSummary(IExcelBatch batch, [AllowEmptyString] string sheetName,
         [RequiredParameter] string rangeAddress, [FromString] FormatView view = FormatView.Stored);
 
     // === STYLE OPERATIONS ===

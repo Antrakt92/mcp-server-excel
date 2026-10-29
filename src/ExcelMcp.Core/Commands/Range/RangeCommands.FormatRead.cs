@@ -32,7 +32,10 @@ public partial class RangeCommands
             try
             {
                 range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress);
-                sheet = (Excel.Worksheet)range!.Parent;
+                long cellCount = Convert.ToInt64((object)range!.CountLarge, CultureInfo.InvariantCulture);
+                RangeReadWindow.EnsureCellLimit(cellCount, 1, RangeReadWindow.MaximumPageCells,
+                    "Use get-format-summary for aggregate properties or smaller explicit ranges for complete per-cell details; no formatting was inspected.");
+                sheet = (Excel.Worksheet)range.Parent;
                 var result = new RangeFormatReadResult
                 {
                     FilePath = batch.WorkbookPath,
@@ -48,6 +51,43 @@ public partial class RangeCommands
                 result.CellCount = result.Cells.Count;
                 result.Success = true;
                 return result;
+            }
+            finally
+            {
+                ComUtilities.Release(ref sheet);
+                ComUtilities.Release(ref range);
+            }
+        });
+    }
+
+    /// <inheritdoc />
+    public RangeFormatSummaryResult GetFormatSummary(
+        IExcelBatch batch, string sheetName, string rangeAddress, FormatView view = FormatView.Stored)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rangeAddress);
+        if (!Enum.IsDefined(view)) throw new ArgumentOutOfRangeException(nameof(view));
+        return batch.Execute((ctx, ct) =>
+        {
+            Excel.Range? range = null;
+            Excel.Worksheet? sheet = null;
+            try
+            {
+                range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress)
+                    ?? throw new ArgumentException(RangeHelpers.GetResolveError(sheetName, rangeAddress));
+                var dimensions = RequireReadRectangle(range);
+                sheet = (Excel.Worksheet)range.Parent;
+                ct.ThrowIfCancellationRequested();
+                return new RangeFormatSummaryResult
+                {
+                    Success = true,
+                    FilePath = batch.WorkbookPath,
+                    SheetName = sheet.Name,
+                    RangeAddress = range.Address,
+                    CellCount = (long)dimensions.Rows * dimensions.Columns,
+                    View = view,
+                    Stored = view is FormatView.Stored or FormatView.Both ? ReadCellFormat(range, false, ct) : null,
+                    Displayed = view is FormatView.Displayed or FormatView.Both ? ReadCellFormat(range, true, ct) : null
+                };
             }
             finally
             {
