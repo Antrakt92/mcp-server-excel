@@ -33,7 +33,7 @@ Do not edit files under `vscode-extension/skills/excel-mcp-report-formatting/` d
 shared package command copies the prepared MCP skill from
 `artifacts/generated-skills/` into an isolated extension staging directory.
 
-The packaging toolchain pins MSAL Node 7.1.0 under Azure Identity 4.14.0 to fix
+The packaging toolchain pins MSAL Node 7.1.2 under Azure Identity 4.14.0 to fix
 [CVE-2026-109461](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
 This override affects development dependencies only. Remove it when Azure
 Identity declares a patched MSAL version itself. `tests/packaging-auth.test.ts`
