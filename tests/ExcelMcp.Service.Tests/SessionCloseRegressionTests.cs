@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Sbroenne.ExcelMcp.ComInterop;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -649,7 +650,7 @@ public sealed class SessionCloseRegressionTests
     {
         var sessionManager = GetSessionManager(service);
         var activeSessions = GetPrivateField<ConcurrentDictionary<string, IExcelBatch>>(sessionManager, "_activeSessions");
-        var activeFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_activeFilePaths");
+        var activeFilePaths = GetPrivateField<WorkbookPathReservations<string>>(sessionManager, "_activeFilePaths");
         var sessionFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_sessionFilePaths");
         var activeOperationCounts = GetPrivateField<ConcurrentDictionary<string, int>>(sessionManager, "_activeOperationCounts");
         var showExcelFlags = GetPrivateField<ConcurrentDictionary<string, bool>>(sessionManager, "_showExcelFlags");

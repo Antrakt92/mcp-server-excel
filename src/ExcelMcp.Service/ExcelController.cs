@@ -23,7 +23,9 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, ExcelWorkerClient> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (ExcelWorkerClient Worker, OpenWorkbookInfo Workbook)> _selections = new(StringComparer.Ordinal);
     private sealed record PathReservation(string Token, string? SessionId = null);
-    private readonly ConcurrentDictionary<string, PathReservation> _paths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly WorkbookPathReservations<PathReservation> _paths = new((first, second) =>
+        first.SessionId is not null && second.SessionId is not null
+            ? first.SessionId == second.SessionId : first.Token == second.Token);
     private readonly SemaphoreSlim _discovery = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _newWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
@@ -219,13 +221,15 @@ internal sealed class ExcelController : IDisposable
                 if (arguments.RootElement.TryGetProperty("targetPath", out var target)
                     && target.ValueKind == JsonValueKind.String && target.GetString() is { } targetPath)
                 {
-                    var normalized = FilePathValidation.NormalizeAbsoluteWindowsPath(targetPath);
+                    var normalized = WorkbookLocation.GetOwnershipKey(FilePathValidation.NormalizeAbsoluteWindowsPath(targetPath));
                     if (!_paths.TryGetValue(normalized, out var existing) || existing.SessionId != request.SessionId)
                     {
                         if (!_paths.TryAdd(normalized, reservation))
                             return ExcelWorkerHost.Failure(request, "Conflict", "The Save As destination belongs to another session or pending request.");
                         reservedPaths.Add(normalized);
                     }
+                    else
+                        _paths[normalized] = existing;
                 }
             }
             if (!worker.Registration.Worker.IsAlive())
@@ -276,7 +280,7 @@ internal sealed class ExcelController : IDisposable
                     var currentPaths = RecordedPaths(worker.Snapshot, created);
                     foreach (var path in reservedPaths)
                         if (currentPaths.Contains(path))
-                            _paths[path] = new PathReservation("recorded", created);
+                            RecordPath(worker, path, created);
                 }
                 if (response.Success && request.SessionId is { } reconciled
                     && worker.StatusError is null && worker.Snapshot is { StatusError: null } settledSnapshot
@@ -285,7 +289,7 @@ internal sealed class ExcelController : IDisposable
                 {
                     var currentPaths = RecordedPaths(settledSnapshot, reconciled);
                     foreach (var path in currentPaths)
-                        _paths[path] = new PathReservation("recorded", reconciled);
+                        RecordPath(worker, path, reconciled);
                     foreach (var old in _paths.Where(path => path.Value.Token == "recorded" && path.Value.SessionId == reconciled
                         && !currentPaths.Contains(path.Key)))
                         _paths.TryRemove(old);
@@ -360,6 +364,18 @@ internal sealed class ExcelController : IDisposable
 
     private static HashSet<string> RecordedPaths(WorkerSnapshot snapshot, string sessionId) =>
         snapshot.OwnershipKeys[sessionId].ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private void RecordPath(ExcelWorkerClient worker, string path, string sessionId)
+    {
+        var recorded = new PathReservation("recorded", sessionId);
+        if (_paths.TryGetValue(path, out var existing))
+        {
+            if (existing.SessionId != sessionId && existing.Token != worker.Registration.PipeName)
+                throw new InvalidOperationException("The workbook's physical path is reserved by another worker or session.");
+            if (_paths.TryUpdate(path, recorded, existing)) return;
+        }
+        _paths[path] = recorded;
+    }
 
     internal async Task<ExcelWorkerClient> StartWorkerAsync(ExcelProcessIdentity? excel, CancellationToken cancellationToken)
     {
@@ -447,7 +463,7 @@ internal sealed class ExcelController : IDisposable
                         var path = session.FilePath;
                         var currentPaths = RecordedPaths(snapshot, session.SessionId);
                         foreach (var ownedPath in currentPaths)
-                            _paths[ownedPath] = new PathReservation("recorded", session.SessionId);
+                            RecordPath(worker, ownedPath, session.SessionId);
                         if (!HasPendingWork(snapshot) && snapshot.StatusError is null)
                         {
                             foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker

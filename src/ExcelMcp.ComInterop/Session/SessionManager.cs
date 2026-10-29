@@ -264,7 +264,7 @@ public sealed class SessionManager : IDisposable
     }
 
     private readonly ConcurrentDictionary<string, IExcelBatch> _activeSessions = new();
-    private readonly ConcurrentDictionary<string, string> _activeFilePaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly WorkbookPathReservations<string> _activeFilePaths = new();
     private readonly ConcurrentDictionary<string, string> _sessionFilePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _activeOperationCounts = new();
     private readonly ConcurrentDictionary<string, object> _sessionLocks = new();
@@ -321,9 +321,15 @@ public sealed class SessionManager : IDisposable
             {
                 return false;
             }
-            return _activeFilePaths.TryGetValue(normalizedPath, out var owner)
-                ? string.Equals(owner, sessionId, StringComparison.Ordinal)
-                : _activeFilePaths.TryAdd(normalizedPath, sessionId);
+            if (_activeFilePaths.TryGetValue(normalizedPath, out var owner))
+            {
+                if (!string.Equals(owner, sessionId, StringComparison.Ordinal)) return false;
+                // Save As through a second hard-link name can replace that directory entry.
+                // Reserve the destination path itself before its file identity changes.
+                _activeFilePaths[normalizedPath] = sessionId;
+                return true;
+            }
+            return _activeFilePaths.TryAdd(normalizedPath, sessionId);
         }
     }
 

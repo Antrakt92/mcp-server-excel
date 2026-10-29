@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Sbroenne.ExcelMcp.ComInterop;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -70,7 +71,7 @@ public sealed class ExcelMcpServiceErrorTests
             Assert.True(manager.TryGetFilePath(session, out var reconciled));
             Assert.Equal(target, reconciled);
             Assert.Empty(GetPrivateField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePathReservations"));
-            var claims = GetPrivateField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths");
+            var claims = GetPrivateField<WorkbookPathReservations<string>>(manager, "_activeFilePaths");
             Assert.False(claims.ContainsKey(original));
             Assert.Equal(session, claims[target]);
         }
@@ -816,7 +817,7 @@ public sealed class ExcelMcpServiceErrorTests
     {
         var sessionManager = GetPrivateField<SessionManager>(service, "_sessionManager");
         var activeSessions = GetPrivateField<ConcurrentDictionary<string, IExcelBatch>>(sessionManager, "_activeSessions");
-        var activeFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_activeFilePaths");
+        var activeFilePaths = GetPrivateField<WorkbookPathReservations<string>>(sessionManager, "_activeFilePaths");
         var sessionFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_sessionFilePaths");
         var activeOperationCounts = GetPrivateField<ConcurrentDictionary<string, int>>(sessionManager, "_activeOperationCounts");
         var showExcelFlags = GetPrivateField<ConcurrentDictionary<string, bool>>(sessionManager, "_showExcelFlags");

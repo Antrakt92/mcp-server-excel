@@ -14,14 +14,24 @@ internal static class WorkbookLocation
     internal static string GetOwnershipKey(string location)
     {
         var normalized = Normalize(location);
-        if (!IsRemote(location) || new Uri(location).Query is not { Length: > 0 } query)
+        if (!IsRemote(location))
+            return WorkbookFileIdentity.Read(normalized).Path;
+        if (new Uri(location).Query is not { Length: > 0 } query)
             return normalized;
 
         return normalized + "#" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(query)));
     }
 
-    internal static bool MatchesReportedLocation(string ownershipKey, string? location) =>
-        string.Equals(Normalize(ownershipKey), location, StringComparison.OrdinalIgnoreCase);
+    internal static bool MatchesReportedLocation(string ownershipKey, string? location)
+    {
+        if (location is null) return false;
+        if (IsRemote(ownershipKey) || IsRemote(location))
+            return string.Equals(Normalize(ownershipKey), location, StringComparison.OrdinalIgnoreCase);
+        var owned = WorkbookFileIdentity.Read(Normalize(ownershipKey));
+        var reported = WorkbookFileIdentity.Read(Normalize(location));
+        return string.Equals(owned.Path, reported.Path, StringComparison.OrdinalIgnoreCase)
+            || owned.FileKey is not null && string.Equals(owned.FileKey, reported.FileKey, StringComparison.OrdinalIgnoreCase);
+    }
 
     internal static string Normalize(string location)
     {
