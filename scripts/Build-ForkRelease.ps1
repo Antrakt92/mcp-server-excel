@@ -11,11 +11,11 @@ For development packages only. Records dirty source explicitly in the manifest.
 .PARAMETER NoRestore
 Passes --no-restore to dotnet publish when the win-x64 assets are already restored.
 .EXAMPLE
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -OutputDirectory artifacts/fork/2.5.4
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -OutputDirectory artifacts/fork/3.0.0
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '2.5.4',
+    [string]$Version = '3.0.0',
     [string]$OutputDirectory,
     [string]$DotNetExecutable = 'dotnet',
     [switch]$AllowDirtySource,
@@ -123,7 +123,7 @@ Invoke-PackageStage 'ForkRelease' {
         } else { 'Run excelcli.exe --help for current CLI commands and service controls.' }
         $readme = @"
 ExcelMCP - Antrakt Fork $Version ($($component.Name), Windows x64)
-Based on upstream ExcelMcp 2.5.3 by Stefan Broenner and contributors.
+Based on upstream ExcelMcp 2.6.0 by Stefan Broenner and contributors.
 Independent fork: $repository
 MIT license; see LICENSE and FORK-NOTICE.md. No vendor endorsement is claimed.
 
@@ -134,7 +134,7 @@ Set EXCELMCP_TELEMETRY_MODE=off to explicitly disable telemetry.
 
 Verify this ZIP against SHA256SUMS from the same release. See RELEASE-MANIFEST.json
 for source provenance and verification status. Build completion is not runtime acceptance.
-Normal shutdown preserves unsaved and attached workbook state under upstream 2.5.3
+Normal shutdown preserves unsaved and attached workbook state under upstream 2.6.0
 rules. Cancellation does not authorize saving, closing, discarding or rollback.
 Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
 "@
@@ -155,7 +155,7 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
         schemaVersion = 1
         name = 'ExcelMCP - Antrakt Fork'
         version = $Version
-        upstreamVersion = '2.5.3'
+        upstreamVersion = '2.6.0'
         upstreamRepository = 'https://github.com/sbroenne/mcp-server-excel'
         repository = $repository
         sourceCommit = $commit

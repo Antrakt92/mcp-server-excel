@@ -43,6 +43,13 @@ identity, fingerprint and line count when available, plus independent read-back
 errors. It does not automatically remove a created module or restore old code.
 Inspect that state before explicitly authorizing a recovery replacement.
 
+For a procedure edit, `vba_read` action `read` returns at most 500 lines per
+page. Retain the original full-procedure `sourceHash` and fetch remaining pages
+using `hasMore`/`nextStartLine` within the original procedure span. A line-page
+fingerprint is not a substitute for the full-procedure fingerprint. Replacement
+validates the complete source before deletion and reads back the inserted span;
+a post-mutation failure reports observed state without automatic rollback.
+
 For a function result, use `vba` action `invoke`; the existing `run` action
 continues to discard return values. `arguments` accepts typed objects with
 `type` set to `string`, `number`, `boolean`, `null` or `missing`, and a scalar
@@ -73,3 +80,19 @@ addresses; ordinary numeric constants matching COM error codes remain numbers.
 Use `range_format_read` action `get-format-summary` for aggregate stored,
 displayed or both views, including mixed fields. It is not a per-cell histogram;
 detailed `get-format` permits at most 10,000 cells.
+## Formula preflight and workbook identity
+
+`range` action `validate-formula` reports `validationScope` and
+`unverifiedChecks`. Its lexical and local-sheet-reference checks do not compile
+Excel formulas, establish function/UDF availability, resolve names or external
+workbooks, detect circular references, or approve overwriting existing cells.
+An explicit target must resolve to an existing sheet and valid write geometry.
+Validation does not evaluate formulas, write scratch cells or request calculation.
+Use a disposable fixture and the required calculation dependencies for actual
+formula acceptance; a successful preflight alone is insufficient.
+
+Workbook ownership follows physical file identity, including supported Windows
+junctions and hard links. Opening an alias does not create a second independent
+session. Use the returned session identity, and inspect its current path after
+Save As. Native alias regressions were verified on NTFS; other filesystem and
+network configurations need their own acceptance checks.

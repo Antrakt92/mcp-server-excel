@@ -101,21 +101,40 @@ def tool(process, reader, request_id, arguments, *, expected_error=False):
     return structured
 
 
-def cleanup(process, readers):
+def cleanup(process, readers, receipt=None):
     primary = sys.exception()
+    receipt = receipt if receipt is not None else {}
+    receipt.update(owned_process_id=process.pid, forced_termination=False,
+                   exit_confirmed=False, no_lingering_owned_host=False)
     failures = []
+    details = receipt.setdefault("failures", [])
+
+    def record(phase, error):
+        failures.append(error)
+        details.append({"phase": phase, "exception_type": type(error).__name__})
+
     try:
         if process.poll() is None:
+            receipt["forced_termination"] = True
             process.kill()  # Popen retains the exact Windows process handle.
-        process.wait(timeout=3)
     except BaseException as error:
-        failures.append(error)
+        record("terminate_owned_host", error)
+    try:
+        process.wait(timeout=3)
+        receipt["exit_confirmed"] = process.poll() is not None
+        receipt["no_lingering_owned_host"] = receipt["exit_confirmed"]
+        receipt["exit_code"] = process.returncode
+    except BaseException as error:
+        record("wait_owned_host", error)
     for reader in readers:
-        reader.thread.join(timeout=2)
-        if reader.thread.is_alive():
-            failures.append(RuntimeError("Owned pipe reader did not stop"))
-        if reader.failure:
-            failures.append(reader.failure)
+        try:
+            reader.thread.join(timeout=2)
+            if reader.thread.is_alive():
+                record("join_owned_reader", RuntimeError("Owned pipe reader did not stop"))
+            if reader.failure:
+                record("owned_reader", reader.failure)
+        except BaseException as error:
+            record("join_owned_reader", error)
     for stream in (process.stdin, process.stdout, process.stderr):
         try:
             # A stuck reader must not turn close() into an unbounded lock wait.
@@ -124,15 +143,58 @@ def cleanup(process, readers):
             if stream and not stream.closed:
                 stream.close()
         except BaseException as error:
-            failures.append(error)
+            record("close_owned_stream", error)
+    receipt["passed"] = not failures and receipt["exit_confirmed"]
     if failures:
         if primary:
             primary.add_note("Owned process cleanup failed: " + ", ".join(type(error).__name__ for error in failures))
         else:
             raise ExceptionGroup("Owned process cleanup failed", failures)
+    return receipt
 
 
-def protocol_case(exe, idle_seconds):
+def process_metrics(process):
+    """Read counters through the exact Popen handle; never enumerate other processes."""
+    from ctypes import wintypes
+
+    class MemoryCounters(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                "peak_working_set", "working_set", "peak_paged", "paged",
+                "peak_nonpaged", "nonpaged", "pagefile", "peak_pagefile", "private")]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    query_memory = kernel.K32GetProcessMemoryInfo
+    query_memory.argtypes = [wintypes.HANDLE, ctypes.POINTER(MemoryCounters), wintypes.DWORD]
+    query_memory.restype = wintypes.BOOL
+    query_handles = kernel.GetProcessHandleCount
+    query_handles.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    query_handles.restype = wintypes.BOOL
+    memory, handles = MemoryCounters(), wintypes.DWORD()
+    memory.cb = ctypes.sizeof(memory)
+    if not query_memory(int(process._handle), ctypes.byref(memory), memory.cb):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if not query_handles(int(process._handle), ctypes.byref(handles)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return {"handles": handles.value, "privateBytes": getattr(memory, "private"),
+            "workingSetBytes": memory.working_set}
+
+
+def cleanup_case(process, readers, receipt):
+    primary = sys.exception()
+    if primary is not None:
+        receipt["passed"] = False
+        receipt["error"] = {"exception_type": type(primary).__name__}
+    try:
+        cleanup(process, readers, receipt=receipt.setdefault("cleanup", {}))
+    except BaseException as error:
+        receipt["passed"] = False
+        receipt.setdefault("error", {"exception_type": type(error).__name__})
+        raise
+
+
+def protocol_case(exe, idle_seconds, receipt=None):
+    receipt = receipt if receipt is not None else {"case": "initialize-list-negative-parity-eof", "passed": False}
     process, out, err = start(exe)
     try:
         count = initialize(process, out)
@@ -143,19 +205,28 @@ def protocol_case(exe, idle_seconds):
             negative = tool(process, out, 4, {"action": "test", "file_path": str(Path(folder) / "absent.xlsx")}, expected_error=True)
             require(negative.get("success") is False and negative.get("exists") is False,
                     "Missing-file diagnostic unexpectedly succeeded")
+        samples = [process_metrics(process)]
         if idle_seconds:
             deadline = time.monotonic() + idle_seconds
             while time.monotonic() < deadline:
                 require(process.poll() is None, "Host exited during idle")
                 time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+                samples.append(process_metrics(process))
         process.stdin.close()
         require(process.wait(timeout=8) == 0, "EOF shutdown returned a failure")
-        return {"case": "initialize-list-negative-parity-eof", "passed": True, "toolCount": count, "idleSeconds": idle_seconds}
+        receipt.update({"case": "initialize-list-negative-parity-eof", "passed": True, "toolCount": count, "idleSeconds": idle_seconds,
+                "idleResources": {"scope": "Owned host after protocol warmup; observational, not an all-day leak guarantee",
+                                  "growthAssertions": False, "sampleCount": len(samples),
+                                  "baseline": samples[0], "final": samples[-1],
+                                  "peak": {key: max(sample[key] for sample in samples) for key in samples[0]},
+                                  "delta": {key: samples[-1][key] - samples[0][key] for key in samples[0]}}})
+        return receipt
     finally:
-        cleanup(process, [out, err])
+        cleanup_case(process, [out, err], receipt)
 
 
-def stdout_case(exe):
+def stdout_case(exe, receipt=None):
+    receipt = receipt if receipt is not None else {"case": "broken-stdout-stdin-held-open", "passed": False}
     process, out, err = start(exe, stop_id=2)
     try:
         initialize(process, out)
@@ -166,9 +237,10 @@ def stdout_case(exe):
         # The stdin writer remains open throughout this exit check.
         code = process.wait(timeout=8)
         require(code == 0, "Broken-stdout shutdown returned a failure")
-        return {"case": "broken-stdout-stdin-held-open", "passed": True, "exitCode": code}
+        receipt.update(case="broken-stdout-stdin-held-open", passed=True, exitCode=code)
+        return receipt
     finally:
-        cleanup(process, [out, err])
+        cleanup_case(process, [out, err], receipt)
 
 
 PARENT_HELPER = r'''
@@ -197,7 +269,8 @@ with open(sys.argv[4],'wb') as out,open(sys.argv[5],'wb') as err:
 '''
 
 
-def parent_case(exe):
+def parent_case(exe, receipt=None):
+    receipt = receipt if receipt is not None else {"case": "parent-exit-stdin-held-open", "passed": False}
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
     kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
@@ -228,9 +301,16 @@ def parent_case(exe):
             kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
             require(kernel.GetExitCodeProcess(owned, ctypes.byref(code)), "Cannot read child exit status")
             require(code.value == 0, "Parent-exit shutdown returned a failure")
-            return {"case": "parent-exit-stdin-held-open", "passed": True, "exitCode": code.value}
+            receipt.update(case="parent-exit-stdin-held-open", passed=True, exitCode=code.value)
+            return receipt
         finally:
             primary = sys.exception()
+            if primary is not None:
+                receipt["passed"] = False
+                receipt["error"] = {"exception_type": type(primary).__name__}
+            finalizer = receipt.setdefault("cleanup", {})
+            finalizer.update(helper_process_id=helper.pid if helper is not None else None,
+                             owned_child_handle_received=owned is not None, exit_confirmed=False, forced_termination=False)
             failures = []
             if helper is not None:
                 try:
@@ -249,17 +329,27 @@ def parent_case(exe):
                     state = kernel.WaitForSingleObject(owned, 0)
                     require(state in (0, 258), "Owned process wait failed")
                     if state == 258:
+                        finalizer["forced_termination"] = True
                         require(kernel.TerminateProcess(owned, 1), "Owned process termination failed")
                         require(kernel.WaitForSingleObject(owned, 3000) == 0, "Owned process cleanup deadline expired")
+                    finalizer["exit_confirmed"] = True
                 except BaseException as error:
                     failures.append(error)
                 finally:
                     if not kernel.CloseHandle(owned):
                         failures.append(RuntimeError("Owned process handle close failed"))
-            os.close(write_fd)
-            if read_fd is not None:
-                os.close(read_fd)
+            for descriptor in (write_fd, read_fd):
+                if descriptor is not None:
+                    try:
+                        os.close(descriptor)
+                    except BaseException as error:
+                        failures.append(error)
+            finalizer["owned_child_handle_received"] = owned is not None
+            finalizer["failures"] = [{"exception_type": type(error).__name__} for error in failures]
+            finalizer["passed"] = not failures and finalizer["exit_confirmed"]
             if failures:
+                receipt["passed"] = False
+                receipt.setdefault("error", {"exception_type": type(primary).__name__ if primary else "ExceptionGroup"})
                 if primary:
                     primary.add_note("Parent-case cleanup failed: " + ", ".join(type(error).__name__ for error in failures))
                 else:
@@ -278,11 +368,23 @@ def main():
     digest = hashlib.sha256(exe.read_bytes()).hexdigest()
     report = {"sha256": digest, "allPassed": False, "cases": []}
     try:
-        report["cases"].append(protocol_case(exe, args.idle_seconds))
-        report["cases"].append(stdout_case(exe))
-        report["cases"].append(parent_case(exe))
+        for name, run, extra in (
+            ("initialize-list-negative-parity-eof", protocol_case, (args.idle_seconds,)),
+            ("broken-stdout-stdin-held-open", stdout_case, ()),
+            ("parent-exit-stdin-held-open", parent_case, ())):
+            case = {"case": name, "passed": False}
+            report["cases"].append(case)
+            try:
+                run(exe, *extra, receipt=case)
+            except BaseException as error:
+                case["passed"] = False
+                case.setdefault("error", {"exception_type": type(error).__name__})
+                raise
         require(hashlib.sha256(exe.read_bytes()).hexdigest() == digest, "Executable changed during verification")
         report["allPassed"] = True
+    except BaseException as error:
+        report["error"] = {"exception_type": type(error).__name__}
+        raise
     finally:
         primary = sys.exception()
         try:
