@@ -4,7 +4,6 @@ using Sbroenne.ExcelMcp.CLI.Commands;
 using Sbroenne.ExcelMcp.CLI.Generated;
 using Sbroenne.ExcelMcp.CLI.Infrastructure;
 using Sbroenne.ExcelMcp.CLI.Telemetry;
-using Sbroenne.ExcelMcp.ComInterop.Session;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -28,7 +27,10 @@ internal sealed class Program
         string[] args,
         CliCommandRuntime? runtime = null)
     {
+        if (Service.ExcelController.IsWorkerMode(args))
+            return await Service.ExcelController.RunWorkerAsync(args);
         using var runtimeScope = CliCommandRuntime.Push(runtime ?? CliCommandRuntime.Current);
+        InitializeOperation(args);
         try
         {
             try
@@ -37,10 +39,9 @@ internal sealed class Program
             }
             catch (InvalidOperationException ex)
             {
-                CliCommandRuntime.Current.Error.WriteLine(ex.Message);
-                return 1;
+                return CliErrorOutput.WriteException(ex);
             }
-            return await RunAsync(args, runtime);
+            return await RunAsync(args, runtime, initializeOperation: false);
         }
         finally
         {
@@ -52,7 +53,8 @@ internal sealed class Program
         Justification = "Top-level CLI boundary writes the exact exception as JSON or stderr diagnostics and returns nonzero; it must not let a fatal command failure appear successful.")]
     internal static async Task<int> RunAsync(
         string[] args,
-        CliCommandRuntime? runtime = null)
+        CliCommandRuntime? runtime = null,
+        bool initializeOperation = true)
     {
         if (runtime is null)
         {
@@ -60,6 +62,8 @@ internal sealed class Program
         }
 
         using var runtimeScope = CliCommandRuntime.Push(runtime ?? CliCommandRuntime.Current);
+        if (initializeOperation)
+            InitializeOperation(args);
 
         // Determine if we should show the banner:
         // - Not when --quiet/-q flag is passed
@@ -67,7 +71,6 @@ internal sealed class Program
         var isQuiet = args.Any(arg => QuietFlags.Contains(arg, StringComparer.OrdinalIgnoreCase));
         var isPiped = CliCommandRuntime.Current.IsOutputRedirected;
         var showBanner = !isQuiet && !isPiped;
-        var jsonOutputMode = isQuiet || isPiped;
 
         // Remove quiet flags and normalize standalone dash option values before Spectre parsing.
         var filteredArgs = NormalizeStandaloneDashOptionValues(
@@ -76,7 +79,7 @@ internal sealed class Program
         if (filteredArgs.Length == 0)
         {
             if (showBanner) RenderHeader();
-            WriteDiagnosticMarkupLine("[dim]No command supplied. Use [green]--help[/] for usage examples.[/]");
+            WriteDiagnosticMarkupLine("[dim]No command supplied. Use [green]--help[/] for commands. For a known sequence in one call, use [green]batch --help[/].[/]");
             return 0;
         }
 
@@ -89,7 +92,6 @@ internal sealed class Program
         {
             return 0;
         }
-
         // Handle "service run" — runs the CLI daemon with tray icon (no banner)
         // Optional: --pipe-name <name> to override the default CLI pipe (used by tests)
         if (filteredArgs.Length >= 2
@@ -97,13 +99,15 @@ internal sealed class Program
             && string.Equals(filteredArgs[1], "run", StringComparison.OrdinalIgnoreCase))
         {
             string? pipeNameOverride = null;
-            for (int i = 2; i < filteredArgs.Length - 1; i++)
+            for (int i = 2; i < filteredArgs.Length; i++)
             {
-                if (string.Equals(filteredArgs[i], "--pipe-name", StringComparison.OrdinalIgnoreCase))
-                {
-                    pipeNameOverride = filteredArgs[i + 1];
-                    break;
-                }
+                if (!string.Equals(filteredArgs[i], "--pipe-name", StringComparison.OrdinalIgnoreCase))
+                    return CliErrorOutput.WriteError($"Unexpected argument '{filteredArgs[i]}' for service run. Only --pipe-name <name> is supported.");
+                if (i + 1 == filteredArgs.Length ||
+                    (filteredArgs[i + 1].StartsWith('-') && filteredArgs[i + 1] != "-"))
+                    return CliErrorOutput.WriteError("--pipe-name requires a name for service run.");
+                pipeNameOverride ??= filteredArgs[i + 1];
+                i++;
             }
             CliTelemetry.StartDaemonReporting();
             var daemonRunner = CliCommandRuntime.Current.ServiceDaemonRunner ?? RunServiceDaemon;
@@ -120,15 +124,10 @@ internal sealed class Program
             config.SetApplicationName("excelcli");
             config.SetApplicationVersion(GetCurrentVersion());
             config.Settings.StrictParsing = true;
+            config.SetInterceptor(new MissingValueInterceptor(filteredArgs));
             config.SetExceptionHandler((ex, _) =>
             {
-                if (jsonOutputMode)
-                {
-                    CliErrorOutput.WriteException(ex);
-                    return;
-                }
-
-                WriteDiagnosticMarkupLine($"[red]Unhandled error:[/] {ex.Message.EscapeMarkup()}");
+                CliErrorOutput.WriteException(ex);
             });
 
             // Service lifecycle commands
@@ -145,7 +144,7 @@ internal sealed class Program
 
             // Batch command — execute multiple commands in a single process launch
             config.AddCommand<BatchCommand>("batch")
-                .WithDescription("Execute multiple commands from a JSON file or stdin. Outputs NDJSON (one result per line).");
+                .WithDescription("Run a known sequence in one CLI call, avoiding repeated launches. See batch --help for input examples.");
 
             // Session commands
             config.AddBranch("session", branch =>
@@ -158,13 +157,21 @@ internal sealed class Program
                 branch.AddCommand<SessionCreateCommand>("create")
                     .WithDescription("Create a new Excel file, open it, and create a session. Add --show for visible Excel.");
                 branch.AddCommand<SessionOpenCommand>("open")
-                    .WithDescription("Open an Excel file and create a session. Add --show for visible Excel.");
+                    .WithDescription("Open an Excel file with VBA macros disabled and create a session. Add --show for visible Excel.");
+                branch.AddCommand<SessionNoticesCommand>("notices")
+                    .WithDescription("Inspect workbook restrictions without enabling content. Reports Protected View, read-only access, known VBA opening state, and data connections. complete:false and unknown states mean inspection is limited: not every notification bar is readable. A connection or VBA project does not prove that content can run.");
+                branch.AddCommand<SessionSecurityCommand>("enable-editing")
+                    .WithDescription("Leave Protected View only with --approved and --allow-remembered-trust. Excel can remember trust for this file. Does not enable VBA macros or update external links.");
+                branch.AddCommand<SessionSecurityCommand>("enable-connections")
+                    .WithDescription("Enable all workbook data connections with --approved and --allow-remembered-trust. Can contact data sources or start refresh; completion is not established.");
+                branch.AddCommand<SessionSecurityCommand>("enable-macros")
+                    .WithDescription("Enable VBA by reopening a saved local workbook with --approved and --allow-reopen. Only for a session-owned workbook without neighbors; opening macros can run.");
                 branch.AddCommand<SessionCloseCommand>("close")
                     .WithDescription("Close a session. Use --save to persist changes.");
                 branch.AddCommand<SessionSaveCommand>("save")
                     .WithDescription("Save the current workbook without closing its session. Excel must be ready.");
                 branch.AddCommand<SessionListCommand>("list")
-                    .WithDescription("List active sessions with canClose, excelState, operationPending and blocker details. Confirmed blocking dialogs automatically reveal Excel and include readable dialog text in blockingMessage; partial or unavailable reads are reported. Ask the user to respond in Excel. Dialog types are not identified and input values are not read.");
+                    .WithDescription("List active sessions with canClose, excelState, operationPending and blocker details. A pending operation is not a completed or failed operation. activeOperations:0 does not prove Excel has finished. After a timeout, check the operation's outcome and inspect the workbook before repeating a change. Confirmed blocking dialogs automatically reveal Excel and include readable dialog text in blockingMessage; partial or unavailable reads are reported. Ask the user to respond in Excel. Dialog types are not identified and input values are not read.");
                 branch.AddCommand<SessionTestCommand>("test")
                     .WithDescription("Test file existence, validity, openability, and IRM/AIP read-only requirements.");
             });
@@ -180,38 +187,38 @@ internal sealed class Program
         try
         {
             var telemetryObserver = CliCommandRuntime.Current.TelemetryObserver;
-            return await (telemetryObserver == null
+            var exitCode = await (telemetryObserver == null
                 ? CliTelemetry.TrackCliInvocationAsync(filteredArgs, () => app.RunAsync(filteredArgs))
                 : CliTelemetry.TrackCliInvocationAsync(
                     filteredArgs,
                     () => app.RunAsync(filteredArgs),
                     telemetryObserver));
+            if (exitCode == 0 &&
+                string.Equals(filteredArgs[0], "batch", StringComparison.OrdinalIgnoreCase) &&
+                filteredArgs.Any(argument => argument is "--help" or "-h"))
+            {
+                BatchHelp.Write();
+            }
+            return exitCode;
         }
         catch (CommandRuntimeException ex)
         {
-            if (jsonOutputMode)
-            {
-                return CliErrorOutput.WriteException(ex);
-            }
-
-            WriteDiagnosticMarkupLine($"[red]Command error:[/] {ex.Message.EscapeMarkup()}");
-            return 1;
+            return CliErrorOutput.WriteException(ex, "InvalidInput");
         }
         catch (Exception ex)
         {
-            if (jsonOutputMode)
-            {
-                return CliErrorOutput.WriteException(ex);
-            }
-
-            WriteDiagnosticMarkupLine($"[red]Fatal error:[/] {ex.Message.EscapeMarkup()}");
-            var errorConsole = CreateErrorConsole();
-            if (errorConsole.Profile.Capabilities.Ansi)
-            {
-                errorConsole.WriteException(ex, ExceptionFormats.ShortenEverything);
-            }
-            return 1;
+            return CliErrorOutput.WriteException(ex);
         }
+    }
+
+    private static void InitializeOperation(string[] args)
+    {
+        CliCommandRuntime.Current.OperationTimer.Restart();
+        var parts = args.Where(arg => !QuietFlags.Contains(arg, StringComparer.OrdinalIgnoreCase))
+            .TakeWhile(arg => !arg.StartsWith('-')).Take(2).ToArray();
+        CliCommandRuntime.Current.CommandName = parts.Length > 0 && parts[0] is "batch" or "list-actions"
+            ? parts[0]
+            : string.Join(".", parts).ToLowerInvariant();
     }
 
     internal static string[] NormalizeStandaloneDashOptionValues(string[] args)
@@ -245,6 +252,7 @@ internal sealed class Program
         err.Write(new FigletText("Excel CLI").Color(Spectre.Console.Color.Blue));
         err.MarkupLine("[dim]Automate Microsoft Excel from the command line[/]");
         err.MarkupLine("[yellow]Workflow:[/] [green]session open <file>[/] → run commands with [green]--session <id>[/] → [green]session close --save[/].");
+        err.MarkupLine("[dim]For a known sequence in one call, use [green]batch --help[/].[/]");
         err.MarkupLine("[dim]A background service manages sessions for performance.[/]");
         err.WriteLine();
     }
@@ -398,38 +406,44 @@ internal sealed class Program
         }
 
         var daemonIdentity = DaemonProcessTracker.RegisterCurrentProcess(pipeName);
-        Action<ExcelProcessIdentity> excelProcessTracker =
-            process => DaemonProcessTracker.RecordExcelProcesses(
-                pipeName,
-                daemonIdentity,
-                [
-                    new DaemonProcessTracker.ProcessIdentity(
-                        process.ProcessId,
-                        process.StartedAtUtcFileTime)
-                ]);
-        SessionManager.ExcelProcessIdentityTracked += excelProcessTracker;
-        Action<ExcelProcessIdentity> preserveExcelProcess = process =>
-            DaemonProcessTracker.PreserveExcelProcess(pipeName, daemonIdentity,
-                new DaemonProcessTracker.ProcessIdentity(process.ProcessId, process.StartedAtUtcFileTime));
-        SessionManager.ExcelProcessIdentityPreserved += preserveExcelProcess;
-        foreach (var process in SessionManager.GetTrackedExcelProcesses())
-        {
-            excelProcessTracker(process);
-        }
-
-        Service.ExcelMcpService? service = null;
+        Service.ExcelController? service = null;
         try
         {
-            service = new Service.ExcelMcpService(CliTelemetry.TrackDaemonRequestAsync);
+            service = new Service.ExcelController(CliTelemetry.TrackDaemonRequestAsync);
+            service.ExcelProcessObserved += process =>
+                DaemonProcessTracker.RecordExcelProcesses(pipeName, daemonIdentity,
+                    [new DaemonProcessTracker.ProcessIdentity(process.ProcessId, process.StartedAtUtcFileTime)]);
+            service.ExcelProcessPreserved += process =>
+                DaemonProcessTracker.PreserveExcelProcess(pipeName, daemonIdentity,
+                    new DaemonProcessTracker.ProcessIdentity(process.ProcessId, process.StartedAtUtcFileTime));
 
             // Capture the UI synchronization context after Application starts
             SynchronizationContext? uiContext = null;
 
             // Run WinForms message loop with tray icon on main thread
-            using var tray = new CliServiceTray(service.SessionManager, () =>
+            using var tray = new CliServiceTray(() => service.Sessions,
+                (sessionId, save) => service.ProcessAsync(new Service.ServiceRequest
+                {
+                    Command = "session.close",
+                    SessionId = sessionId,
+                    Args = System.Text.Json.JsonSerializer.Serialize(new { save })
+                }), async () =>
             {
-                var report = service.RequestShutdown();
-                Application.ExitThread();
+                var report = await service.ShutdownAsync();
+                try
+                {
+                    if (report is not null)
+                    {
+                        await Console.Error.WriteLineAsync(report);
+                        var reportPath = DaemonProcessTracker.GetTrackingFilePath(pipeName) + ".shutdown.txt";
+                        await File.WriteAllTextAsync(reportPath, report);
+                        await Console.Error.WriteLineAsync($"Excel was left open. Shutdown details: {reportPath}");
+                    }
+                }
+                finally
+                {
+                    await service.RequestShutdownAsync();
+                }
                 return report;
             });
 
@@ -468,7 +482,9 @@ internal sealed class Program
             }
             finally
             {
-                PersistCurrentExcelProcesses(pipeName, daemonIdentity);
+                DaemonProcessTracker.RecordExcelProcesses(pipeName, daemonIdentity,
+                    service.ExcelProcesses.Select(process => new DaemonProcessTracker.ProcessIdentity(
+                        process.ProcessId, process.StartedAtUtcFileTime)).ToArray());
                 service.Dispose();
                 service = null;
             }
@@ -477,11 +493,11 @@ internal sealed class Program
         {
             if (service != null)
             {
-                PersistCurrentExcelProcesses(pipeName, daemonIdentity);
+                DaemonProcessTracker.RecordExcelProcesses(pipeName, daemonIdentity,
+                    service.ExcelProcesses.Select(process => new DaemonProcessTracker.ProcessIdentity(
+                        process.ProcessId, process.StartedAtUtcFileTime)).ToArray());
                 service.Dispose();
             }
-            SessionManager.ExcelProcessIdentityTracked -= excelProcessTracker;
-            SessionManager.ExcelProcessIdentityPreserved -= preserveExcelProcess;
 
             // Release the daemon mutex so a new daemon can start if needed.
             if (ownsLegacyDaemonMutex)
@@ -493,17 +509,4 @@ internal sealed class Program
         }
     }
 
-    private static void PersistCurrentExcelProcesses(
-        string pipeName,
-        DaemonProcessTracker.ProcessIdentity daemonIdentity)
-    {
-        _ = DaemonProcessTracker.TryRecordExcelProcesses(
-                pipeName,
-                daemonIdentity,
-                SessionManager.GetTrackedExcelProcesses()
-                    .Select(process => new DaemonProcessTracker.ProcessIdentity(
-                        process.ProcessId,
-                        process.StartedAtUtcFileTime))
-                    .ToList());
-    }
 }

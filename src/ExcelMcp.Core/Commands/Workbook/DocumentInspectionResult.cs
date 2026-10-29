@@ -39,7 +39,8 @@ public sealed record DocumentInspectorOutcome(int StatusCode, string Results)
 /// <param name="Name">Native localized module name, including any accelerator ampersands.</param>
 /// <param name="StatusCode">Native inspection status.</param>
 /// <param name="Results">Native localized inspection results.</param>
-public sealed record DocumentInspectorFinding(int Index, string Name, int StatusCode, string Results)
+public sealed record DocumentInspectorFinding(int Index, string Name,
+    int StatusCode, string Results)
 {
     /// <summary>Stable status label, independent of Excel's display language.</summary>
     public string Status => new DocumentInspectorOutcome(StatusCode, Results).Status;

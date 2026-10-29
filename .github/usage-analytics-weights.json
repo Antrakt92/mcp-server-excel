@@ -245,6 +245,10 @@
         "create": "medium",
         "discover": "light",
         "attach": "light",
+        "notices": "light",
+        "enable-editing": "medium",
+        "enable-connections": "medium",
+        "enable-macros": "medium",
         "list": "light",
         "open": "light",
         "save": "light",
@@ -285,7 +289,8 @@
         "refresh": "heavy",
         "set-cache-options": "medium",
         "set-connection": "medium",
-        "set-source": "heavy"
+        "set-source": "heavy",
+        "share-cache": "heavy"
       }
     },
     "pivottable_calc": {

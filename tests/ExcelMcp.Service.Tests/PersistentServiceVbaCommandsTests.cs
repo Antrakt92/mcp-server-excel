@@ -80,6 +80,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, "ReopenTestModule", vbaCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act - reopen the existing .xlsm, prove VBA project access still works, then run
         var reopenedBatch = _fixture.BatchToken;
@@ -113,6 +114,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, moduleName, initialCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act
         var reopenedBatch = _fixture.BatchToken;
@@ -149,6 +151,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, moduleName, originalCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act
         var reopenedBatch = _fixture.BatchToken;
@@ -574,6 +577,24 @@ End Sub";
         Assert.NotNull(result.Values);
         Assert.Single(result.Values);
         Assert.Equal("HelloWorld", result.Values[0][0]?.ToString());
+    }
+
+    [Fact]
+    public void ScriptCommands_Run_WithThirtyParameters_PreservesPositionAndRestoresSecurity()
+    {
+        var parameters = Enumerable.Range(1, 30).Select(index => $"value-{index}").ToArray();
+        string declaration = string.Join(", ", Enumerable.Range(1, 30).Select(index => $"ByVal p{index} As String"));
+        string statements = string.Join("\n", Enumerable.Range(1, 30).Select(index =>
+            $"    ThisWorkbook.Worksheets(1).Cells(1, {index}).Value = p{index}"));
+        Import(_fixture.BatchToken, "ThirtyParameters", $"Public Sub Store({declaration})\n{statements}\nEnd Sub");
+        var before = _fixture.ExecuteRawVerification((ctx, _) => ctx.App.AutomationSecurity);
+
+        RequireSuccess(_scriptCommands.Run(_fixture.BatchToken, "ThirtyParameters.Store", null, parameters));
+
+        var values = RequireSuccess(_commands.GetValues(_fixture.BatchToken, "Sheet1", "A1:AD1"));
+        Assert.Equal(parameters, Assert.Single(values.Values).Select(value => value?.ToString()));
+        var after = _fixture.ExecuteRawVerification((ctx, _) => ctx.App.AutomationSecurity);
+        Assert.Equal(before, after);
     }
 
     [Fact]

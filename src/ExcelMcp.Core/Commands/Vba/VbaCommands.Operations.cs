@@ -1,11 +1,9 @@
 using System.Globalization;
-using System.Reflection;
-using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
-using Sbroenne.ExcelMcp.Core.Utilities;
+using Vbe = Microsoft.Vbe.Interop;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
 
@@ -25,6 +23,10 @@ public partial class VbaCommands
                 nameof(procedureName));
         }
         parameters ??= [];
+        if (parameters.Length > 30)
+        {
+            throw new ArgumentException("Excel accepts at most 30 macro parameters.", nameof(parameters));
+        }
 
         EnsureVbaFile(batch.WorkbookPath);
 
@@ -34,78 +36,43 @@ public partial class VbaCommands
 
         Func<OperationResult> execute = () => batch.Execute((ctx, ct) =>
         {
+            var owner = batch is AttachedWorkbookBatch attached ? attached.Owner : batch as ExcelBatch;
+            if (owner?.RequiresVbaApproval(ctx.Book) == true)
+                throw new InvalidOperationException(
+                    batch is AttachedWorkbookBatch
+                    ? "VBA macros were disabled when this workbook opened. Use Excel to review macro permissions " +
+                    "and run the procedure. This workbook was already open in Excel, so this session cannot reopen it " +
+                    "to enable macros. No procedure was run."
+                    : "VBA macros were disabled when this workbook opened. Obtain approval for file enable-macros " +
+                    "with approved:true and allow_reopen:true (CLI: session enable-macros --approved --allow-reopen) " +
+                    "before running a procedure. The saved workbook must be reopened; unsaved changes are not discarded.");
             var originalCulture = CultureInfo.CurrentCulture;
             var originalUiCulture = CultureInfo.CurrentUICulture;
-            object? originalAutomationSecurity = null;
-            Exception? operationFailure = null;
             try
             {
                 var excelCulture = CultureInfo.GetCultureInfo("en-US");
                 CultureInfo.CurrentCulture = excelCulture;
                 CultureInfo.CurrentUICulture = excelCulture;
 
-                // Explicit macro execution is an opt-in operation. Temporarily switch automation
-                // security to low so Application.Run can execute on workbooks reopened by the
-                // automation host, then restore the previous setting after the call.
-                // PIA gap: AutomationSecurity is an Office.Core enum unavailable in the supported Excel-only references.
-                dynamic app = (dynamic)(object)ctx.App;
-                originalAutomationSecurity = app.AutomationSecurity;
-                app.AutomationSecurity = 1;
-
-                // Use late-bound COM dispatch via Type.InvokeMember to avoid dependency on
-                // Microsoft.Vbe.Interop.dll, which is not available on Click-to-Run Office
-                // installations. The early-bound PIA call ctx.App.Run() triggers assembly
-                // resolution of VBE types through the embedded Application interface metadata.
-                var args = new object[1 + parameters.Length];
-                args[0] = $"'{ctx.Book.Name.Replace("'", "''", StringComparison.Ordinal)}'!{procedureName}";
+                string qualifiedName = $"'{ctx.Book.Name.Replace("'", "''", StringComparison.Ordinal)}'!{procedureName}";
+                var args = new object[30];
+                Array.Fill(args, Type.Missing);
                 for (int i = 0; i < parameters.Length; i++)
                 {
-                    args[i + 1] = parameters[i];
+                    args[i] = parameters[i];
                 }
 
-                var excelApplicationType = Type.GetTypeFromProgID("Excel.Application")
-                    ?? throw new InvalidOperationException("Excel is not installed or not properly registered.");
-
-                excelApplicationType.InvokeMember(
-                    "Run",
-                    BindingFlags.InvokeMethod,
-                    null,
-                    ctx.App,
-                    args,
-                    excelCulture);
+                ctx.App.Run(qualifiedName,
+                    args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9],
+                    args[10], args[11], args[12], args[13], args[14], args[15], args[16], args[17], args[18], args[19],
+                    args[20], args[21], args[22], args[23], args[24], args[25], args[26], args[27], args[28], args[29]);
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
-            catch (TargetInvocationException ex) when (ex.InnerException != null)
-            {
-                operationFailure = ex.InnerException;
-                ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
-                throw;
-            }
-            catch (Exception ex)
-            {
-                operationFailure = ex;
-                throw;
-            }
             finally
             {
-                try
-                {
-                    if (originalAutomationSecurity != null)
-                    {
-                        OperationCleanup.Run(() =>
-                        {
-                            // PIA gap: AutomationSecurity lives in office.dll (Microsoft.Office.Core),
-                            // so restoring it must stay late-bound to avoid loading a missing Office core assembly.
-                            ((dynamic)(object)ctx.App).AutomationSecurity = originalAutomationSecurity;
-                        }, operationFailure);
-                    }
-                }
-                finally
-                {
-                    CultureInfo.CurrentCulture = originalCulture;
-                    CultureInfo.CurrentUICulture = originalUiCulture;
-                }
+                CultureInfo.CurrentCulture = originalCulture;
+                CultureInfo.CurrentUICulture = originalUiCulture;
             }
         }, timeoutCts?.Token ?? default);
 
@@ -139,20 +106,18 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? targetComponent = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
+            Vbe.VBComponent? targetComponent = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, not the Excel PIA.
-                // No .NET 5+ compatible NuGet package exists for VBE types.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 vbComponents = vbaProject.VBComponents;
 
                 for (int i = 1; i <= vbComponents.Count; i++)
                 {
-                    dynamic? component = null;
+                    Vbe.VBComponent? component = null;
                     try
                     {
                         component = vbComponents.Item(i);

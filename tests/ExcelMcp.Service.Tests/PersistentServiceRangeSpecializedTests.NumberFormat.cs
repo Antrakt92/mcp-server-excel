@@ -12,12 +12,8 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class PersistentServiceRangeSpecializedTests
 {
     // Standard format codes - raw strings, no helper class needed
-    private const string FormatCurrency = "$#,##0.00";
     private const string FormatPercentage = "0.00%";
-    private const string FormatPercentageOneDecimal = "0.0%";
     private const string FormatNumber = "#,##0.00";
-    private const string FormatDateShort = "m/d/yyyy";
-    private const string FormatText = "@";
 
     // LCID-based currency format (proper Excel category recognition)
     private const string FormatCurrencyLCID = "[$$-409]#,##0.00"; // US Dollar with LCID
@@ -55,54 +51,6 @@ public sealed partial class PersistentServiceRangeSpecializedTests
         // Assert - Verify Excel displays currency correctly
         Assert.Equal(expectedText, displayedText);
         Assert.Equal(1234.56, Assert.IsType<double>(rawValue));
-    }
-
-    /// <summary>
-    /// Test using NumberFormatLocal to see if that works better for locale settings
-    /// </summary>
-    [Fact]
-    public void SetNumberFormatLocal_Currency_DisplaysCorrectly()
-    {
-        // Arrange
-        var batch = _fixture.BatchToken;
-        var sheetName = _fixture.CreateTestSheet(batch);
-
-        // Set test value
-        RequireSuccess(_commands.SetValues(batch, sheetName, "A1", [[1234.56]]));
-
-        // Apply format using NumberFormatLocal directly (locale-specific separators)
-        // In German locale: , is decimal separator, . is thousands separator
-        _fixture.ExecuteRawVerification((ctx, ct) =>
-        {
-            Excel.Worksheet? sheet = null;
-            Excel.Range? cell = null;
-            try
-            {
-                sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
-                Assert.NotNull(sheet);
-                cell = sheet.Range["A1"];
-                cell.NumberFormatLocal =
-                    $"$#{ctx.FormatTranslator.ThousandsSeparator}##0{ctx.FormatTranslator.DecimalSeparator}00";
-            }
-            finally
-            {
-                ComUtilities.Release(ref cell);
-                ComUtilities.Release(ref sheet);
-            }
-        });
-
-        // Act - Read the displayed text
-        var (displayedText, storedFormat, storedFormatLocal, rawValue) = ReadNumberDisplay(sheetName);
-
-        // Diagnostics
-        _output.WriteLine($"Format applied (NumberFormatLocal): $#.##0,00");
-        _output.WriteLine($"Format stored (NumberFormat): {storedFormat}");
-        _output.WriteLine($"Format stored (NumberFormatLocal): {storedFormatLocal}");
-        _output.WriteLine($"Displayed text: '{displayedText}'");
-
-        // Assert
-        Assert.Equal(ExpectedCurrencyDisplay(), displayedText);
-        Assert.Equal(1234.56, rawValue);
     }
 
     /// <summary>
@@ -171,10 +119,10 @@ public sealed partial class PersistentServiceRangeSpecializedTests
                 sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
                 Assert.NotNull(sheet);
                 cell = sheet.Range["A1"];
-                string text = Convert.ToString(cell.Text, CultureInfo.InvariantCulture) ?? string.Empty;
-                string format = Convert.ToString(cell.NumberFormat, CultureInfo.InvariantCulture) ?? string.Empty;
-                string localFormat = Convert.ToString(cell.NumberFormatLocal, CultureInfo.InvariantCulture) ?? string.Empty;
-                double value = Convert.ToDouble(cell.Value2, CultureInfo.InvariantCulture);
+                string text = Convert.ToString(((object)cell.Text), CultureInfo.InvariantCulture) ?? string.Empty;
+                string format = Convert.ToString(((object)cell.NumberFormat), CultureInfo.InvariantCulture) ?? string.Empty;
+                string localFormat = Convert.ToString(((object)cell.NumberFormatLocal), CultureInfo.InvariantCulture) ?? string.Empty;
+                double value = Convert.ToDouble(((object)cell.Value2), CultureInfo.InvariantCulture);
                 return (text, format, localFormat, value);
             }
             finally

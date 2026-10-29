@@ -118,7 +118,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.13'
       - name: Install pinned Agent Skills validator
@@ -142,6 +142,7 @@ jobs:
           APPINSIGHTS_CONNECTION_STRING: ${{ secrets.APPINSIGHTS_CONNECTION_STRING }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          .\scripts\Install-AdoBuildTools.ps1
           dotnet restore Sbroenne.ExcelMcp.sln
           dotnet build Sbroenne.ExcelMcp.sln -c Release --no-restore
           .\scripts\Build-ReleasePackages.ps1 -Version $env:VERSION -OutputDirectory artifacts\release -SkillsDirectory artifacts\generated-skills

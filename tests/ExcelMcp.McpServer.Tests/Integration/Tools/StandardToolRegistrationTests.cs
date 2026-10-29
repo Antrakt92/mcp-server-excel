@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ModelContextProtocol.Protocol;
 using Sbroenne.ExcelMcp.Core.Commands.Chart;
 using Xunit;
 using Xunit.Abstractions;
@@ -44,8 +45,8 @@ public sealed class StandardToolRegistrationTests(ITestOutputHelper output)
         Assert.All(readTools, tool => Assert.True(
             tool.ProtocolTool.Annotations?.ReadOnlyHint == true,
             $"{tool.Name} must advertise readOnlyHint=true."));
-        Assert.Equal("attach,close,create,open,save", ActionNames("file"));
-        Assert.Equal("discover,list,test", ActionNames("file_read"));
+        Assert.Equal("attach,close,create,enable-connections,enable-editing,enable-macros,open,save", ActionNames("file"));
+        Assert.Equal("discover,list,notices,test", ActionNames("file_read"));
         Assert.Equal("list", ActionNames("worksheet_read"));
         Assert.Equal("get-settings", ActionNames("calculation_mode_read"));
         Assert.DoesNotContain(
@@ -65,6 +66,24 @@ public sealed class StandardToolRegistrationTests(ITestOutputHelper output)
         Assert.Contains("execute-dmv", ActionNames("datamodel_read"));
         Assert.Contains("find", ActionNames("range_edit_read"));
         Assert.Contains("preflight", ActionNames("table_read"));
+    }
+
+    [Fact]
+    public async Task Discovery_WorkbookSecurityKeepsApprovalDefaultsFalseAndExplainsLimits()
+    {
+        var tools = (await Client!.ListToolsAsync(cancellationToken: TestCancellationToken))
+            .ToDictionary(tool => tool.Name, StringComparer.Ordinal);
+        var properties = tools["file"].JsonSchema.GetProperty("properties");
+        foreach (var approval in new[] { "approved", "allow_remembered_trust", "allow_reopen" })
+        {
+            var schema = properties.GetProperty(approval);
+            Assert.Equal("boolean", schema.GetProperty("type").GetString());
+            Assert.False(schema.GetProperty("default").GetBoolean());
+        }
+        Assert.True(tools["file_read"].JsonSchema.GetProperty("properties").TryGetProperty("workbook_session_id", out _));
+        Assert.Contains("not every notification bar", tools["file_read"].Description, StringComparison.Ordinal);
+        Assert.Contains("not a built-in user confirmation dialog", tools["file"].Description, StringComparison.Ordinal);
+        Assert.Contains("Normal file opens disable VBA macros", Client.ServerInstructions, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -403,87 +422,58 @@ public sealed class StandardToolRegistrationTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task EveryTool_AdvertisesStructuredOutputSchema()
+    public async Task ToolList_OmitsOutputSchemasAndValidActionLists()
     {
         var tools = await Client!.ListToolsAsync(cancellationToken: TestCancellationToken);
 
         foreach (var tool in tools)
         {
-            var schema = Assert.IsType<JsonElement>(tool.ReturnJsonSchema);
-            var properties = schema.GetProperty("properties");
-            Assert.True(properties.TryGetProperty("success", out _),
-                $"{tool.Name} output schema does not describe success.");
-            Assert.True(properties.TryGetProperty("workbook_session_id", out _),
-                $"{tool.Name} output schema does not describe session error context.");
-            Assert.False(properties.TryGetProperty("sessionId", out _));
+            Assert.Null(tool.ReturnJsonSchema);
+            foreach (var property in tool.JsonSchema.GetProperty("properties").EnumerateObject())
+            {
+                var description = property.Value.TryGetProperty("description", out var value) ? value.GetString() : null;
+                Assert.DoesNotContain("(valid for:", description ?? string.Empty, StringComparison.Ordinal);
+            }
         }
-    }
 
-    [Theory]
-    [InlineData("range_read", "values")]
-    [InlineData("range_read", "rowCount")]
-    [InlineData("table_read", "tables")]
-    [InlineData("worksheet", "worksheets")]
-    [InlineData("file_read", "workbook_session_id")]
-    [InlineData("file_read", "complete")]
-    [InlineData("file_read", "workbooks")]
-    [InlineData("file", "autoSaveOn")]
-    [InlineData("file", "warning")]
-    [InlineData("screenshot", "mimeType")]
-    public async Task OutputSchemas_DescribeActionSpecificFields(string toolName, string propertyName)
-    {
-        var tools = await Client!.ListToolsAsync(cancellationToken: TestCancellationToken);
-        var schema = Assert.IsType<JsonElement>(tools.Single(t => t.Name == toolName).ReturnJsonSchema);
-
-        Assert.True(
-            schema.GetProperty("properties").TryGetProperty(propertyName, out _),
-            $"{toolName} output schema does not describe '{propertyName}'.");
+        var seriesIndex = tools.Single(t => t.Name == "chart_config").JsonSchema
+            .GetProperty("properties").GetProperty("series_index").GetProperty("description").GetString();
+        Assert.Contains("(required for: set-error-bars,", seriesIndex, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task FileDiscoveryOutputSchema_DescribesWorkbookIdentityAndGaps()
+    public async Task ToolDescriptions_OmitDocumentationIndentationAndImplementationNotes()
     {
         var tools = await Client!.ListToolsAsync(cancellationToken: TestCancellationToken);
-        var schema = Assert.IsType<JsonElement>(tools.Single(t => t.Name == "file_read").ReturnJsonSchema);
-        var properties = schema.GetProperty("properties");
-        var workbooks = properties.GetProperty("workbooks").GetProperty("items").GetProperty("properties");
-        var errors = properties.GetProperty("errors").GetProperty("items").GetProperty("properties");
 
-        foreach (var name in new[] { "workbookId", "name", "location", "processId", "saved", "autoSaveOn" })
+        foreach (var tool in tools)
         {
-            Assert.True(workbooks.TryGetProperty(name, out _),
-                $"Open-workbook output schema does not describe {name}.");
+            var description = tool.Description ?? string.Empty;
+            Assert.False(description.Contains("  ", StringComparison.Ordinal), $"{tool.Name} description contains repeated spaces.");
+            Assert.False(description.Contains("Excel COM:", StringComparison.Ordinal), $"{tool.Name} description contains an implementation note.");
         }
-        Assert.True(errors.TryGetProperty("processId", out _));
-        Assert.True(errors.TryGetProperty("message", out _));
     }
 
     [Fact]
-    public async Task FileListOutputSchema_DescribesSessionEntries()
+    public async Task FileList_ReturnsMatchingStructuredContent()
     {
-        var tools = await Client!.ListToolsAsync(cancellationToken: TestCancellationToken);
-        var schema = Assert.IsType<JsonElement>(tools.Single(t => t.Name == "file_read").ReturnJsonSchema);
-        var sessions = schema.GetProperty("properties").GetProperty("sessions");
-
-        var properties = sessions.GetProperty("items").GetProperty("properties");
-        foreach (var name in new[] { "workbook_session_id", "filePath", "workbookName", "isAttached", "isExcelVisible", "activeOperations", "operationPending", "canClose", "excelState", "blockingReason", "blockingMessage" })
+        var result = await Client!.CallToolAsync("file_read", new Dictionary<string, object?>
         {
-            Assert.True(properties.TryGetProperty(name, out _),
-                $"File session output schema does not describe {name}.");
-        }
-        Assert.False(properties.TryGetProperty("sessionId", out _));
+            ["action"] = "list"
+        }, cancellationToken: TestCancellationToken);
+
+        Assert.NotEqual(true, result.IsError);
+        var content = Assert.IsType<JsonElement>(result.StructuredContent);
+        Assert.True(content.GetProperty("success").GetBoolean());
+        Assert.Equal(JsonValueKind.Array, content.GetProperty("sessions").ValueKind);
+        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        Assert.True(JsonElement.DeepEquals(content, JsonDocument.Parse(text).RootElement));
     }
 
     [Fact]
-    public async Task ScreenshotOutputSchema_DescribesFailureMessage()
+    public async Task ScreenshotFailure_ReturnsStructuredErrorMessage()
     {
-        var tools = await Client!.ListToolsAsync(cancellationToken: TestCancellationToken);
-        var schema = Assert.IsType<JsonElement>(tools.Single(t => t.Name == "screenshot").ReturnJsonSchema);
-
-        Assert.True(schema.GetProperty("properties").TryGetProperty("errorMessage", out _),
-            "Screenshot output schema does not describe its failure message.");
-
-        var result = await Client.CallToolAsync("screenshot", new Dictionary<string, object?>
+        var result = await Client!.CallToolAsync("screenshot", new Dictionary<string, object?>
         {
             ["action"] = "capture",
             ["workbook_session_id"] = "unknown-screenshot-schema-session"

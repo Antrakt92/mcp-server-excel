@@ -15,6 +15,125 @@ public sealed class FileToolRecordingContractTests(
 {
     private readonly RecordingProgramTransportFixture _fixture = fixture;
 
+    [Fact]
+    public async Task List_MapsEverySessionIdentifierAndPreservesOperationState()
+    {
+        var call = await _fixture.CallToolAsync("file_read", new Dictionary<string, object?>
+        {
+            ["action"] = "list"
+        }, new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":true,"sessions":[{"sessionId":"first","canClose":true},{"sessionId":"second","canClose":false,"operationPending":true}],"count":2}"""
+        }, "session.list", expectedSessionId: null, expectedArgsJson: null);
+        using var result = JsonDocument.Parse(call.JsonResult);
+        var sessions = result.RootElement.GetProperty("sessions").EnumerateArray().ToArray();
+        Assert.Equal("first", sessions[0].GetProperty("workbook_session_id").GetString());
+        Assert.True(sessions[0].GetProperty("canClose").GetBoolean());
+        Assert.Equal("second", sessions[1].GetProperty("workbook_session_id").GetString());
+        Assert.False(sessions[1].GetProperty("canClose").GetBoolean());
+        Assert.True(sessions[1].GetProperty("operationPending").GetBoolean());
+        Assert.All(sessions, session => Assert.False(session.TryGetProperty("sessionId", out _)));
+    }
+
+    [Theory]
+    [InlineData("close", """{"save":false}""")]
+    [InlineData("save", null)]
+    public async Task DeliveredNegativeOutcome_PreservesFailureAndPartialState(string action, string? expectedArgs)
+    {
+        var call = await _fixture.CallToolAsync("file", new Dictionary<string, object?>
+        {
+            ["action"] = action,
+            ["workbook_session_id"] = "target"
+        }, new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":false,"errorMessage":"Workbook remains open","errorCategory":"ExcelError","sessionId":"target","warnings":["Inspect pending edits."],"partialState":{"open":true}}"""
+        }, "session." + action, expectedSessionId: "target", expectedArgsJson: expectedArgs);
+
+        using var result = JsonDocument.Parse(call.JsonResult);
+        var root = result.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.Equal("Workbook remains open", root.GetProperty("errorMessage").GetString());
+        Assert.Equal("ExcelError", root.GetProperty("errorCategory").GetString());
+        Assert.Equal("target", root.GetProperty("workbook_session_id").GetString());
+        Assert.Equal("Inspect pending edits.", Assert.Single(root.GetProperty("warnings").EnumerateArray()).GetString());
+        Assert.True(root.GetProperty("partialState").GetProperty("open").GetBoolean());
+        Assert.False(root.TryGetProperty("saved", out _));
+    }
+
+    [Theory]
+    [InlineData("close", """{"save":false}""")]
+    [InlineData("save", null)]
+    public async Task SuccessfulOutcome_PreservesActualDataAndWarnings(string action, string? expectedArgs)
+    {
+        var call = await _fixture.CallToolAsync("file", new Dictionary<string, object?>
+        {
+            ["action"] = action,
+            ["workbook_session_id"] = "target"
+        }, new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":true,"sessionId":"target","message":"Session already closed.","warnings":["No save was performed."],"partialState":{"changed":false}}"""
+        }, "session." + action, expectedSessionId: "target", expectedArgsJson: expectedArgs);
+
+        using var result = JsonDocument.Parse(call.JsonResult);
+        var root = result.RootElement;
+        Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal("target", root.GetProperty("workbook_session_id").GetString());
+        Assert.Equal("Session already closed.", root.GetProperty("message").GetString());
+        Assert.Equal("No save was performed.", Assert.Single(root.GetProperty("warnings").EnumerateArray()).GetString());
+        Assert.False(root.GetProperty("partialState").GetProperty("changed").GetBoolean());
+        Assert.False(root.TryGetProperty("saved", out _));
+    }
+
+    [Theory]
+    [InlineData("enable-editing", false)]
+    [InlineData("enable-connections", false)]
+    [InlineData("enable-macros", false)]
+    [InlineData("enable-editing", true)]
+    [InlineData("enable-connections", true)]
+    [InlineData("enable-macros", true)]
+    public async Task SecurityAction_MapsApprovalsWithoutGrantingDefaults(string action, bool approve)
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["action"] = action,
+            ["workbook_session_id"] = "target"
+        };
+        if (approve)
+        {
+            arguments["approved"] = true;
+            arguments[action == "enable-macros" ? "allow_reopen" : "allow_remembered_trust"] = true;
+        }
+        object expectedArgs = action == "enable-macros"
+            ? new { approved = approve, allowReopen = approve }
+            : new { approved = approve, allowRememberedTrust = approve };
+        const string response = """{"success":true,"security":{"action":"fixture","changed":false,"trustMayBeRemembered":false,"reopened":false,"message":"No change."}}""";
+        var call = await _fixture.CallToolAsync("file", arguments,
+            new ServiceResponse { Success = true, Result = response }, "session." + action,
+            expectedSessionId: "target", expectedArgsJson: JsonSerializer.Serialize(expectedArgs));
+        using var result = JsonDocument.Parse(call.JsonResult);
+        Assert.False(result.RootElement.GetProperty("security").GetProperty("changed").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Notices_MapsSelectedSessionAndPreservesIncompleteInspection()
+    {
+        const string response = """{"success":true,"notices":{"protectedView":true,"vbaState":"unknown","connectionsState":"unknown","complete":false,"messages":["Check Excel."]}}""";
+        var call = await _fixture.CallToolAsync("file_read", new Dictionary<string, object?>
+        {
+            ["action"] = "notices",
+            ["workbook_session_id"] = "target"
+        }, new ServiceResponse { Success = true, Result = response }, "session.notices",
+            expectedSessionId: "target", expectedArgsJson: null);
+        using var result = JsonDocument.Parse(call.JsonResult);
+        var notices = result.RootElement.GetProperty("notices");
+        Assert.True(notices.GetProperty("protectedView").GetBoolean());
+        Assert.False(notices.GetProperty("complete").GetBoolean());
+        Assert.Equal("unknown", notices.GetProperty("vbaState").GetString());
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -43,7 +162,7 @@ public sealed class FileToolRecordingContractTests(
                 ["action"] = "save",
                 ["workbook_session_id"] = "save-session"
             },
-            new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" },
+            new ServiceResponse { Success = true, Result = """{"success":true,"sessionId":"save-session","saved":true}""" },
             "session.save",
             expectedSessionId: "save-session",
             expectedArgsJson: null);
@@ -88,7 +207,7 @@ public sealed class FileToolRecordingContractTests(
         Assert.True(root.GetProperty("success").GetBoolean());
         Assert.Equal("attached-session", root.GetProperty("workbook_session_id").GetString());
         Assert.Equal("Book1", root.GetProperty("name").GetString());
-        Assert.Equal("Excel AutoSave is off.", root.GetProperty("warning").GetString());
+        Assert.Equal("Excel AutoSave is off.", Assert.Single(root.GetProperty("warnings").EnumerateArray()).GetString());
         Assert.False(root.TryGetProperty("filePath", out _));
         Assert.False(root.TryGetProperty("autoSaveOn", out _));
     }
@@ -113,18 +232,22 @@ public sealed class FileToolRecordingContractTests(
                 .GetProperty("message").GetString());
     }
 
-    [Fact]
-    public async Task Open_SharePointUrl_DispatchesWithoutLocalFileExistenceCheck()
+    [Theory]
+    [InlineData("https://contoso.sharepoint.com/sites/Test/Shared%20Documents/Test.xlsx?web=1", true)]
+    [InlineData("https://d.docs.live.net/123/Documents/Test.xlsx?download=1", false)]
+    [InlineData("http://example.com:8080/Test.csv?download=1#data", false)]
+    [InlineData("https://contoso.sharepoint.com/_layouts/15/Doc.aspx?sourcedoc=test", false)]
+    [InlineData(@"C:\Imports\Test.txt", false)]
+    public async Task Open_ForwardsOriginalLocationAndVisibilityWithoutOpeningRules(string url, bool show)
     {
-        const string url = "https://contoso.sharepoint.com/sites/Test/Shared%20Documents/Test.xlsx?web=1";
-        const string normalizedUrl = "https://contoso.sharepoint.com/sites/Test/Shared%20Documents/Test.xlsx";
+        const string openedPath = @"C:\Opened\Test.xlsx";
         var call = await _fixture.CallToolAsync(
             "file",
             new Dictionary<string, object?>
             {
                 ["action"] = "open",
                 ["file_path"] = url,
-                ["show"] = true
+                ["show"] = show
             },
             new ServiceResponse
             {
@@ -133,7 +256,7 @@ public sealed class FileToolRecordingContractTests(
                 {
                     success = true,
                     sessionId = "sharepoint-session",
-                    filePath = normalizedUrl
+                    filePath = openedPath
                 }, ServiceProtocol.JsonOptions)
             },
             "session.open",
@@ -141,14 +264,14 @@ public sealed class FileToolRecordingContractTests(
             expectedArgsJson: JsonSerializer.Serialize(new
             {
                 filePath = url,
-                show = true,
+                show,
                 timeoutSeconds = 120
             }, ServiceProtocol.JsonOptions));
 
         using var result = JsonDocument.Parse(call.JsonResult);
         Assert.True(result.RootElement.GetProperty("success").GetBoolean());
         Assert.Equal("sharepoint-session", result.RootElement.GetProperty("workbook_session_id").GetString());
-        Assert.Equal(normalizedUrl, result.RootElement.GetProperty("filePath").GetString());
+        Assert.Equal(openedPath, result.RootElement.GetProperty("filePath").GetString());
     }
 
     [Fact]
@@ -419,7 +542,7 @@ public sealed class FileToolRecordingContractTests(
             JsonSerializer.Serialize(new { save }, ServiceProtocol.JsonOptions));
         using var result = JsonDocument.Parse(call.JsonResult);
         Assert.False(result.RootElement.GetProperty("success").GetBoolean());
-        Assert.True(result.RootElement.GetProperty("isError").GetBoolean());
+        Assert.True(call.Result.IsError);
         Assert.Equal("Busy", result.RootElement.GetProperty("errorCategory").GetString());
         Assert.Equal(message, result.RootElement.GetProperty("errorMessage").GetString());
         Assert.Equal("busy-session", result.RootElement.GetProperty("workbook_session_id").GetString());
@@ -481,7 +604,7 @@ public sealed class FileToolRecordingContractTests(
 
         using var result = JsonDocument.Parse(call.JsonResult);
         Assert.False(result.RootElement.GetProperty("success").GetBoolean());
-        Assert.True(result.RootElement.GetProperty("isError").GetBoolean());
+        Assert.True(call.Result.IsError);
         Assert.Equal(
             "SessionNotFound",
             result.RootElement.GetProperty("errorCategory").GetString());
@@ -536,7 +659,7 @@ public sealed class FileToolRecordingContractTests(
             using (var failedResult = JsonDocument.Parse(failedCall.JsonResult))
             {
                 Assert.False(failedResult.RootElement.GetProperty("success").GetBoolean());
-                Assert.True(failedResult.RootElement.GetProperty("isError").GetBoolean());
+                Assert.True(failedCall.Result.IsError);
                 Assert.Equal(
                     "WorkbookAccess",
                     failedResult.RootElement.GetProperty("errorCategory").GetString());

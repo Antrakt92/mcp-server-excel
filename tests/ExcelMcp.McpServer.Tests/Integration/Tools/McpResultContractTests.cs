@@ -13,6 +13,100 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
 [Trait("RequiresExcel", "false")]
 public sealed class McpResultContractTests(RecordingProgramTransportFixture fixture)
 {
+    [Fact]
+    public async Task EveryTool_OmitsRemovedFieldsInput()
+    {
+        foreach (var tool in await fixture.ListToolsAsync())
+            Assert.False(tool.JsonSchema.GetProperty("properties").TryGetProperty("fields", out _), tool.Name);
+    }
+
+    [Fact]
+    public async Task NormalRead_PreservesGridDiagnosticsAndMatchingContent()
+    {
+        var call = await fixture.CallToolAsync("range_read", new()
+        {
+            ["action"] = "get-values",
+            ["workbook_session_id"] = "recording-session",
+            ["sheet_name"] = "Data",
+            ["range_address"] = "A1:D1"
+        }, new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":true,"filePath":"C:\\fixture.xlsx","sheetName":"Data","rangeAddress":"$A$1:$D$1","rowCount":1,"columnCount":4,"values":[[false,0,null,"#REF!"]],"cellErrors":[{"cellAddress":"D1","errorName":"#REF!"}]}"""
+        }, "range.get-values", """{"sheetName":"Data","rangeAddress":"A1:D1"}""");
+        Assert.False(call.Result.IsError == true);
+        using var output = JsonDocument.Parse(call.JsonResult);
+        var root = output.RootElement;
+        Assert.True(JsonElement.DeepEquals(root, call.Result.StructuredContent!.Value));
+        Assert.Equal("""[[false,0,null,"#REF!"]]""", root.GetProperty("values").GetRawText());
+        Assert.Equal(4, root.GetProperty("columnCount").GetInt32());
+        Assert.Single(root.GetProperty("cellErrors").EnumerateArray());
+        Assert.False(root.TryGetProperty("filePath", out _));
+    }
+
+    [Fact]
+    public async Task QueryList_OmitsPreviewAndKeepsMetadata()
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["action"] = "list",
+            ["workbook_session_id"] = "recording-session"
+        };
+        var call = await fixture.CallToolAsync("powerquery_read", arguments, new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":true,"queries":[{"name":"Source","formulaPreview":"let x = 1 in x","loadMode":"connection-only"}]}"""
+        }, "powerquery.list", null);
+        using var output = JsonDocument.Parse(call.JsonResult);
+        var query = Assert.Single(output.RootElement.GetProperty("queries").EnumerateArray());
+        Assert.Equal("Source", query.GetProperty("name").GetString());
+        Assert.False(query.TryGetProperty("formulaPreview", out _));
+        Assert.Equal("connection-only", query.GetProperty("loadMode").GetString());
+        Assert.False(call.Result.IsError == true);
+    }
+
+    [Theory]
+    [InlineData("powerquery_read", "list")]
+    [InlineData("file_read", "list")]
+    [InlineData("screenshot", "capture")]
+    public async Task RemovedFieldsInput_IsRejectedBeforeDispatch(string tool, string action)
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["action"] = action,
+            ["fields"] = new[] { "queries.name" }
+        };
+        if (tool != "file_read")
+            arguments["workbook_session_id"] = "recording-session";
+        var result = await fixture.CallResultWithoutDispatchAsync(tool, arguments);
+        Assert.True(result.IsError);
+        var text = Assert.Single(result.Content.OfType<TextContentBlock>()).Text;
+        using var output = JsonDocument.Parse(text);
+        var message = output.RootElement.GetProperty("errorMessage").GetString()!;
+        Assert.Contains("fields", message);
+        Assert.Equal("InvalidInput", output.RootElement.GetProperty("errorCategory").GetString());
+        Assert.True(JsonElement.DeepEquals(output.RootElement, result.StructuredContent!.Value));
+    }
+
+    [Fact]
+    public async Task QueryView_KeepsCompleteFormula()
+    {
+        var formula = "let source = \"" + new string('x', 500) + "\" in source";
+        var call = await fixture.CallToolAsync("powerquery_read", new()
+        {
+            ["action"] = "view",
+            ["workbook_session_id"] = "recording-session",
+            ["query_name"] = "Source"
+        }, new ServiceResponse
+        {
+            Success = true,
+            Result = JsonSerializer.Serialize(new { success = true, mCode = formula })
+        }, "powerquery.view", """{"queryName":"Source"}""");
+        using var output = JsonDocument.Parse(call.JsonResult);
+        Assert.Equal(formula, output.RootElement.GetProperty("mCode").GetString());
+        Assert.False(call.Result.IsError == true);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

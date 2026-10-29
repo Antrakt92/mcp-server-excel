@@ -2,7 +2,7 @@
 
 Automate desktop Microsoft Excel through MCP or the `excelcli` command line, using Excel's native COM interface.
 
-This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **2.5.4 fork release line is based on upstream 2.5.3**. It focuses on reliable MCP transport shutdown and bounded request admission while retaining upstream workbook and session behavior.
+This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **2.5.4 fork release line is based on upstream 2.5.3**. The development branch integrates upstream 2.6.0 while retaining fork transport shutdown, bounded request admission and connection drain. The download links below remain the last published 2.5.4 release until the new candidate is verified.
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
@@ -77,7 +77,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The inherited catalogue provides **63 MCP tools across 33 feature areas, with 424 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 424 operations. These upstream counts are checked against the compiled contracts.
+The inherited catalogue provides **63 MCP tools across 33 feature areas, with 429 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 429 operations. These upstream counts are checked against the compiled contracts.
 
 ## Source and contributions
 

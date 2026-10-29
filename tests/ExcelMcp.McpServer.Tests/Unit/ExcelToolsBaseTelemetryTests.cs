@@ -62,7 +62,9 @@ public sealed class ExcelToolsBaseTelemetryTests
             """{"success":true,"value":"private workbook content"}""",
             result => invocation = result);
 
-        Assert.Equal("""{"success":true,"value":"private workbook content"}""", response);
+        using var document = JsonDocument.Parse(response);
+        Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("private workbook content", document.RootElement.GetProperty("value").GetString());
         Assert.Equal(
             new ToolInvocationResult(ToolInvocationOutcome.Succeeded, null),
             invocation);
@@ -81,13 +83,17 @@ public sealed class ExcelToolsBaseTelemetryTests
             },
             ExcelToolsBase.JsonOptions);
 
-        var response = await Execute(
-            diagnostic,
-            result => invocation = result,
-            toolName: "file_read",
-            actionName: "test");
+        var result = await ExcelToolsBase.ExecuteToolActionAsync(
+            "file_read", "test", () => Task.FromResult(diagnostic), CancellationToken.None,
+            (_, _, _, value) => invocation = value);
+        Assert.True(result.IsError);
+        var response = Assert.Single(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>()).Text;
 
-        Assert.Equal(diagnostic, response);
+        using var document = JsonDocument.Parse(response);
+        Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+        Assert.False(document.RootElement.GetProperty("canOpen").GetBoolean());
+        Assert.Equal("private diagnostic detail", document.RootElement.GetProperty("message").GetString());
+        Assert.Equal("private diagnostic detail", document.RootElement.GetProperty("errorMessage").GetString());
         Assert.DoesNotContain("\"isError\"", response, StringComparison.Ordinal);
         Assert.Equal(
             new ToolInvocationResult(ToolInvocationOutcome.ExpectedNegative, null),
@@ -172,7 +178,9 @@ public sealed class ExcelToolsBaseTelemetryTests
 
         var response = await Execute("\"General\"", result => invocation = result);
 
-        Assert.Equal("\"General\"", response);
+        using var document = JsonDocument.Parse(response);
+        Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("General", document.RootElement.GetProperty("result").GetString());
         Assert.Equal(
             new ToolInvocationResult(ToolInvocationOutcome.Succeeded, null),
             invocation);
@@ -286,13 +294,14 @@ public sealed class ExcelToolsBaseTelemetryTests
     public async Task WorksheetMissingSession_ReturnsCategorizedRecoveryGuidance()
     {
         using var bridge = new ServiceBridge.ServiceBridge(() => throw new InvalidOperationException("Unexpected dispatch."));
-        var result = await ExcelWorksheetTool.ExcelWorksheet(WorksheetWriteAction.Create, bridge);
+        var result = await ExcelSheet_worksheetTool.ExcelSheet_worksheet(
+            ExcelSheet_worksheetTool.McpSheet_worksheetAction.Create, bridge);
         var response = Assert.Single(result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>()).Text;
 
         using var json = JsonDocument.Parse(response);
         var root = json.RootElement;
         Assert.False(root.GetProperty("success").GetBoolean());
-        Assert.True(root.GetProperty("isError").GetBoolean());
+        Assert.True(result.IsError);
         Assert.Equal("InvalidInput", root.GetProperty("errorCategory").GetString());
         Assert.Contains("file 'open'", root.GetProperty("errorMessage").GetString());
     }

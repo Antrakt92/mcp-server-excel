@@ -90,14 +90,14 @@ def initialize(process, reader):
     return len(tools)
 
 
-def tool(process, reader, request_id, arguments):
+def tool(process, reader, request_id, arguments, *, expected_error=False):
     send(process, request_id, "tools/call", {"name": "file_read", "arguments": arguments})
     result = reader.response(request_id)
     text = [entry["text"] for entry in result["content"] if entry.get("type") == "text"]
     require(len(text) == 1, "Expected one JSON text result")
     structured = result.get("structuredContent")
     require(isinstance(structured, dict) and json.loads(text[0]) == structured, "Text/structured result mismatch")
-    require(result.get("isError") is not True, "Diagnostic tool unexpectedly marked an error")
+    require((result.get("isError") is True) == expected_error, "Unexpected diagnostic error classification")
     return structured
 
 
@@ -140,7 +140,7 @@ def protocol_case(exe, idle_seconds):
         require(sessions.get("success") is True and sessions.get("sessions") == [], "Fresh host sessions are not empty")
         with tempfile.TemporaryDirectory(prefix="excelmcp-negative-") as folder:
             # Missing files fail before the Service's temporary native workbook-open path.
-            negative = tool(process, out, 4, {"action": "test", "file_path": str(Path(folder) / "absent.xlsx")})
+            negative = tool(process, out, 4, {"action": "test", "file_path": str(Path(folder) / "absent.xlsx")}, expected_error=True)
             require(negative.get("success") is False and negative.get("exists") is False,
                     "Missing-file diagnostic unexpectedly succeeded")
         if idle_seconds:

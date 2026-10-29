@@ -1191,11 +1191,6 @@ public class FileValidationInfo
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
 
-    /// <summary>
-    /// File testing reports a diagnostic result, not a tool execution failure.
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? IsError { get; }
 }
 
 /// <summary>
@@ -1767,6 +1762,7 @@ public class PowerQueryRefreshResult : PowerQueryOperationResult
 public class PowerQueryRefreshAllResult : OperationResult
 {
     /// <summary>Verified metrics for successfully refreshed queries, excluding skipped or failed queries.</summary>
+    [ResultOutcome]
     public List<PowerQueryOperationResult> QueryMetrics { get; set; } = [];
 
     /// <summary>
