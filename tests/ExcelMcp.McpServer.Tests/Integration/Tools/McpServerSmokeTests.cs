@@ -161,8 +161,8 @@ public class McpServerSmokeTests : IAsyncLifetime, IAsyncDisposable
         using (var listed = JsonDocument.Parse(listSessionsResult))
         {
             var session = Assert.Single(listed.RootElement.GetProperty("sessions").EnumerateArray());
-            Assert.Equal(sessionId, session.GetProperty("sessionId").GetString());
-            Assert.False(session.TryGetProperty("workbook_session_id", out _));
+            Assert.Equal(sessionId, session.GetProperty("workbook_session_id").GetString());
+            Assert.False(session.TryGetProperty("sessionId", out _));
             Assert.True(session.GetProperty("canClose").GetBoolean());
         }
         await CallSuccessfulToolAsync("worksheet", new()
