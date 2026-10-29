@@ -4,6 +4,8 @@ Automate desktop Microsoft Excel through MCP or the `excelcli` command line, usi
 
 This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **3.0.0 fork release line is based on upstream 2.6.0**. It adds persistent read-only audit sessions, bounded range inspection and guarded VBA workflows while retaining fork transport shutdown, request admission and connection drain. This is a major upgrade from fork 2.5.4 because CLI result fields and accepted options changed; see [migration](#migrate-from-fork-254).
 
+The `main` branch also includes upstream 2.6.1 maintenance. Published fork 3.0.0 archives and their verification receipts retain their original upstream 2.6.0 base.
+
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
 [Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.0.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
