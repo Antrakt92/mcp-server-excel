@@ -1,15 +1,25 @@
-# ExcelMCP — Antrakt Fork
+<h1 align="center">ExcelMCP — Antrakt Fork</h1>
 
-[![Latest release](https://img.shields.io/github/v/release/Antrakt92/mcp-server-excel)](https://github.com/Antrakt92/mcp-server-excel/releases/latest)
-[![MIT license](https://img.shields.io/github/license/Antrakt92/mcp-server-excel)](LICENSE)
+<p align="center">Control desktop Microsoft Excel through MCP or the excelcli command line.</p>
 
-Control desktop Microsoft Excel from an AI agent through MCP, or use the `excelcli` command line.
+<p align="center">
+  <a href="https://github.com/Antrakt92/mcp-server-excel/releases/latest"><strong>Download</strong></a>
+  · <a href="#connect-an-mcp-client"><strong>MCP setup</strong></a>
+  · <a href="#use-the-cli"><strong>CLI</strong></a>
+  · <a href="docs/fork/AGENT-WORKFLOWS.md">Agent workflows</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Antrakt92/mcp-server-excel/releases/latest"><img src="https://img.shields.io/github/v/release/Antrakt92/mcp-server-excel" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Antrakt92/mcp-server-excel" alt="MIT license"></a>
+</p>
 
 This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel) adds read-only audit sessions, bounded range reads and VBA edits with source checks. Workbook operations use Excel's native COM interface.
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Download](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [MCP setup](#connect-an-mcp-client) · [CLI](#use-the-cli) · [Agent workflows](docs/fork/AGENT-WORKFLOWS.md) · [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
+[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
 
 ## Choose a package
 
