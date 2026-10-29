@@ -191,6 +191,9 @@ public sealed class ExcelMcpService : IDisposable
 
             ServiceRegistry.ValidateCommandArguments(request.Command, request.Args);
 
+            if (request.SessionId is { } auditId && _sessionManager.IsAuditSession(auditId))
+                AuditSessionPolicy.EnsureAllowed(request.Command, request.Args);
+
             if (_shuttingDown && category != "service")
             {
                 return AttachRequestContext(request, new ServiceResponse
@@ -441,6 +444,7 @@ public sealed class ExcelMcpService : IDisposable
     {
         ["filePath"] = "absolute path to the workbook",
         ["show"] = "true to show the Excel window",
+        ["readOnly"] = "true for a persistent audit session that rejects workbook mutations and saving",
         ["timeoutSeconds"] = "whole seconds from 10 through 3600 (default 120)",
         ["save"] = "true to save the workbook before closing",
         ["workbookId"] = "an open-workbook identifier returned by session discover",
@@ -453,7 +457,8 @@ public sealed class ExcelMcpService : IDisposable
     {
         string[] allowedParameters = action switch
         {
-            "create" or "open" => ["filePath", "show", "timeoutSeconds"],
+            "create" => ["filePath", "show", "timeoutSeconds"],
+            "open" => ["filePath", "show", "timeoutSeconds", "readOnly"],
             "close" => ["save"],
             "test" => ["filePath", "timeoutSeconds"],
             "attach" => ["workbookId"],
@@ -561,7 +566,7 @@ public sealed class ExcelMcpService : IDisposable
 
         try
         {
-            var sessionId = _sessionManager.CreateSession(args.FilePath, show: args.Show, operationTimeout: timeout, origin: SessionOrigin.CLI);
+            var sessionId = _sessionManager.CreateSession(args.FilePath, show: args.Show, operationTimeout: timeout, origin: SessionOrigin.CLI, readOnly: args.ReadOnly);
             _knownSessionIds.TryAdd(sessionId, 0);
             return CreateSessionOpenResponse(sessionId, fullPath, request.Command);
         }
@@ -585,6 +590,7 @@ public sealed class ExcelMcpService : IDisposable
                     success = true,
                     sessionId,
                     filePath,
+                    auditOnly = _sessionManager.IsAuditSession(sessionId),
                     autoSaveOn,
                     warning = ExcelCapabilities.AutoSaveWarning(autoSaveOn)
                 }, ServiceProtocol.JsonOptions)
@@ -709,6 +715,7 @@ public sealed class ExcelMcpService : IDisposable
                 return new SessionListEntry
                 {
                     SessionId = s.SessionId,
+                    AuditOnly = _sessionManager.IsAuditSession(s.SessionId),
                     FilePath = s.FilePath,
                     FilePaths = _sessionManager.GetOwnedFilePaths(s.SessionId),
                     WorkbookName = s.WorkbookName,
@@ -1430,6 +1437,7 @@ public sealed class SessionOpenArgs
 {
     public string? FilePath { get; set; }
     public bool Show { get; set; }
+    public bool ReadOnly { get; set; }
     public int? TimeoutSeconds { get; set; }
 }
 public sealed class SessionCloseArgs { public bool Save { get; set; } }

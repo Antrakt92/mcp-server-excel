@@ -20,7 +20,7 @@ public static partial class ExcelFileTool
     /// URL parameters are passed unchanged. Use show:true when you need to answer Excel sign-in or permission prompts.
     /// Open and attach preserve and report AutoSave. If enabled, Excel may save edits automatically; close without saving cannot undo already-saved edits.
     /// Explicitly change AutoSave with workbook set-auto-save enabled. Enabling can immediately save pending edits.
-    /// Inspect workbook_read get-info readOnly before editing. Workbook changes reject read-only access.
+    /// Inspect workbook_read get-info for the selected workbook's editing rights. Workbook changes reject read-only access.
     /// Failed saves retain the open session and unsaved changes.
     /// Save persists the current workbook without closing it. Timeouts preserve the owned session,
     /// request that its Excel window be shown, and report the result to the caller.
@@ -42,6 +42,7 @@ public static partial class ExcelFileTool
     /// <param name="approved">Explicit approval of the selected workbook security action. Only valid for enable-editing, enable-connections, enable-macros; default false.</param>
     /// <param name="allow_remembered_trust">Approval that Excel can remember this file as trusted. Required true for enable-editing and enable-connections; default false.</param>
     /// <param name="allow_reopen">Separate approval to close and reopen the saved workbook, allowing opening event macros to run. Required true for enable-macros; default false. Never saves or discards unsaved work.</param>
+    /// <param name="read_only">Open a persistent audit session with macros and link updates disabled. Rejects mutations, recalculation, security changes and saving. Only valid for open.</param>
     [McpServerTool(Name = "file", Title = "File Operations", Destructive = true)]
     [McpMeta("category", "session")]
     [McpMeta("requiresSession", false)]
@@ -60,6 +61,7 @@ public static partial class ExcelFileTool
         [McpActionParameter("enable-editing"), McpActionParameter("enable-connections"), McpActionParameter("enable-macros"), DefaultValue(false)] bool approved = false,
         [McpActionParameter("enable-editing"), McpActionParameter("enable-connections"), DefaultValue(false)] bool allow_remembered_trust = false,
         [McpActionParameter("enable-macros"), DefaultValue(false)] bool allow_reopen = false,
+        [McpActionParameter("open"), DefaultValue(false)] bool read_only = false,
         CancellationToken cancellationToken = default) =>
         ExecuteFileToolActionAsync(
             "file",
@@ -76,7 +78,7 @@ public static partial class ExcelFileTool
                 _ => throw new ArgumentOutOfRangeException(nameof(action))
             },
             bridge, file_path, workbook_session_id, save, show, timeout_seconds, cancellationToken, open_workbook_id,
-            approved, allow_remembered_trust, allow_reopen);
+            approved, allow_remembered_trust, allow_reopen, read_only);
 
     /// <summary>Discover already-open workbooks in the current user's Windows session without reopening them, list managed sessions, test a workbook path, or inspect a selected session's opening restrictions with notices. Notices never enable content and return complete:false because not every notification bar is readable. Discover returns workbookId values for file attach, sessionId for workbooks already connected to this host, and complete:false with errors when any application or workbook could not be inspected. Discovery can attach Protected View workbooks when a normal controlling Excel window is available; restricted-only windows report an error. List includes canClose, excelState, operationPending and blockers. Confirmed blocking dialogs reveal Excel and report readable dialog text in blockingMessage. Ask the user to respond in Excel; input values are not read. activeOperations:0 does not prove refresh has finished.</summary>
     /// <remarks>
@@ -137,7 +139,8 @@ public static partial class ExcelFileTool
         string? open_workbook_id = null,
         bool approved = false,
         bool allow_remembered_trust = false,
-        bool allow_reopen = false) =>
+        bool allow_reopen = false,
+        bool read_only = false) =>
         ExcelToolsBase.ExecuteToolActionAsync(toolName, action.ToActionString(), async () =>
         {
             if (timeout_seconds is < 10 or > 3600)
@@ -173,7 +176,14 @@ public static partial class ExcelFileTool
                     new { approved, allowRememberedTrust = allow_remembered_trust }, cancellationToken: cancellationToken),
                 FileAction.EnableMacros => await bridge.SendAsync("session.enable-macros", workbook_session_id,
                     new { approved, allowReopen = allow_reopen }, cancellationToken: cancellationToken),
-                FileAction.Open or FileAction.Create => await bridge.SendAsync(
+                FileAction.Open => await bridge.SendAsync("session.open", args: new
+                {
+                    filePath = file_path,
+                    show,
+                    timeoutSeconds = timeout_seconds,
+                    readOnly = read_only ? (bool?)true : null
+                }, timeoutSeconds: timeout_seconds, cancellationToken: cancellationToken),
+                FileAction.Create => await bridge.SendAsync(
                     $"session.{action.ToActionString()}", args: new
                     {
                         filePath = file_path,

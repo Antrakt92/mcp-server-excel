@@ -96,6 +96,11 @@ public static class ExcelSession
         bool show, TimeSpan? operationTimeout, TimeSpan? startupTimeout, string filePath)
         => CreateBatch(show, operationTimeout, startupTimeout, true, filePath);
 
+    internal static ExcelBatch BeginOwnedAuditBatch(
+        bool show, TimeSpan? operationTimeout, TimeSpan? startupTimeout, string filePath)
+        => new([filePath], logger: null, show: show, operationTimeout: operationTimeout,
+            startupTimeout: startupTimeout, openReadOnly: true, deferStartup: true);
+
     private static ExcelBatch CreateBatch(
         bool show, TimeSpan? operationTimeout, TimeSpan? startupTimeout,
         bool deferStartup, params string[] filePaths)

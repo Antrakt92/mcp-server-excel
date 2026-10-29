@@ -24,6 +24,9 @@ public sealed class SessionNoticesResult : ResultBase
 /// <summary>Identity and safety context for one managed workbook.</summary>
 public sealed class SessionListEntry
 {
+    /// <summary>Persistent audit access: workbook mutations and saving are refused.</summary>
+    public bool AuditOnly { get; set; }
+
     /// <summary>Session identifier for subsequent operations.</summary>
     public string SessionId { get; init; } = "";
     /// <summary>Current workbook location.</summary>

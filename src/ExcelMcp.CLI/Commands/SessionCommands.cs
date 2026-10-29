@@ -152,6 +152,7 @@ internal sealed class SessionOpenCommand : AsyncCommand<SessionOpenCommand.Setti
             {
                 filePath = settings.FilePath,
                 show = settings.Show,
+                readOnly = settings.ReadOnly ? (bool?)true : null,
                 timeoutSeconds = settings.TimeoutSeconds
             }, ServiceProtocol.JsonOptions)
         };
@@ -182,6 +183,10 @@ internal sealed class SessionOpenCommand : AsyncCommand<SessionOpenCommand.Setti
         [CommandOption("--show")]
         [Description("Show the Excel window for IRM/auth prompts instead of running hidden")]
         public bool Show { get; init; }
+
+        [CommandOption("--read-only")]
+        [Description("Persistent audit session: reject mutations, calculation, macro execution, security changes and saving")]
+        public bool ReadOnly { get; init; }
 
     }
 }

@@ -271,6 +271,7 @@ public sealed class SessionManager : IDisposable
     private readonly ConcurrentDictionary<string, byte> _closingSessions = new();
     private readonly ConcurrentDictionary<string, ExceptionDispatchInfo> _teardownFailures = new();
     private readonly ConcurrentDictionary<string, byte> _readOnlyValidationSessions = new();
+    private readonly ConcurrentDictionary<string, byte> _auditSessions = new();
     private readonly ConcurrentDictionary<string, bool> _showExcelFlags = new();
     private readonly ConcurrentDictionary<string, SessionOrigin> _sessionOrigins = new();
     private readonly ConcurrentDictionary<string, DateTime> _sessionCreatedAt = new();
@@ -350,7 +351,8 @@ public sealed class SessionManager : IDisposable
         IExcelBatch batch,
         bool show,
         SessionOrigin origin,
-        bool readOnlyValidation = false)
+        bool readOnlyValidation = false,
+        bool auditOnly = false)
     {
         // Publication and shutdown share a short lock; Excel startup and teardown stay outside it.
         lock (_filePathReservationLock)
@@ -366,6 +368,8 @@ public sealed class SessionManager : IDisposable
             _sessionCreatedAt[sessionId] = DateTime.UtcNow;
             if (readOnlyValidation)
                 _readOnlyValidationSessions[sessionId] = 0;
+            if (auditOnly)
+                _auditSessions[sessionId] = 0;
         }
     }
 
@@ -1055,6 +1059,7 @@ public sealed class SessionManager : IDisposable
     /// <param name="show">Whether to show the Excel window (default: false for background automation)</param>
     /// <param name="operationTimeout">Maximum time for startup and any operation in this session (default: 120 seconds)</param>
     /// <param name="origin">Which client is creating this session (CLI or MCP)</param>
+    /// <param name="readOnly">Open a persistent audit session without workbook mutations or saves.</param>
     /// <returns>Unique session ID for this session</returns>
     /// <exception cref="FileNotFoundException">File does not exist</exception>
     /// <exception cref="InvalidOperationException">Failed to create session or file already open in another session</exception>
@@ -1063,8 +1068,12 @@ public sealed class SessionManager : IDisposable
     /// <para><b>Same-file prevention:</b> Throws if file is already open in another session.</para>
     /// <para><b>Concurrency:</b> You can create multiple sessions for DIFFERENT files. Operations within each session execute serially.</para>
     /// </remarks>
-    public string CreateSession(string filePath, bool show = false, TimeSpan? operationTimeout = null, SessionOrigin origin = SessionOrigin.Unknown)
-        => CreateSessionCore(filePath, show, operationTimeout, operationTimeout, origin);
+    public string CreateSession(string filePath, bool show = false, TimeSpan? operationTimeout = null, SessionOrigin origin = SessionOrigin.Unknown, bool readOnly = false)
+        => CreateSessionCore(filePath, show, operationTimeout, operationTimeout, origin, readOnly);
+
+    /// <summary>True for sessions opened for inspection, including retained read-only validation.</summary>
+    public bool IsAuditSession(string sessionId) =>
+        _auditSessions.ContainsKey(sessionId) || _readOnlyValidationSessions.ContainsKey(sessionId);
 
     /// <summary>
     /// Test-only seam for operation timeout regressions that need a normal Excel startup allowance.
@@ -1082,7 +1091,8 @@ public sealed class SessionManager : IDisposable
         bool show,
         TimeSpan? operationTimeout,
         TimeSpan? startupTimeout,
-        SessionOrigin origin)
+        SessionOrigin origin,
+        bool readOnly = false)
     {
         ThrowIfClosedToNewSessions();
 
@@ -1105,8 +1115,10 @@ public sealed class SessionManager : IDisposable
             lock (_filePathReservationLock)
             {
                 ThrowIfClosedToNewSessions();
-                batch = ExcelSession.BeginOwnedBatch(show, operationTimeout, startupTimeout, filePath);
-                PublishSession(sessionId, normalizedPath, batch, show, origin);
+                batch = readOnly
+                    ? ExcelSession.BeginOwnedAuditBatch(show, operationTimeout, startupTimeout, filePath)
+                    : ExcelSession.BeginOwnedBatch(show, operationTimeout, startupTimeout, filePath);
+                PublishSession(sessionId, normalizedPath, batch, show, origin, auditOnly: readOnly);
             }
             batch.WaitForStartup();
 
@@ -1370,6 +1382,7 @@ public sealed class SessionManager : IDisposable
         _showExcelFlags.TryRemove(sessionId, out _);
         _sessionOrigins.TryRemove(sessionId, out _);
         _sessionCreatedAt.TryRemove(sessionId, out _);
+        _auditSessions.TryRemove(sessionId, out _);
         _readOnlyValidationSessions.TryRemove(sessionId, out _);
         _teardownFailures.TryRemove(sessionId, out _);
 
