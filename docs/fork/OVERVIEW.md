@@ -2,6 +2,8 @@
 
 ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 3.0.0 release line starts from upstream [v2.6.0](https://github.com/sbroenne/mcp-server-excel/tree/v2.6.0). Fork 2.5.4 was based on upstream 2.5.3. The major version reflects incompatible CLI JSON output and removed options inherited in this upgrade; see [migration](../../README.md#migrate-from-fork-254).
 
+Current `main` integrates upstream 2.6.1 while preserving fork lifecycle and workbook fixes. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
+
 ## Scope
 
 The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It uses native Excel for workbook operations. Current fork additions include persistent audit sessions, bounded range reads and formatting summaries, guarded whole-module replacement and typed VBA invocation. [Agent workflows](AGENT-WORKFLOWS.md) describes their inputs and limits.

@@ -42,8 +42,8 @@ class Reader:
         except BaseException as error:
             self.failure = error
 
-    def response(self, request_id):
-        deadline = time.monotonic() + 8
+    def response(self, request_id, *, timeout_seconds=8):
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if self.failure:
                 raise RuntimeError("Protocol reader failed") from self.failure
@@ -90,9 +90,9 @@ def initialize(process, reader):
     return len(tools)
 
 
-def tool(process, reader, request_id, arguments, *, expected_error=False):
+def tool(process, reader, request_id, arguments, *, expected_error=False, timeout_seconds=8):
     send(process, request_id, "tools/call", {"name": "file_read", "arguments": arguments})
-    result = reader.response(request_id)
+    result = reader.response(request_id, timeout_seconds=timeout_seconds)
     text = [entry["text"] for entry in result["content"] if entry.get("type") == "text"]
     require(len(text) == 1, "Expected one JSON text result")
     structured = result.get("structuredContent")
@@ -202,7 +202,9 @@ def protocol_case(exe, idle_seconds, receipt=None):
         require(sessions.get("success") is True and sessions.get("sessions") == [], "Fresh host sessions are not empty")
         with tempfile.TemporaryDirectory(prefix="excelmcp-negative-") as folder:
             # Missing files fail before the Service's temporary native workbook-open path.
-            negative = tool(process, out, 4, {"action": "test", "file_path": str(Path(folder) / "absent.xlsx")}, expected_error=True)
+            # The private worker permits 15s startup, plus snapshot and release waits.
+            negative = tool(process, out, 4, {"action": "test", "file_path": str(Path(folder) / "absent.xlsx")},
+                            expected_error=True, timeout_seconds=30)
             require(negative.get("success") is False and negative.get("exists") is False,
                     "Missing-file diagnostic unexpectedly succeeded")
         samples = [process_metrics(process)]
