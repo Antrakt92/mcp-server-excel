@@ -74,21 +74,7 @@ internal static class VbaModuleSource
         }
         catch (Exception ex)
         {
-            string? hash = null;
-            int? lineCount = null;
-            string? readBackError = null;
-            try
-            {
-                string observed = read();
-                hash = ComputeHash(observed);
-                lineCount = CountLines(observed);
-            }
-            catch (Exception readFailure)
-            {
-                readBackError = readFailure.Message;
-            }
-            throw new VbaSourceEditException("VBA module replacement failed after mutation started. No rollback was attempted; inspect the observed state before continuing.", ex,
-                new VbaSourceEditState { ModuleName = moduleName, Phase = phase, SourceHash = hash, LineCount = lineCount, ReadBackError = readBackError });
+            throw DescribeEditFailure(moduleName, phase, ex, read);
         }
     }
 
@@ -141,51 +127,83 @@ internal static class VbaModuleSource
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Observed source is secondary to the primary mutation failure. Preserve both and never roll back.")]
+    internal static VbaSourceEditException DescribeEditFailure(string moduleName, string phase, Exception failure, Func<string> read)
+    {
+        string? hash = null;
+        int? lineCount = null;
+        string? readBackError = null;
+        try
+        {
+            string observed = read();
+            hash = ComputeHash(observed);
+            lineCount = CountLines(observed);
+        }
+        catch (Exception readFailure) { readBackError = readFailure.Message; }
+        return new VbaSourceEditException("VBA source editing failed after mutation started. No rollback was attempted; inspect the observed module state before continuing.", failure,
+            new VbaSourceEditState { ModuleName = moduleName, Phase = phase, SourceHash = hash, LineCount = lineCount, ReadBackError = readBackError });
+    }
+
+    internal static bool EquivalentReadBack(string expected, string observed) =>
+        CanonicalReadBack(expected).Equals(CanonicalReadBack(observed), StringComparison.Ordinal);
+
+    // Shared by procedure parsing and read-back comparison. Rem starts after labels, Then, Else, or a colon.
+    internal static int CommentStart(string line)
+    {
+        bool quoted = false;
+        bool statementStart = true;
+        for (int index = 0; index < line.Length; index++)
+        {
+            char character = line[index];
+            if (character == '"')
+            {
+                if (quoted && index + 1 < line.Length && line[index + 1] == '"') { index++; continue; }
+                quoted = !quoted;
+                statementStart = false;
+                continue;
+            }
+            if (quoted) continue;
+            if (character == '\'') return index;
+            if (char.IsLetter(character))
+            {
+                int end = index + 1;
+                while (end < line.Length && (char.IsLetterOrDigit(line[end]) || line[end] == '_')) end++;
+                string token = line[index..end];
+                if (statementStart && token.Equals("Rem", StringComparison.OrdinalIgnoreCase)
+                    && (end == line.Length || char.IsWhiteSpace(line[end]))) return index;
+                statementStart = token.Equals("Then", StringComparison.OrdinalIgnoreCase) || token.Equals("Else", StringComparison.OrdinalIgnoreCase);
+                index = end - 1;
+                continue;
+            }
+            if (statementStart && char.IsDigit(character))
+            {
+                while (index + 1 < line.Length && char.IsDigit(line[index + 1])) index++;
+                continue;
+            }
+            if (!char.IsWhiteSpace(character)) statementStart = character == ':';
+        }
+        return line.Length;
+    }
+
     // VBE recases identifiers. Literal text and comments must still read back exactly.
     private static string CanonicalReadBack(string source)
     {
         var result = new StringBuilder();
         foreach (string line in NormalizeLines(source).TrimEnd('\n').Split('\n'))
         {
+            int comment = CommentStart(line);
             bool quoted = false;
-            bool statementStart = true;
-            for (int index = 0; index < line.Length; index++)
+            for (int index = 0; index < comment; index++)
             {
                 char character = line[index];
-                if (!quoted && (character == '\'' || statementStart && index + 3 <= line.Length &&
-                    line.AsSpan(index, 3).Equals("Rem", StringComparison.OrdinalIgnoreCase) &&
-                    (index + 3 == line.Length || char.IsWhiteSpace(line[index + 3]))))
-                {
-                    if (character != '\'')
-                    {
-                        result.Append("REM");
-                        index += 3;
-                    }
-                    result.Append(line.AsSpan(index));
-                    break;
-                }
-                if (!quoted && char.IsLetter(character))
-                {
-                    int end = index + 1;
-                    while (end < line.Length && (char.IsLetterOrDigit(line[end]) || line[end] == '_')) end++;
-                    string token = line[index..end];
-                    result.Append(token.ToUpperInvariant());
-                    statementStart = token.Equals("Then", StringComparison.OrdinalIgnoreCase)
-                        || token.Equals("Else", StringComparison.OrdinalIgnoreCase);
-                    index = end - 1;
-                    continue;
-                }
-                if (!quoted && statementStart && char.IsDigit(character))
-                {
-                    int end = index + 1;
-                    while (end < line.Length && char.IsDigit(line[end])) end++;
-                    result.Append(line.AsSpan(index, end - index));
-                    index = end - 1;
-                    continue;
-                }
                 result.Append(quoted ? character : char.ToUpperInvariant(character));
                 if (character == '"') quoted = !quoted;
-                if (!quoted && !char.IsWhiteSpace(character)) statementStart = character == ':';
+            }
+            if (comment < line.Length)
+            {
+                if (line[comment] == '\'') result.Append(line.AsSpan(comment));
+                else result.Append("REM").Append(line.AsSpan(comment + 3));
             }
             result.Append('\n');
         }

@@ -335,6 +335,35 @@ End Sub";
     }
 
     [Fact]
+    public void ScriptCommands_ReplaceProcedure_AcceptsLeadingBlankReplacementLines()
+    {
+        const string moduleName = "BlankPrefixProcedureModule";
+        const string oldBody = "Public Sub Target()\r\n    Debug.Print \"old\"\r\nEnd Sub";
+        const string replacement = "\r\n\r\nPublic Sub Target()\r\n    Debug.Print \"new\"\r\nEnd Sub";
+        const string original = "Option Explicit\r\n\r\n' Existing target documentation\r\n" + oldBody
+            + "\r\n\r\n' Existing retained documentation\r\nPrivate Sub Retained()\r\nEnd Sub";
+        var batch = _fixture.BatchToken;
+        Import(batch, moduleName, original);
+        var before = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        var target = RequireSuccess(_scriptCommands.Read(batch, moduleName, "Target", "Sub", null, null));
+        Assert.Contains(oldBody, before.Code, StringComparison.Ordinal);
+        string expected = before.Code.Replace(oldBody, replacement, StringComparison.Ordinal);
+
+        var replaced = RequireSuccess(_scriptCommands.ReplaceProcedure(
+            batch, moduleName, "Target", "Sub", target.SourceHash!, replacement));
+
+        var after = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        Assert.Equal(expected, after.Code);
+        Assert.Equal(VbaModuleSource.ComputeHash(expected), after.SourceHash);
+        var observed = RequireSuccess(_scriptCommands.Read(batch, moduleName, "Target", "Sub", null, null));
+        Assert.False(observed.HasMore);
+        Assert.Equal(VbaProcedureSource.ComputeHash(observed.Code), replaced.SourceHash);
+        Assert.Equal(observed.SourceHash, replaced.SourceHash);
+        Assert.Equal(observed.StartLine, replaced.StartLine);
+        Assert.Equal(observed.TotalLineCount, replaced.LineCount);
+    }
+
+    [Fact]
     public async Task ScriptCommands_ReplaceProcedure_RejectsStaleSourceWithoutChangingIt()
     {
         const string moduleName = "StaleProcedureModule";
@@ -401,6 +430,32 @@ End Sub";
         AssertStoredCode(
             original,
             RequireSuccess(_scriptCommands.Read(batch, moduleName, "KeepMe", "Sub", null, null)).Code);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ScriptCommands_ReplaceProcedure_RejectsUnsupportedPhysicalSourceWithoutChangingHash(bool nul)
+    {
+        string moduleName = "PhysicalGuard" + (nul ? "Nul" : "Long");
+        const string original = "Public Sub KeepMe()\nDebug.Print 1\nEnd Sub\nPublic Sub Retained()\nEnd Sub";
+        var batch = _fixture.BatchToken;
+        Import(batch, moduleName, original);
+        var before = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        var procedure = RequireSuccess(_scriptCommands.Read(batch, moduleName, "KeepMe", "Sub", null, null));
+        string body = nul ? "'bad\0value" : "'" + new string('x', 1023);
+        var response = await _fixture.SendForFailureAsync("vba.replace-procedure", new
+        {
+            moduleName,
+            procedureName = "KeepMe",
+            procedureKind = "Sub",
+            expectedSourceHash = procedure.SourceHash,
+            vbaCode = "Public Sub KeepMe()\n" + body + "\nEnd Sub"
+        });
+        Assert.Equal(OperationFailureCategory.InvalidInput.ToString(), response.ErrorCategory);
+        var after = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        Assert.Equal(before.SourceHash, after.SourceHash);
+        Assert.Equal(before.Code, after.Code);
     }
 
     [Fact]

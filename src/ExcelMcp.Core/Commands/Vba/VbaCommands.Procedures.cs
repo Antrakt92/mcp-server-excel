@@ -126,6 +126,7 @@ public partial class VbaCommands
         string vbaCode)
     {
         EnsureVbaFile(batch.WorkbookPath);
+        vbaCode = VbaModuleSource.Normalize(vbaCode);
         ValidateProcedureReplacement(moduleName, procedureName, procedureKind, expectedSourceHash, vbaCode);
 
         if (!IsVbaTrustEnabled())
@@ -139,7 +140,6 @@ public partial class VbaCommands
             Vbe.VBComponents? vbComponents = null;
             Vbe.VBComponent? component = null;
             Vbe.CodeModule? codeModule = null;
-            string? partialState = null;
             try
             {
                 vbaProject = ctx.Book.VBProject;
@@ -174,18 +174,18 @@ public partial class VbaCommands
                 string bodySource = ReadLines(codeModule, procedure.BodyStartLine,
                     procedure.LineCount - (procedure.BodyStartLine - procedure.StartLine));
                 int bodyLineCount = VbaProcedureSource.GetBodyLineCount(bodySource, procedure.Kind);
-                codeModule.DeleteLines(procedure.BodyStartLine, bodyLineCount);
-                partialState = "The selected procedure body was deleted, but its replacement has not been confirmed.";
-                codeModule.InsertLines(procedure.BodyStartLine, vbaCode.TrimEnd('\r', '\n'));
-                partialState = "Replacement source was inserted, but read-back verification did not complete.";
-
-                VbaProcedureInfo updatedProcedure = FindProcedure(
-                    codeModule,
-                    procedureName,
-                    procedureKind,
-                    requireKind: true,
-                    cancellationToken: ct);
-                string storedSource = ReadLines(codeModule, updatedProcedure.StartLine, updatedProcedure.LineCount);
+                VbaProcedureInfo? updatedProcedure = null;
+                string storedSource = string.Empty;
+                VbaProcedureSource.Replace(moduleName, vbaCode,
+                    () => codeModule.DeleteLines(procedure.BodyStartLine, bodyLineCount),
+                    source => codeModule.InsertLines(procedure.BodyStartLine, source),
+                    () =>
+                    {
+                        updatedProcedure = FindProcedure(codeModule, procedureName, procedureKind, requireKind: true, cancellationToken: ct);
+                        storedSource = ReadLines(codeModule, updatedProcedure.StartLine, updatedProcedure.LineCount);
+                        return ReadLines(codeModule, procedure.BodyStartLine, VbaModuleSource.CountLines(vbaCode));
+                    },
+                    () => ReadLines(codeModule, 1, codeModule.CountOfLines), ct);
 
                 return new VbaProcedureEditResult
                 {
@@ -193,24 +193,12 @@ public partial class VbaCommands
                     FilePath = batch.WorkbookPath,
                     Action = "replace-procedure",
                     Message = "The procedure source was replaced and read back. This does not confirm that it compiles or runs correctly.",
-                    ProcedureName = updatedProcedure.Name,
+                    ProcedureName = updatedProcedure!.Name,
                     ProcedureKind = updatedProcedure.Kind,
                     SourceHash = VbaProcedureSource.ComputeHash(storedSource),
                     StartLine = updatedProcedure.StartLine,
                     LineCount = updatedProcedure.LineCount
                 };
-            }
-            catch (COMException comEx) when (partialState is not null)
-            {
-                throw new InvalidOperationException(
-                    $"{partialState} Module '{moduleName}', procedure '{procedureName}': {comEx.Message} No rollback was attempted. Inspect the module before continuing.",
-                    comEx);
-            }
-            catch (OperationFailureException ex) when (partialState is not null)
-            {
-                throw new OperationFailureException(ex.ErrorCategory,
-                    $"{partialState} Module '{moduleName}', procedure '{procedureName}': {ex.Message} No rollback was attempted. Inspect the module before continuing.",
-                    ex);
             }
             catch (COMException comEx) when (IsVbaTrustError(comEx))
             {
