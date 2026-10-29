@@ -2,7 +2,7 @@
 
 ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 3.0.0 release line starts from upstream [v2.6.0](https://github.com/sbroenne/mcp-server-excel/tree/v2.6.0). Fork 2.5.4 was based on upstream 2.5.3. The major version reflects incompatible CLI JSON output and removed options inherited in this upgrade; see [migration](../../README.md#migrate-from-fork-254).
 
-Current `main` integrates upstream 2.6.1 while preserving fork lifecycle and workbook fixes. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
+Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance fix (`efd33740`) while preserving fork lifecycle and workbook fixes. It is a patch release for fixes, dependency updates and guidance; it introduces no new public capability or migration. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
 
 ## Scope
 
@@ -18,7 +18,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS` and `RELEASE-MANIFEST.json`. Preserve both with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.0.1 verification](VERIFICATION-3.0.1.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 

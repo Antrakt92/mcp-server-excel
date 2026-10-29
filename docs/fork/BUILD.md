@@ -3,7 +3,7 @@
 From a clean checkout, use Windows, PowerShell 7.4 or later, and the SDK pinned in `global.json`:
 
 ```powershell
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.0.0 -OutputDirectory artifacts/fork/3.0.0
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.0.1 -OutputDirectory artifacts/fork/3.0.1
 ```
 
 The command builds both self-contained Windows x64 executables and packages each with the original license, fork notice and a standalone README. It writes `SHA256SUMS` and `RELEASE-MANIFEST.json`. It never publishes a release, invokes hosted CI, launches the packaged applications or runs desktop Excel tests. Normal .NET dependency restore may access the configured package feeds; `-NoRestore` is available when the required runtime-specific assets are already restored.
@@ -28,7 +28,7 @@ The builder checks native PE architecture and version metadata. These are packag
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
 The canonical upstream npm/registry/extension metadata is at 2.6.1. The
-portable fork builder explicitly applies 3.0.0 to all compiled assemblies and
+portable fork builder explicitly applies 3.0.1 to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 
 Native ADO interop generation also requires Microsoft's TlbImp 4.8.9037.0 from
@@ -45,6 +45,8 @@ parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
 
-The current `main` branch includes upstream 2.6.1. Existing fork 3.0.0 release
+Fork 3.0.1 includes upstream 2.6.1 and the subsequent chart-label maintenance fix
+(`efd33740`). See [the release verification route](VERIFICATION-3.0.1.md).
+Existing fork 3.0.0 release
 archives and their verification receipts retain their original upstream 2.6.0
 base; source synchronization does not rebuild or replace published assets.
