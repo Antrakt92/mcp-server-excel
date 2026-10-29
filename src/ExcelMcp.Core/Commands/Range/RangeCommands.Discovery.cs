@@ -1,7 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
-using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
 
 
@@ -29,7 +28,7 @@ public partial class RangeCommands
         return batch.Execute((ctx, ct) =>
         {
             Excel.Worksheet? sheet = null;
-            dynamic? range = null;
+            Excel.Range? range = null;
             try
             {
                 sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
@@ -43,10 +42,7 @@ public partial class RangeCommands
                 range = sheet.UsedRange;
                 result.RangeAddress = range.Address;
 
-                var values = ExcelValueNormalizer.Normalize(range.Value2);
-                result.RowCount = values.RowCount;
-                result.ColumnCount = values.ColumnCount;
-                result.Values.AddRange(values.Values);
+                ReadValueGrid(ctx, range, result, ct);
 
                 result.Success = true;
                 return result;
@@ -71,8 +67,8 @@ public partial class RangeCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? cell = null;
-            dynamic? region = null;
+            Excel.Range? cell = null;
+            Excel.Range? region = null;
             try
             {
                 cell = RangeHelpers.ResolveRange(ctx.Book, sheetName, cellAddress, out string? specificError);
@@ -84,10 +80,7 @@ public partial class RangeCommands
                 region = cell.CurrentRegion;
                 result.RangeAddress = region.Address;
 
-                var values = ExcelValueNormalizer.Normalize(region.Value2);
-                result.RowCount = values.RowCount;
-                result.ColumnCount = values.ColumnCount;
-                result.Values.AddRange(values.Values);
+                ReadValueGrid(ctx, region, result, ct);
 
                 result.Success = true;
                 return result;
@@ -111,7 +104,7 @@ public partial class RangeCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? range = null;
+            Excel.Range? range = null;
             try
             {
                 range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress, out string? specificError);
@@ -121,14 +114,15 @@ public partial class RangeCommands
                 }
 
                 result.Address = range.Address;
-                (result.RowCount, result.ColumnCount) = RangeHelpers.GetDimensions((Excel.Range)range);
-                result.NumberFormat = ((Excel.Range)range).NumberFormat?.ToString();
+                (result.RowCount, result.ColumnCount) = RangeHelpers.GetDimensions(range);
+                object? numberFormat = range.NumberFormat;
+                result.NumberFormat = numberFormat?.ToString();
 
                 // Cell geometry properties (position and dimensions in points)
-                result.Left = Convert.ToDouble(range.Left);
-                result.Top = Convert.ToDouble(range.Top);
-                result.Width = Convert.ToDouble(range.Width);
-                result.Height = Convert.ToDouble(range.Height);
+                result.Left = Convert.ToDouble((object)range.Left, System.Globalization.CultureInfo.InvariantCulture);
+                result.Top = Convert.ToDouble((object)range.Top, System.Globalization.CultureInfo.InvariantCulture);
+                result.Width = Convert.ToDouble((object)range.Width, System.Globalization.CultureInfo.InvariantCulture);
+                result.Height = Convert.ToDouble((object)range.Height, System.Globalization.CultureInfo.InvariantCulture);
 
                 result.Success = true;
                 return result;

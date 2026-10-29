@@ -23,7 +23,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 /// </summary>
 [ServiceCategory("Vba")]
 [McpTool("vba", Title = "VBA Operations", Destructive = true, Category = "automation",
-    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, import or update modules, and run procedures in .xlsm workbooks. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
+    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, replace a full module when its source fingerprint matches, import or update modules, and invoke procedures with typed arguments and function results in .xlsm workbooks. Invoke results allow at most 10,000 array elements and a conservative 4 MiB transport budget; rejected return conversion occurs after macro execution and does not roll back its effects. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
 [McpReadOnlyActions("list", "view", "read", "search", "references", "status")]
 public interface IVbaCommands
 {
@@ -102,13 +102,21 @@ public interface IVbaCommands
     [ServiceAction("update")]
     OperationResult Update(IExcelBatch batch, [RequiredParameter] string moduleName, [RequiredParameter][FileOrValue] string vbaCode);
 
+    /// <summary>Replaces whole-module source only when its fingerprint still matches; verifies source read back without compiling or rolling back.</summary>
+    /// <param name="moduleName">Name of the component whose code is replaced, preserving the component itself</param>
+    /// <param name="expectedSourceHash">Expected SourceHash: use vba.view for replace-module, or vba.read for replace-procedure</param>
+    /// <param name="vbaCode">Replacement code; inline source or vbaCodeFile, not both. Leading export Attribute VB_* metadata is removed after newline normalization.</param>
+    [ServiceAction("replace-module")]
+    VbaModuleEditResult ReplaceModule(IExcelBatch batch, [RequiredParameter] string moduleName,
+        [RequiredParameter] string expectedSourceHash, [RequiredParameter][FileOrValue] string vbaCode);
+
     /// <summary>
     /// Replaces one VBA procedure only if its source has not changed since it was read, preserving surrounding comments and blank lines.
     /// </summary>
     /// <param name="moduleName">Name of the VBA module</param>
     /// <param name="procedureName">Name of the procedure to replace</param>
     /// <param name="procedureKind">Kind of procedure: Sub, Function, Property Get, Property Let, or Property Set</param>
-    /// <param name="expectedSourceHash">SourceHash returned by vba.read for this procedure</param>
+    /// <param name="expectedSourceHash">Expected SourceHash: use vba.view for replace-module, or vba.read for replace-procedure</param>
     /// <param name="vbaCode">Source for exactly one replacement procedure; saving it does not prove it compiles or runs</param>
     [ServiceAction("replace-procedure")]
     VbaProcedureEditResult ReplaceProcedure(
@@ -120,13 +128,23 @@ public interface IVbaCommands
         [RequiredParameter][FileOrValue] string vbaCode);
 
     /// <summary>
-    /// Runs a VBA procedure with optional parameters
+    /// Runs a VBA procedure with optional parameters. Normal file opens disable VBA macros.
+    /// Running does not enable them or reopen the file: obtain separate approval for
+    /// file enable-macros with approved:true and allow_reopen:true
+    /// (CLI: session enable-macros --approved --allow-reopen) on a saved owned workbook first.
     /// </summary>
     /// <param name="procedureName">Name of the procedure to run (for example "Module1.MySub")</param>
     /// <param name="timeout">Optional public timeout in whole seconds from 1 through 2147483; converted to TimeSpan at shared dispatch</param>
-    /// <param name="parameters">Optional parameters to pass to the procedure</param>
+    /// <param name="parameters">Up to 30 optional parameters to pass to the procedure</param>
     [ServiceAction("run")]
     OperationResult Run(IExcelBatch batch, [RequiredParameter] string procedureName, TimeSpan? timeout, params string[] parameters);
+
+    /// <summary>Runs a procedure with explicit scalar argument types and returns a scalar/null or two-dimensional array of at most 10,000 elements within a conservative 4 MiB transport budget. Oversized results are rejected after execution without cropping or rolling back macro effects. Uses the same macro approval boundary as run; cancellation is not rollback.</summary>
+    /// <param name="procedureName">Unqualified Module.Procedure name; the selected session determines the workbook</param>
+    /// <param name="timeout">Optional whole-second timeout, matching run; expiry does not undo macro effects</param>
+    /// <param name="arguments">Up to 30 objects with type string, number, boolean, null, or missing and a matching scalar value. Null and missing omit value or use null.</param>
+    [ServiceAction("invoke")]
+    VbaInvokeResult Invoke(IExcelBatch batch, [RequiredParameter] string procedureName, TimeSpan? timeout, List<VbaArgument>? arguments = null);
 
     /// <summary>
     /// Deletes a VBA module

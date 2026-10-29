@@ -121,8 +121,8 @@ public sealed partial class PersistentServiceConditionalFormattingTests
                 conditions = range.FormatConditions;
                 nativeRule = (Excel.Top10)conditions.Item(1);
                 font = nativeRule.Font;
-                Assert.True(Assert.IsType<bool>(font.Bold));
-                Assert.False(Assert.IsType<bool>(font.Italic));
+                Assert.True(Assert.IsType<bool>((object?)font.Bold));
+                Assert.False(Assert.IsType<bool>((object?)font.Italic));
             }
             finally
             {
@@ -174,26 +174,6 @@ public sealed partial class PersistentServiceConditionalFormattingTests
 
         Assert.True(result.Success);
         Assert.Empty(result.Rules);
-    }
-
-    [Fact]
-    public void AddRule_WithBorderStyleAndColor_Succeeds()
-    {
-        // Regression test for #737: FormatCondition.Borders is a 4-item
-        // collection indexed 1-4, not the xlEdgeLeft(7)/Top(8)/Bottom(9)/Right(10)
-        // constants used for Range.Borders. Writing via those constants throws
-        // COMException: "Unable to set the LineStyle property of the Border class".
-        var batch = _fixture.BatchToken;
-
-        var result = _conditionalFormattingCommands.AddRule(batch, "", "A1:A10", "cellValue", "greater", "100", null,
-            borderStyle: "continuous", borderColor: "#FF0000");
-
-        Assert.True(result.Success);
-        var listed = RequireSuccess(_conditionalFormattingCommands.ListRules(batch, "", "A1:A10"));
-        var rule = Assert.Single(listed.Rules);
-        Assert.Equal("continuous", rule.BorderStyle);
-        Assert.Equal("#FF0000", rule.BorderColor);
-        AssertRuleBorders();
     }
 
     [Fact]
@@ -270,8 +250,8 @@ public sealed partial class PersistentServiceConditionalFormattingTests
                 {
                     border = borders[(Excel.XlBordersIndex)index];
                     Assert.Equal((int)Excel.XlLineStyle.xlContinuous,
-                        Convert.ToInt32(border.LineStyle, CultureInfo.InvariantCulture));
-                    Assert.Equal(255, Convert.ToInt32(border.Color, CultureInfo.InvariantCulture));
+                        Convert.ToInt32((object)border.LineStyle, CultureInfo.InvariantCulture));
+                    Assert.Equal(255, Convert.ToInt32((object)border.Color, CultureInfo.InvariantCulture));
                     ComUtilities.Release(ref border);
                 }
             }
@@ -298,7 +278,7 @@ public sealed partial class PersistentServiceConditionalFormattingTests
 
         var result = _conditionalFormattingCommands.ListRules(batch, "", "A1:A10");
 
-        Assert.True(result.Success);
+        RequireSuccess(result);
         var rule = Assert.Single(result.Rules);
         Assert.Equal("continuous", rule.BorderStyle);
         Assert.Equal("#FF0000", rule.BorderColor);
@@ -631,7 +611,7 @@ public sealed partial class PersistentServiceConditionalFormattingTests
                 Assert.Equal(1, conditions.Count);
                 condition = (Excel.FormatCondition)conditions.Item(1);
                 Assert.Equal((int)type, condition.Type);
-                Assert.Equal(formula, condition.Formula1);
+                Assert.Equal(formula, (object?)condition.Formula1);
                 appliesTo = condition.AppliesTo;
                 Assert.Equal(range.Address, appliesTo.Address);
             }
@@ -660,7 +640,7 @@ public sealed partial class PersistentServiceConditionalFormattingTests
                 cell = sheet.Range[address];
                 format = cell.DisplayFormat;
                 interior = format.Interior;
-                Assert.Equal(color, Convert.ToInt32(interior.Color, CultureInfo.InvariantCulture));
+                Assert.Equal(color, Convert.ToInt32((object)interior.Color, CultureInfo.InvariantCulture));
             }
             finally
             {

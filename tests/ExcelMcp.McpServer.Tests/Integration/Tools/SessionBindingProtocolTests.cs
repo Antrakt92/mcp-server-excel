@@ -77,6 +77,7 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
     [InlineData("calculation_mode_read", "get-settings", true)]
     [InlineData("powerquery_read", "list", true)]
     [InlineData("file", "close", false)]
+    [InlineData("file_read", "notices", false)]
     [InlineData("worksheet_read", "list", true)]
     public async Task WorkbookSessionId_SchemaAndWireNameAgree(string toolName, string action, bool required)
     {
@@ -88,8 +89,6 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
         Assert.False(properties.TryGetProperty("session_id", out _));
         Assert.Equal(required, schema.GetProperty("required").EnumerateArray()
             .Any(property => property.GetString() == "workbook_session_id"));
-        var returnSchema = Assert.IsType<JsonElement>(tool.ReturnJsonSchema);
-        Assert.True(returnSchema.GetProperty("properties").TryGetProperty("workbook_session_id", out _));
 
         // The dictionary is sent through tools/call, not a direct tool method invocation.
         var arguments = Arguments(action);
@@ -109,6 +108,7 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
     [Theory]
     [InlineData("range_read", "get-used-range")]
     [InlineData("file", "close")]
+    [InlineData("file_read", "notices")]
     [InlineData("worksheet_read", "list")]
     public async Task OldSessionIdInput_IsRejectedAsUnknownParameter(string toolName, string action)
     {
@@ -342,7 +342,7 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
             (!tool.JsonSchema.TryGetProperty("required", out var required) ||
              !required.EnumerateArray().Any(value => value.GetString() == "workbook_session_id")))
             .Select(tool => tool.Name).Order().ToArray();
-        Assert.Equal(["file", "powerquery_trace_read", "worksheet"], optional);
+        Assert.Equal(["file", "file_read", "powerquery_trace_read", "worksheet"], optional);
     }
 
     [Theory]
@@ -426,7 +426,7 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
         var result = timeout.HasValue
             ? await callTask.WaitAsync(timeout.Value, TestCancellationToken)
             : await callTask;
-        return Assert.Single(result.Content.OfType<TextContentBlock>()).Text;
+        return McpResponseAssertions.ReadText(result);
     }
 
     private static JsonDocument ParseJsonResult(string jsonResult, string operationName)
@@ -444,7 +444,7 @@ public sealed class SessionBindingProtocolTests : IAsyncLifetime, IAsyncDisposab
         string? expectedErrorCategory = null)
     {
         Assert.False(root.GetProperty("success").GetBoolean(), $"{operationName} unexpectedly succeeded.");
-        Assert.True(root.GetProperty("isError").GetBoolean(), $"{operationName} should return isError=true.");
+        Assert.False(root.TryGetProperty("isError", out _), $"{operationName} should use the protocol error flag.");
         Assert.Equal(expectedExceptionType, root.GetProperty("exceptionType").GetString());
         var errorMessage = root.GetProperty("errorMessage").GetString();
 

@@ -49,7 +49,8 @@ public interface IDataModelCommands
     DataModelTableListResult ListTables(IExcelBatch batch);
 
     /// <summary>
-    /// Lists all columns in a Data Model table
+    /// Lists all columns in a Data Model table.
+    /// The isCalculated field is null (unknown): Excel does not expose a supported column-calculation flag.
     /// </summary>
     /// <param name="batch">Excel batch context for accessing workbook</param>
     /// <param name="tableName">Name of the table to list columns from</param>
@@ -58,7 +59,8 @@ public interface IDataModelCommands
     DataModelTableColumnsResult ListColumns(IExcelBatch batch, [RequiredParameter] string tableName);
 
     /// <summary>
-    /// Gets complete table details including columns and measures
+    /// Gets complete table details including columns and measures.
+    /// Each column's isCalculated field is null (unknown), not false.
     /// </summary>
     /// <param name="batch">Excel batch context for accessing workbook</param>
     /// <param name="tableName">Name of the table to get</param>
@@ -199,7 +201,6 @@ public interface IDataModelCommands
 
     /// <summary>
     /// Executes a DAX EVALUATE query against the Data Model and returns the results.
-    /// Uses ADOConnection.Execute for direct DAX query execution via MSOLAP provider.
     /// The query should start with EVALUATE and return a table result.
     /// </summary>
     /// <param name="batch">Excel batch context for accessing workbook</param>
@@ -212,7 +213,6 @@ public interface IDataModelCommands
 
     /// <summary>
     /// Executes a DMV (Dynamic Management View) query against the Data Model and returns the results.
-    /// Uses ADOConnection.Execute for SQL-like DMV query execution via MSOLAP provider.
     /// DMV queries retrieve metadata about the Data Model (tables, columns, measures, relationships, etc.).
     /// </summary>
     /// <param name="batch">Excel batch context for accessing workbook</param>

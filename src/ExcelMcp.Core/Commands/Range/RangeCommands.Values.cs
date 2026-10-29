@@ -24,7 +24,7 @@ public partial class RangeCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? range = null;
+            Excel.Range? range = null;
             try
             {
                 range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress, out string? specificError);
@@ -33,78 +33,7 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                // Get actual address from Excel
-                result.RangeAddress = range.Address;
-                // Get values as 2D array - handle single cell case
-                object valueOrArray = range.Value2;
-                object? formulaOrArray = null;
-                bool formulasRead = false;
-                int startRow = Convert.ToInt32(range.Row);
-                int startColumn = Convert.ToInt32(range.Column);
-
-                if (valueOrArray is object[,] values)
-                {
-                    // Multi-cell range - process as 2D array
-                    result.RowCount = values.GetLength(0);
-                    result.ColumnCount = values.GetLength(1);
-
-                    for (int r = 1; r <= result.RowCount; r++)
-                    {
-                        var row = new List<object?>();
-                        for (int c = 1; c <= result.ColumnCount; c++)
-                        {
-                            object? cellValue = values[r, c];
-                            if (!ExcelErrorMapper.TryGet(cellValue, out int errorCode, out var error))
-                            {
-                                row.Add(cellValue);
-                                continue;
-                            }
-
-                            if (!formulasRead)
-                            {
-                                formulaOrArray = ReadFormulas(ctx, (Excel.Range)range);
-                                formulasRead = true;
-                            }
-
-                            string formula = formulaOrArray is object[,] formulas
-                                ? GetReturnedFormula(formulas[r, c])
-                                : string.Empty;
-                            row.Add(ConvertMappedErrorForRead(
-                                cellValue,
-                                formula,
-                                startRow + r - 1,
-                                startColumn + c - 1,
-                                result.CellErrors,
-                                errorCode,
-                                error));
-                        }
-                        result.Values.Add(row);
-                    }
-                }
-                else
-                {
-                    // Single cell - wrap value in 1x1 array
-                    result.RowCount = 1;
-                    result.ColumnCount = 1;
-                    if (ExcelErrorMapper.TryGet(valueOrArray, out int errorCode, out var error))
-                    {
-                        formulaOrArray = ReadFormulas(ctx, (Excel.Range)range);
-                        result.Values.Add([
-                            ConvertMappedErrorForRead(
-                                valueOrArray,
-                                GetReturnedFormula(formulaOrArray),
-                                startRow,
-                                startColumn,
-                                result.CellErrors,
-                                errorCode,
-                                error)
-                        ]);
-                    }
-                    else
-                    {
-                        result.Values.Add([valueOrArray]);
-                    }
-                }
+                ReadValueGrid(ctx, range, result, ct);
 
                 result.Success = true;
                 return result;
@@ -138,7 +67,7 @@ public partial class RangeCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? range = null;
+            Excel.Range? range = null;
             int originalCalculation = -1;
             bool calculationChanged = false;
             Exception? operationFailure = null;
@@ -151,9 +80,9 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                ValidateMergedCellsForWrite((Excel.Range)range, rangeAddress, ct);
-                ValidateContentWriteDimensions((Excel.Range)range, resolvedValues, nameof(values), "Value");
-                EnsureDestinationWritable(ctx, (Excel.Range)range, overwritePolicy, ct);
+                ValidateMergedCellsForWrite(range, rangeAddress, ct);
+                ValidateContentWriteDimensions(range, resolvedValues, nameof(values), "Value");
+                EnsureDestinationWritable(ctx, range, overwritePolicy, ct);
 
                 // Calculation suppressed here (not in ExcelWriteGuard) because Data Model ops need it enabled
                 originalCalculation = (int)ctx.App.Calculation;
@@ -195,9 +124,9 @@ public partial class RangeCommands
                         // Formula/Formula2 store constants exactly like Value2, so one mixed array
                         // writes the formulas without blanking the other cells (issue #1065).
                         if (ctx.Capabilities.SupportsFormula2)
-                            ((Excel.Range)range).Formula2 = arrayValues;
+                            range.Formula2 = arrayValues;
                         else
-                            ((Excel.Range)range).Formula = arrayValues;
+                            range.Formula = arrayValues;
 
                         setResult.Message = $"Wrote {formulaCount} formula(s); other cells kept as values";
                     }
@@ -251,7 +180,7 @@ public partial class RangeCommands
             return;
         }
 
-        if (isMergedState == true && Convert.ToInt64(range.CountLarge) == 1)
+        if (isMergedState == true && Convert.ToInt64((object)range.CountLarge, System.Globalization.CultureInfo.InvariantCulture) == 1)
         {
             Excel.Range? mergeArea = null;
             try

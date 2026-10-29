@@ -9,6 +9,7 @@ using Sbroenne.ExcelMcp.Core.Commands.Analysis;
 using Sbroenne.ExcelMcp.Core.Commands.Calculation;
 using Sbroenne.ExcelMcp.Core.Commands.Chart;
 using Sbroenne.ExcelMcp.Core.Commands.PivotTable;
+using Sbroenne.ExcelMcp.Core.Commands.Screenshot;
 using Sbroenne.ExcelMcp.Core.Commands.Workbook;
 using Sbroenne.ExcelMcp.Core.Commands.XmlMap;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -25,6 +26,19 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 [Trait("RequiresExcel", "false")]
 public sealed class GeneratedActionContractTests
 {
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"sheetName":null,"rangeAddress":null,"quality":null}""")]
+    public void ScreenshotDispatch_OmittedInputsUseCoreDefaults(string argsJson)
+    {
+        var (commands, proxy) = CreateProxy<IScreenshotCommands>();
+        ServiceRegistry.Screenshot.DispatchToCore(commands, ScreenshotAction.CaptureRange, null!, argsJson);
+        Assert.Equal(1, proxy.CallCount);
+        Assert.Null(proxy.LastArguments![1]);
+        Assert.Equal("A1:Z30", proxy.LastArguments[2]);
+        Assert.Equal(ScreenshotQuality.Medium, proxy.LastArguments[3]);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("""{"inspectorIndex":3}""")]
@@ -194,9 +208,29 @@ public sealed class GeneratedActionContractTests
     [InlineData("connection.refresh", """{"connectionName":"Probe","timeoutSeconds":60}""")]
     [InlineData("datamodel.refresh", """{"timeoutSeconds":60}""")]
     [InlineData("pivottable.refresh", """{"pivotTableName":"Probe","timeoutSeconds":60}""")]
-    public void RawCommandValidation_AcceptsCliGroupAndParameterNames(string command, string argsJson)
+    [InlineData("service.status", "{}")]
+    [InlineData("service.shutdown", "{}")]
+    [InlineData("service.ping", "{}")]
+    [InlineData("service.status", null)]
+    [InlineData("service.shutdown", null)]
+    [InlineData("service.ping", null)]
+    public void RawCommandValidation_AcceptsCliGroupAndParameterNames(string command, string? argsJson)
     {
         ServiceRegistry.ValidateCommandArguments(command, argsJson);
+    }
+
+    [Theory]
+    [InlineData("service.status")]
+    [InlineData("service.shutdown")]
+    [InlineData("service.ping")]
+    public void RawCommandValidation_RejectsArgumentsForParameterlessServiceCommands(string command)
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            ServiceRegistry.ValidateCommandArguments(command, """{"unexpected":null}"""));
+
+        Assert.Contains(command, exception.Message, StringComparison.Ordinal);
+        Assert.Contains("unexpected", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("none", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]

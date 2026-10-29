@@ -17,37 +17,38 @@ public sealed class ExcelToolsBaseResponseParityTests
 {
     [Theory]
     [InlineData("{\"success\":true,\"values\":[[\"=literal\",3,null]]}", "{\"success\":true,\"values\":[[\"=literal\",3,null]]}", false)]
-    [InlineData("[\"x\",2,null]", "{\"result\":[\"x\",2,null]}", false)]
-    [InlineData("42", "{\"result\":42}", false)]
-    [InlineData("\"hello\"", "{\"result\":\"hello\"}", false)]
-    [InlineData("null", "{\"result\":null}", false)]
-    [InlineData("{\"success\":false,\"errorCategory\":\"Timeout\"}", "{\"success\":false,\"errorCategory\":\"Timeout\"}", true)]
-    [InlineData("{\"isError\":true,\"errorMessage\":\"failed\"}", "{\"isError\":true,\"errorMessage\":\"failed\"}", true)]
-    public async Task PublicEntryPreservesTextStructureAndErrorFlag(string json, string expected, bool isError)
+    [InlineData("[\"x\",2,null]", "{\"result\":[\"x\",2,null],\"success\":true}", false)]
+    [InlineData("42", "{\"result\":42,\"success\":true}", false)]
+    [InlineData("\"hello\"", "{\"result\":\"hello\",\"success\":true}", false)]
+    [InlineData("null", "{\"result\":null,\"success\":true}", false)]
+    [InlineData("{\"success\":false,\"errorCategory\":\"Timeout\"}", "{\"success\":false,\"errorCategory\":\"Timeout\",\"errorMessage\":\"The operation reported a failure.\",\"command\":\"range.get-values\"}", true)]
+    [InlineData("{\"isError\":true,\"errorMessage\":\"failed\"}", "{\"success\":false,\"errorMessage\":\"failed\",\"errorCategory\":\"OperationFailed\",\"command\":\"range.get-values\"}", true)]
+    public async Task PublicEntryPreservesNormalizedTextStructureAndErrorFlag(string json, string expected, bool isError)
     {
         var result = await ExcelToolsBase.ExecuteToolActionAsync("range_read", "get-values",
             () => Task.FromResult(json), CancellationToken.None);
         await Task.Yield(); // Returned structured content must outlive the parsing document.
         Assert.Equal(isError, result.IsError);
-        Assert.Equal(json, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        using var actualDocument = JsonDocument.Parse(Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        Assert.True(JsonElement.DeepEquals(actualDocument.RootElement, result.StructuredContent!.Value));
         Assert.NotNull(result.StructuredContent);
         using var expectedDocument = JsonDocument.Parse(expected);
         Assert.True(JsonElement.DeepEquals(expectedDocument.RootElement, result.StructuredContent.Value));
     }
 
     [Fact]
-    public async Task DiagnosticNegativeRemainsExpectedAndPreservesOriginalPayload()
+    public async Task DiagnosticNegativeRetainsDiagnosticDataAndSignalsUnopenableFile()
     {
         const string json = "{\"success\":false,\"reason\":\"not an Excel workbook\"}";
         var result = await ExcelToolsBase.ExecuteToolActionAsync("file_read", "test",
             () => Task.FromResult(json), CancellationToken.None);
-        Assert.False(result.IsError);
-        Assert.Equal(json, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        Assert.True(result.IsError);
+        Assert.Equal("not an Excel workbook", result.StructuredContent!.Value.GetProperty("reason").GetString());
         Assert.False(result.StructuredContent!.Value.GetProperty("success").GetBoolean());
     }
 
     [Fact]
-    public async Task CustomFactoryReceivesExactJsonAndRetainsItsOwnResult()
+    public async Task CustomFactoryReceivesNormalizedJsonAndRetainsItsOwnResult()
     {
         const string json = "{ \"success\": true, \"x\": 7 }";
         var calls = 0;
@@ -55,7 +56,7 @@ public sealed class ExcelToolsBaseResponseParityTests
         var result = await ExcelToolsBase.ExecuteToolActionAsync("screenshot", "range",
             () => Task.FromResult(json), CancellationToken.None, received =>
             {
-                Assert.Equal(json, received);
+                Assert.Equal("{\"x\":7,\"success\":true}", received);
                 calls++;
                 return custom;
             });
@@ -66,14 +67,14 @@ public sealed class ExcelToolsBaseResponseParityTests
 
     [Theory]
     [InlineData("range_read", "get-values", true)]
-    [InlineData("file_read", "test", false)]
+    [InlineData("file_read", "test", true)]
     public async Task NullCustomFactoryResultRetainsDefaultFallbackClassification(string tool, string action, bool isError)
     {
         const string json = "{\"success\":false,\"reason\":\"expected fixture\"}";
         var result = await ExcelToolsBase.ExecuteToolActionAsync(tool, action,
             () => Task.FromResult(json), CancellationToken.None, _ => null!);
         Assert.Equal(isError, result.IsError);
-        Assert.Equal(json, Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        Assert.Equal("expected fixture", result.StructuredContent!.Value.GetProperty("reason").GetString());
         Assert.False(result.StructuredContent!.Value.GetProperty("success").GetBoolean());
     }
 

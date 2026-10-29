@@ -80,6 +80,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, "ReopenTestModule", vbaCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act - reopen the existing .xlsm, prove VBA project access still works, then run
         var reopenedBatch = _fixture.BatchToken;
@@ -113,6 +114,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, moduleName, initialCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act
         var reopenedBatch = _fixture.BatchToken;
@@ -149,6 +151,7 @@ End Sub";
         var batch = _fixture.BatchToken;
         Import(batch, moduleName, originalCode);
         await _fixture.SaveAndReopenAsync();
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
 
         // Act
         var reopenedBatch = _fixture.BatchToken;
@@ -332,6 +335,35 @@ End Sub";
     }
 
     [Fact]
+    public void ScriptCommands_ReplaceProcedure_AcceptsLeadingBlankReplacementLines()
+    {
+        const string moduleName = "BlankPrefixProcedureModule";
+        const string oldBody = "Public Sub Target()\r\n    Debug.Print \"old\"\r\nEnd Sub";
+        const string replacement = "\r\n\r\nPublic Sub Target()\r\n    Debug.Print \"new\"\r\nEnd Sub";
+        const string original = "Option Explicit\r\n\r\n' Existing target documentation\r\n" + oldBody
+            + "\r\n\r\n' Existing retained documentation\r\nPrivate Sub Retained()\r\nEnd Sub";
+        var batch = _fixture.BatchToken;
+        Import(batch, moduleName, original);
+        var before = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        var target = RequireSuccess(_scriptCommands.Read(batch, moduleName, "Target", "Sub", null, null));
+        Assert.Contains(oldBody, before.Code, StringComparison.Ordinal);
+        string expected = before.Code.Replace(oldBody, replacement, StringComparison.Ordinal);
+
+        var replaced = RequireSuccess(_scriptCommands.ReplaceProcedure(
+            batch, moduleName, "Target", "Sub", target.SourceHash!, replacement));
+
+        var after = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        Assert.Equal(expected, after.Code);
+        Assert.Equal(VbaModuleSource.ComputeHash(expected), after.SourceHash);
+        var observed = RequireSuccess(_scriptCommands.Read(batch, moduleName, "Target", "Sub", null, null));
+        Assert.False(observed.HasMore);
+        Assert.Equal(VbaProcedureSource.ComputeHash(observed.Code), replaced.SourceHash);
+        Assert.Equal(observed.SourceHash, replaced.SourceHash);
+        Assert.Equal(observed.StartLine, replaced.StartLine);
+        Assert.Equal(observed.TotalLineCount, replaced.LineCount);
+    }
+
+    [Fact]
     public async Task ScriptCommands_ReplaceProcedure_RejectsStaleSourceWithoutChangingIt()
     {
         const string moduleName = "StaleProcedureModule";
@@ -398,6 +430,32 @@ End Sub";
         AssertStoredCode(
             original,
             RequireSuccess(_scriptCommands.Read(batch, moduleName, "KeepMe", "Sub", null, null)).Code);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ScriptCommands_ReplaceProcedure_RejectsUnsupportedPhysicalSourceWithoutChangingHash(bool nul)
+    {
+        string moduleName = "PhysicalGuard" + (nul ? "Nul" : "Long");
+        const string original = "Public Sub KeepMe()\nDebug.Print 1\nEnd Sub\nPublic Sub Retained()\nEnd Sub";
+        var batch = _fixture.BatchToken;
+        Import(batch, moduleName, original);
+        var before = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        var procedure = RequireSuccess(_scriptCommands.Read(batch, moduleName, "KeepMe", "Sub", null, null));
+        string body = nul ? "'bad\0value" : "'" + new string('x', 1023);
+        var response = await _fixture.SendForFailureAsync("vba.replace-procedure", new
+        {
+            moduleName,
+            procedureName = "KeepMe",
+            procedureKind = "Sub",
+            expectedSourceHash = procedure.SourceHash,
+            vbaCode = "Public Sub KeepMe()\n" + body + "\nEnd Sub"
+        });
+        Assert.Equal(OperationFailureCategory.InvalidInput.ToString(), response.ErrorCategory);
+        var after = RequireSuccess(_scriptCommands.View(batch, moduleName));
+        Assert.Equal(before.SourceHash, after.SourceHash);
+        Assert.Equal(before.Code, after.Code);
     }
 
     [Fact]
@@ -577,6 +635,24 @@ End Sub";
     }
 
     [Fact]
+    public void ScriptCommands_Run_WithThirtyParameters_PreservesPositionAndRestoresSecurity()
+    {
+        var parameters = Enumerable.Range(1, 30).Select(index => $"value-{index}").ToArray();
+        string declaration = string.Join(", ", Enumerable.Range(1, 30).Select(index => $"ByVal p{index} As String"));
+        string statements = string.Join("\n", Enumerable.Range(1, 30).Select(index =>
+            $"    ThisWorkbook.Worksheets(1).Cells(1, {index}).Value = p{index}"));
+        Import(_fixture.BatchToken, "ThirtyParameters", $"Public Sub Store({declaration})\n{statements}\nEnd Sub");
+        var before = _fixture.ExecuteRawVerification((ctx, _) => ctx.App.AutomationSecurity);
+
+        RequireSuccess(_scriptCommands.Run(_fixture.BatchToken, "ThirtyParameters.Store", null, parameters));
+
+        var values = RequireSuccess(_commands.GetValues(_fixture.BatchToken, "Sheet1", "A1:AD1"));
+        Assert.Equal(parameters, Assert.Single(values.Values).Select(value => value?.ToString()));
+        var after = _fixture.ExecuteRawVerification((ctx, _) => ctx.App.AutomationSecurity);
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
     public void ScriptCommands_Run_WithMultipleParameters_PassesAllArguments()
     {
         // Arrange
@@ -602,6 +678,97 @@ End Sub";
         Assert.Equal("Second", result.Values[0][1]?.ToString());
     }
 
+    [Fact]
+    public async Task ScriptCommands_ReplaceModule_VerifiesSourceAndRejectsStaleHash()
+    {
+        const string moduleName = "GuardedWholeModule";
+        Import(_fixture.BatchToken, moduleName, "Public Function Label() As String\nLabel = \"before\"\nEnd Function");
+        var before = RequireSuccess(_scriptCommands.View(_fixture.BatchToken, moduleName));
+        const string source = "Attribute VB_Name = \"GuardedWholeModule\"\r\r\nPublic Function Label() As String\r\r\nLabel = \"after\"\r\r\nEnd Function";
+        var replaced = RequireSuccess(_scriptCommands.ReplaceModule(_fixture.BatchToken, moduleName, before.SourceHash, source));
+        var after = RequireSuccess(_scriptCommands.View(_fixture.BatchToken, moduleName));
+        Assert.Equal(after.SourceHash, replaced.SourceHash);
+        Assert.NotEqual(before.SourceHash, after.SourceHash);
+        Assert.DoesNotContain("Attribute VB_Name", after.Code);
+        Assert.Contains("\"after\"", after.Code);
+        Assert.Equal(after.LineCount, replaced.LineCount);
+        var stale = await _fixture.SendForFailureAsync("vba.replace-module", new
+        {
+            moduleName,
+            expectedSourceHash = before.SourceHash,
+            vbaCode = "Public Sub Stale()\nEnd Sub"
+        });
+        Assert.Equal("Conflict", stale.ErrorCategory);
+        Assert.Equal(after.Code, RequireSuccess(_scriptCommands.View(_fixture.BatchToken, moduleName)).Code);
+    }
+
+    [Fact]
+    public void ScriptCommands_Invoke_PreservesTypedArgumentsAndTwoDimensionalReturn()
+    {
+        const string source = """
+            Public Function TypedResult(ByVal text As Variant, ByVal number As Variant, ByVal flag As Variant, ByVal nullable As Variant, Optional absent As Variant) As Variant
+                Dim output(1 To 2, 1 To 3) As Variant
+                output(1, 1) = text
+                output(1, 2) = number
+                output(1, 3) = flag
+                output(2, 1) = IsNull(nullable)
+                output(2, 2) = IsMissing(absent)
+                output(2, 3) = Null
+                TypedResult = output
+            End Function
+            """;
+        Import(_fixture.BatchToken, "TypedInvocation", source);
+        var result = _fixture.Send("vba.invoke", new
+        {
+            procedureName = "TypedInvocation.TypedResult",
+            arguments = new object[]
+            {
+                new { type = "string", value = "=literal" }, new { type = "number", value = -12.5 },
+                new { type = "boolean", value = false }, new { type = "null" }, new { type = "missing" }
+            }
+        });
+        Assert.True(result.Success, result.ErrorMessage);
+        using var json = JsonDocument.Parse(result.Result!);
+        Assert.Equal("array", json.RootElement.GetProperty("returnKind").GetString());
+        var values = json.RootElement.GetProperty("values");
+        Assert.Equal("=literal", values[0][0].GetString());
+        Assert.Equal(-12.5, values[0][1].GetDouble());
+        Assert.False(values[0][2].GetBoolean());
+        Assert.True(values[1][0].GetBoolean());
+        Assert.True(values[1][1].GetBoolean());
+        Assert.Equal(JsonValueKind.Null, values[1][2].ValueKind);
+    }
+
+    [Fact]
+    public async Task ScriptCommands_Invoke_RejectsObjectReturnAndRetainsMacroEffects()
+    {
+        Import(_fixture.BatchToken, "ObjectInvocation", """
+            Public Function ReturnRange() As Object
+                ThisWorkbook.Worksheets(1).Range("A1").Value = "invoked"
+                Set ReturnRange = ThisWorkbook.Worksheets(1).Range("A1")
+            End Function
+            """);
+        var result = await _fixture.SendForFailureAsync("vba.invoke", new { procedureName = "ObjectInvocation.ReturnRange" });
+        Assert.Contains("unsupported", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        var values = RequireSuccess(_commands.GetValues(_fixture.BatchToken, "Sheet1", "A1"));
+        Assert.Equal("invoked", Assert.Single(Assert.Single(values.Values)));
+    }
+
+    [Fact]
+    public async Task ScriptCommands_Invoke_ReopenedMacrosStillRequireExplicitApproval()
+    {
+        Import(_fixture.BatchToken, "ApprovedInvocation", "Public Function ReturnLabel() As String\nReturnLabel = \"approved\"\nEnd Function");
+        await _fixture.SaveAndReopenAsync();
+        var blocked = await _fixture.SendForFailureAsync("vba.invoke", new { procedureName = "ApprovedInvocation.ReturnLabel" });
+        Assert.Contains("enable-macros", blocked.ErrorMessage, StringComparison.Ordinal);
+        _fixture.Send("session.enable-macros", new { approved = true, allowReopen = true });
+        var result = _fixture.Send("vba.invoke", new { procedureName = "ApprovedInvocation.ReturnLabel" });
+        using var json = JsonDocument.Parse(result.Result!);
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Equal("string", json.RootElement.GetProperty("returnKind").GetString());
+        Assert.Equal("approved", json.RootElement.GetProperty("value").GetString());
+    }
+
     private static void AssertStoredCode(string expected, string actual)
     {
         expected = expected.Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -613,6 +780,45 @@ End Sub";
         Assert.Equal(
             System.Text.RegularExpressions.Regex.Matches(expected, literalsAndComments).Select(match => match.Value),
             System.Text.RegularExpressions.Regex.Matches(actual, literalsAndComments).Select(match => match.Value));
+    }
+
+    [Fact]
+    public async Task ScriptCommands_Invoke_RejectsLargeResultAfterExecutionAndPreservesEffects()
+    {
+        Import(_fixture.BatchToken, "OversizedInvocation", """
+            Public Function ReturnLarge() As Variant
+                Dim output(1 To 101, 1 To 100) As Variant
+                output(1, 1) = "synthetic result content"
+                ThisWorkbook.Worksheets(1).Range("A1").Value2 = "execution completed"
+                ReturnLarge = output
+            End Function
+            """);
+        var result = await _fixture.SendForFailureAsync("vba.invoke", new { procedureName = "OversizedInvocation.ReturnLarge" });
+        Assert.Contains("Macro execution completed", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains("10000", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains("not rolled back", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic result content", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Null(result.Result);
+        Assert.Equal("execution completed", RequireSuccess(_commands.GetValues(_fixture.BatchToken, "Sheet1", "A1")).Values[0][0]);
+        RequireSuccess(_scriptCommands.Run(_fixture.BatchToken, "OversizedInvocation.ReturnLarge", timeout: null));
+        Assert.Equal("execution completed", RequireSuccess(_commands.GetValues(_fixture.BatchToken, "Sheet1", "A1")).Values[0][0]);
+    }
+
+    [Fact]
+    public async Task ScriptCommands_ImportCaseInsensitiveConflict_DoesNotCreateAnotherComponent()
+    {
+        const string moduleName = "ImportCaseGuard";
+        Import(_fixture.BatchToken, moduleName, "Public Sub Keep()\nEnd Sub");
+        var before = RequireSuccess(_scriptCommands.List(_fixture.BatchToken));
+        var result = await _fixture.SendForFailureAsync("vba.import", new
+        {
+            moduleName = moduleName.ToLowerInvariant(),
+            vbaCode = "Public Sub Replacement()\nEnd Sub"
+        });
+        Assert.Equal("Conflict", result.ErrorCategory);
+        var after = RequireSuccess(_scriptCommands.List(_fixture.BatchToken));
+        Assert.Equal(before.Scripts.Select(script => script.Name), after.Scripts.Select(script => script.Name));
+        Assert.Contains("Keep", RequireSuccess(_scriptCommands.View(_fixture.BatchToken, moduleName)).Procedures);
     }
 
     private void Import(

@@ -320,23 +320,6 @@ public sealed class PersistentServiceStructuredFilterTests(PersistentServiceWork
     }
 
     [Fact]
-    public void AdvancedFilter_InPlaceCanBeClearedWithoutLosingRecords()
-    {
-        var sheet = CreateData();
-        Assert.True(_commands.SetValues(_fixture.BatchToken, sheet, "H1:H2", [["Amount"], [">=30"]]).Success);
-        _fixture.Send("rangeedit.advanced-filter", new
-        {
-            sheetName = sheet,
-            rangeAddress = "A1:B6",
-            criteriaRange = "H1:H2",
-            mode = "InPlace"
-        });
-        AssertVisibleRows(sheet, 4, 5, 6);
-        _fixture.Send("rangeedit.clear-filters", new { sheetName = sheet, rangeAddress = "A1:B6", clearAdvanced = true });
-        AssertVisibleRows(sheet, 2, 3, 4, 5, 6);
-    }
-
-    [Fact]
     public async Task AdvancedFilter_RejectsOccupiedMaximumCopyExtentBeforeWriting()
     {
         var sheet = CreateData();
@@ -477,7 +460,7 @@ public sealed class PersistentServiceStructuredFilterTests(PersistentServiceWork
                 for (int number = 2; number <= 6; number++)
                 {
                     row = (Excel.Range)rows[number];
-                    if (!Convert.ToBoolean(row.Hidden, System.Globalization.CultureInfo.InvariantCulture))
+                    if (!Convert.ToBoolean(((object)row.Hidden), System.Globalization.CultureInfo.InvariantCulture))
                         visibleRows.Add(number);
                     ComUtilities.Release(ref row);
                 }

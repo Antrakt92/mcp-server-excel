@@ -30,8 +30,7 @@ internal sealed class ListActionsCommand : Command<ListActionsCommand.Settings>
             if (!actionsByCommand.TryGetValue(key, out var actions))
             {
                 var error = new { success = false, errorMessage = $"Unknown command '{key}'." };
-                CliCommandRuntime.Current.Output.WriteLine(JsonSerializer.Serialize(error, ServiceProtocol.JsonOptions));
-                return 1;
+                return CliResultOutput.WriteJson(JsonSerializer.Serialize(error, ServiceProtocol.JsonOptions), "list-actions");
             }
 
             var result = new
@@ -40,8 +39,7 @@ internal sealed class ListActionsCommand : Command<ListActionsCommand.Settings>
                 command = key,
                 actions = actions.OrderBy(a => a, StringComparer.OrdinalIgnoreCase).ToArray()
             };
-            CliCommandRuntime.Current.Output.WriteLine(JsonSerializer.Serialize(result, ServiceProtocol.JsonOptions));
-            return 0;
+            return CliResultOutput.WriteJson(JsonSerializer.Serialize(result, ServiceProtocol.JsonOptions), "list-actions");
         }
 
         var all = actionsByCommand.ToDictionary(
@@ -53,11 +51,10 @@ internal sealed class ListActionsCommand : Command<ListActionsCommand.Settings>
         {
             success = true,
             workflow = "1) session open/create <file>, or session discover then session attach --workbook-id <id>, to get sessionId; 2) workbook commands use --session <id>; 3) session save saves explicitly; session close closes the selected workbook (add --save to save changes). Service shutdown leaves newly attached workbooks open.",
-            example = "session create file.xlsx → returns {sessionId:'abc'} → range set-values --session abc --range A1 --values 'Hello' → session close --save --session abc",
+            example = "session create file.xlsx → returns {sessionId:'abc'} → range set-values --session abc --range-address A1 --values 'Hello' → session close --save --session abc",
             commands = all
         };
-        CliCommandRuntime.Current.Output.WriteLine(JsonSerializer.Serialize(payload, ServiceProtocol.JsonOptions));
-        return 0;
+        return CliResultOutput.WriteJson(JsonSerializer.Serialize(payload, ServiceProtocol.JsonOptions), "list-actions");
     }
 
     internal sealed class Settings : CommandSettings

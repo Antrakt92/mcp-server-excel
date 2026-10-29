@@ -20,7 +20,8 @@ internal static class CliTelemetry
     private static readonly Dictionary<string, string[]> BuiltInActions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["service"] = ["start", "stop", "status", "shutdown", "ping"],
-        ["session"] = ["create", "open", "save", "close", "list", "test", "discover", "attach"],
+        ["session"] = ["create", "open", "save", "close", "list", "test", "discover", "attach",
+            "notices", "enable-editing", "enable-connections", "enable-macros"],
         ["batch"] = ["run"]
     };
 
@@ -86,7 +87,7 @@ internal static class CliTelemetry
             var invocationTelemetry = CurrentInvocationTelemetry.Value;
             string? resultErrorCategory = null;
             var negativeResult = response?.Success == true &&
-                ServiceResultOutcome.TryReadNegative(response.Result, out _, out resultErrorCategory);
+                ServiceResultOutcome.TryReadNegative(response.Result, out _, out resultErrorCategory, request.Command);
             var expectedNegative = IsExpectedNegative(request, response);
             var succeeded = response?.Success == true && (!negativeResult || expectedNegative);
             var trackedFailureCategory = response?.ErrorCategory

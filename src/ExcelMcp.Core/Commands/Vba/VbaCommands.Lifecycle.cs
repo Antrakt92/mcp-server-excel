@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
+using Vbe = Microsoft.Vbe.Interop;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
 
@@ -25,31 +26,29 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, not the Excel PIA.
-                // No .NET 5+ compatible NuGet package exists for VBE types (ThammimTech.Microsoft.Vbe.Interop targets .NET Framework only).
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 vbComponents = vbaProject.VBComponents;
 
                 for (int i = 1; i <= vbComponents.Count; i++)
                 {
-                    dynamic? component = null;
-                    dynamic? codeModule = null;
+                    Vbe.VBComponent? component = null;
+                    Vbe.CodeModule? codeModule = null;
                     try
                     {
                         component = vbComponents.Item(i);
                         string name = component.Name;
-                        int type = component.Type;
+                        int type = (int)component.Type;
 
                         string typeStr = GetVbaModuleTypeName(type);
 
                         codeModule = component.CodeModule;
                         int moduleLineCount = codeModule.CountOfLines;
-                        List<VbaProcedureInfo> procedureDetails = GetProcedures((object)codeModule, ct);
+                        List<VbaProcedureInfo> procedureDetails = GetProcedures(codeModule, ct);
 
                         result.Scripts.Add(new ScriptInfo
                         {
@@ -109,16 +108,14 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? component = null;
-            dynamic? codeModule = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
+            Vbe.VBComponent? component = null;
+            Vbe.CodeModule? codeModule = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, not the Excel PIA.
-                // No .NET 5+ compatible NuGet package exists for VBE types.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 vbComponents = vbaProject.VBComponents;
 
                 // Find the specified module
@@ -131,7 +128,7 @@ public partial class VbaCommands
                     if (name.Equals(moduleName, StringComparison.OrdinalIgnoreCase))
                     {
                         found = true;
-                        int type = component.Type;
+                        int type = (int)component.Type;
                         result.ModuleType = GetVbaModuleTypeName(type);
 
                         codeModule = component.CodeModule;
@@ -143,7 +140,8 @@ public partial class VbaCommands
                             result.Code = codeModule.Lines[1, result.LineCount];
                         }
 
-                        result.Procedures = GetProcedures((object)codeModule, ct)
+                        result.SourceHash = VbaModuleSource.ComputeHash(result.Code);
+                        result.Procedures = GetProcedures(codeModule, ct)
                             .Select(procedure => procedure.Name)
                             .ToList();
 
@@ -185,6 +183,8 @@ public partial class VbaCommands
     /// <inheritdoc />
     public OperationResult Import(IExcelBatch batch, string moduleName, string vbaCode)
     {
+        ValidateModuleName(moduleName);
+        vbaCode = VbaModuleSource.Normalize(vbaCode);
         EnsureVbaFile(batch.WorkbookPath);
 
         // Check VBA trust BEFORE attempting operation
@@ -195,29 +195,24 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? newModule = null;
-            dynamic? codeModule = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
+            Vbe.VBComponent? newModule = null;
+            Vbe.CodeModule? codeModule = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, not the Excel PIA.
-                // No .NET 5+ compatible NuGet package exists for VBE types.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 vbComponents = vbaProject.VBComponents;
 
-                // Check if module already exists
+                var existingNames = new List<string>();
                 for (int i = 1; i <= vbComponents.Count; i++)
                 {
-                    dynamic? component = null;
+                    Vbe.VBComponent? component = null;
                     try
                     {
                         component = vbComponents.Item(i);
-                        if (component.Name == moduleName)
-                        {
-                            throw new OperationFailureException(OperationFailureCategory.Conflict, $"Module '{moduleName}' already exists. Use script-update to modify it.");
-                        }
+                        existingNames.Add(component.Name);
                     }
                     finally
                     {
@@ -225,12 +220,21 @@ public partial class VbaCommands
                     }
                 }
 
-                // Add new module
-                newModule = vbComponents.Add(1); // 1 = vbext_ct_StdModule
-                newModule.Name = moduleName;
-
-                codeModule = newModule.CodeModule;
-                codeModule.AddFromString(vbaCode);
+                VbaModuleSource.Import(moduleName, vbaCode, existingNames,
+                    () => newModule = vbComponents.Add(Vbe.vbext_ComponentType.vbext_ct_StdModule),
+                    name => newModule!.Name = name,
+                    source =>
+                    {
+                        codeModule = newModule!.CodeModule;
+                        codeModule.InsertLines(1, source);
+                    },
+                    () => newModule?.Name ?? throw new InvalidOperationException("The created component could not be identified."),
+                    () =>
+                    {
+                        codeModule ??= newModule?.CodeModule
+                            ?? throw new InvalidOperationException("The created component source could not be inspected.");
+                        return ReadLines(codeModule, 1, codeModule.CountOfLines);
+                    });
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
@@ -255,86 +259,7 @@ public partial class VbaCommands
     }
 
     /// <inheritdoc />
-    public OperationResult Update(IExcelBatch batch, string moduleName, string vbaCode)
-    {
-        EnsureVbaFile(batch.WorkbookPath);
+    public OperationResult Update(IExcelBatch batch, string moduleName, string vbaCode) =>
+        ReplaceModuleCore(batch, moduleName, null, vbaCode);
 
-        // Check VBA trust BEFORE attempting operation
-        if (!IsVbaTrustEnabled())
-        {
-            throw new OperationFailureException(OperationFailureCategory.Permissions, VbaTrustErrorMessage);
-        }
-
-        return batch.Execute((ctx, ct) =>
-        {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? targetComponent = null;
-            dynamic? codeModule = null;
-            try
-            {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, not the Excel PIA.
-                // No .NET 5+ compatible NuGet package exists for VBE types.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
-                vbComponents = vbaProject.VBComponents;
-
-                for (int i = 1; i <= vbComponents.Count; i++)
-                {
-                    dynamic? component = null;
-                    try
-                    {
-                        component = vbComponents.Item(i);
-                        if (component.Name == moduleName)
-                        {
-                            targetComponent = component;
-                            component = null; // Don't release - we're keeping it
-                            break;
-                        }
-                    }
-                    finally
-                    {
-                        if (component != null)
-                        {
-                            ComUtilities.Release(ref component);
-                        }
-                    }
-                }
-
-                if (targetComponent == null)
-                {
-                    throw new OperationFailureException(OperationFailureCategory.NotFound, $"Module '{moduleName}' not found. Use script-import to create it.");
-                }
-
-                codeModule = targetComponent.CodeModule;
-                int lineCount = codeModule.CountOfLines;
-
-                if (lineCount > 0)
-                {
-                    codeModule.DeleteLines(1, lineCount);
-                }
-
-                codeModule.AddFromString(vbaCode);
-
-                return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
-            }
-            catch (COMException comEx) when (IsVbaTrustError(comEx))
-            {
-                throw new OperationFailureException(OperationFailureCategory.Permissions, VbaTrustErrorMessage, comEx);
-            }
-            catch (COMException comEx) when (comEx.ErrorCode == GenericOfficeAutomationError)
-            {
-                // Trust passed IsVbaTrustError, so this generic 0x800A03EC is a real,
-                // non-trust failure. Surface it with COM environment diagnostics (issue #671).
-                throw new InvalidOperationException(BuildGenericComErrorMessage(comEx), comEx);
-            }
-            finally
-            {
-                ComUtilities.Release(ref codeModule);
-                ComUtilities.Release(ref targetComponent);
-                ComUtilities.Release(ref vbComponents);
-                ComUtilities.Release(ref vbaProject);
-            }
-        });
-    }
 }

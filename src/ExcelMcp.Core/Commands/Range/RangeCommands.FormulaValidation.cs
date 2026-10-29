@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
+using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Excel = Microsoft.Office.Interop.Excel;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Core.Utilities;
 
@@ -8,7 +10,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 /// <summary>
 /// Range formula validation operations
-/// Improvement #1: Formula syntax validation with error detection and suggestions
+/// Read-only lexical checks and local worksheet-name validation; not an Excel formula compiler.
 /// </summary>
 public partial class RangeCommands
 {
@@ -31,11 +33,38 @@ public partial class RangeCommands
         return batch.Execute((ctx, ct) =>
         {
             var errors = new List<FormulaValidationError>();
-            var warnings = new List<FormulaValidationWarning>();
+            var sheetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Excel.Sheets? sheets = null;
+            try
+            {
+                sheets = ctx.Book.Worksheets;
+                for (int index = 1; index <= sheets.Count; index++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Excel.Worksheet? sheet = null;
+                    try
+                    {
+                        sheet = (Excel.Worksheet)sheets[index];
+                        sheetNames.Add(sheet.Name);
+                    }
+                    finally { ComUtilities.Release(ref sheet); }
+                }
+            }
+            finally { ComUtilities.Release(ref sheets); }
             int validCount = 0;
 
-            // Parse starting cell from rangeAddress (e.g., "B1" or "B1:B2")
-            var (startRow, startCol) = ParseCellAddress(rangeAddress.Split(':')[0]);
+            Excel.Range? target = null;
+            int startRow;
+            int startCol;
+            try
+            {
+                target = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress, out string? targetError)
+                    ?? throw new ArgumentException(targetError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress), nameof(rangeAddress));
+                // Same rectangle/payload geometry as set-formulas, without inspecting or changing content.
+                ValidateContentWriteDimensions(target, resolvedFormulas, nameof(formulas), "Formula");
+                (startRow, startCol) = ParseCellAddress(target.Address.Split(':')[0]);
+            }
+            finally { ComUtilities.Release(ref target); }
 
             int currentRow = startRow;
             foreach (var formulaRow in resolvedFormulas)
@@ -43,6 +72,7 @@ public partial class RangeCommands
                 int currentCol = startCol;
                 foreach (var formula in formulaRow)
                 {
+                    ct.ThrowIfCancellationRequested();
                     // Generate cell address for error reporting
                     string cellAddress = GetCellAddress(currentRow, currentCol);
 
@@ -55,7 +85,7 @@ public partial class RangeCommands
                     }
 
                     // Validate formula
-                    var validationErrors = ValidateSingleFormula(formula, cellAddress, currentRow, currentCol);
+                    var validationErrors = ValidateSingleFormula(formula, cellAddress, currentRow, currentCol, sheetNames);
                     if (validationErrors.Count == 0)
                     {
                         validCount++;
@@ -77,10 +107,6 @@ public partial class RangeCommands
             {
                 result.Errors = errors;
             }
-            if (warnings.Count > 0)
-            {
-                result.Warnings = warnings;
-            }
 
             result.Success = true;
             return result;
@@ -90,76 +116,73 @@ public partial class RangeCommands
     /// <summary>
     /// Validates a single formula and returns list of validation errors
     /// </summary>
-    private static List<FormulaValidationError> ValidateSingleFormula(string formula, string cellAddress, int row, int col)
+    internal static List<FormulaValidationError> ValidateSingleFormula(string formula, string cellAddress, int row, int col, IReadOnlySet<string>? sheetNames = null)
     {
         var errors = new List<FormulaValidationError>();
-
-        string formulaContent = formula[1..]; // Remove leading =
-
-        // Check for unclosed parentheses
-        int openParen = 0;
-        foreach (char c in formulaContent)
+        void Error(string message, string category = "syntax-error") => errors.Add(new FormulaValidationError
         {
-            if (c == '(') openParen++;
-            else if (c == ')') openParen--;
-        }
-        if (openParen != 0)
+            CellAddress = cellAddress,
+            Row = row,
+            Column = col,
+            Formula = formula,
+            Message = message,
+            Category = category
+        });
+        int parentheses = 0;
+        var bangs = new List<int>();
+        for (int index = 1; index < formula.Length; index++)
         {
-            errors.Add(new FormulaValidationError
+            char character = formula[index];
+            if (character is '"' or '\'')
             {
-                CellAddress = cellAddress,
-                Row = row,
-                Column = col,
-                Formula = formula,
-                Message = openParen > 0
-                    ? $"Missing {openParen} closing parenthesis(es)"
-                    : $"Extra {-openParen} closing parenthesis(es)",
-                Category = "syntax-error"
-            });
-        }
-
-        // Check for common undefined functions without namespace
-        var excelAddInFunctions = new[] { "GETVM3", "GETAKS", "GETDISK", "GETESAN", "GETANF", "GETMANAGEDDISK4" };
-        foreach (var func in excelAddInFunctions)
-        {
-            // Match function call without XA2. namespace (case-insensitive)
-            // Use simpler pattern: just look for function name followed by (
-            if (formulaContent.Contains(func + "(", StringComparison.OrdinalIgnoreCase) ||
-                formulaContent.Contains(func + " (", StringComparison.OrdinalIgnoreCase))
-            {
-                // Make sure it's not already prefixed with XA2.
-                if (!formulaContent.Contains("XA2." + func, StringComparison.OrdinalIgnoreCase))
+                char quote = character;
+                bool closed = false;
+                while (++index < formula.Length)
                 {
-                    errors.Add(new FormulaValidationError
-                    {
-                        CellAddress = cellAddress,
-                        Row = row,
-                        Column = col,
-                        Formula = formula,
-                        Message = $"Function '{func}' requires XA2 add-in namespace",
-                        Suggestion = $"=XA2.{func}(...)",
-                        Category = "undefined-function"
-                    });
+                    if (formula[index] != quote) continue;
+                    if (index + 1 < formula.Length && formula[index + 1] == quote) { index++; continue; }
+                    closed = true;
+                    break;
                 }
+                if (!closed) Error("Unterminated quoted text or worksheet name.");
+                continue;
             }
-        }
-
-        // Check for references to non-existent sheets (basic check for common patterns)
-        if (Regex.IsMatch(formulaContent, @"![A-Z]"))
-        {
-            // Basic detection of sheet references - report as potential issue
-            // Full validation would require access to actual sheet names in the workbook
-            errors.Add(new FormulaValidationError
+            if (character == '[')
             {
-                CellAddress = cellAddress,
-                Row = row,
-                Column = col,
-                Formula = formula,
-                Message = "Formula contains sheet reference which requires verification",
-                Category = "invalid-reference"
-            });
+                // Structured-reference labels and external workbook labels are not formula syntax.
+                int brackets = 1;
+                while (++index < formula.Length && brackets != 0)
+                {
+                    if (formula[index] == '\'' && index + 1 < formula.Length) { index++; continue; }
+                    if (formula[index] == '[') brackets++;
+                    if (formula[index] == ']') brackets--;
+                }
+                index--;
+                continue;
+            }
+            if (character == '(') parentheses++;
+            if (character == ')')
+            {
+                if (parentheses == 0) Error("Extra closing parenthesis.");
+                else parentheses--;
+            }
+            if (character == '!') bangs.Add(index);
         }
-
+        if (parentheses > 0) Error($"Missing {parentheses} closing parenthesis(es).");
+        foreach (int bang in bangs)
+        {
+            // Workbook-qualified UDF calls do not establish a local worksheet reference.
+            if (Regex.IsMatch(formula[(bang + 1)..], @"^[\p{L}_][\p{L}\p{Nd}_.]*\s*\(", RegexOptions.CultureInvariant)) continue;
+            var match = Regex.Match(formula[..bang], @"('(?:[^']|'')+'|(?:\[[^\]]+\])?[\p{L}\p{Nd}_.$\\:]+)$", RegexOptions.CultureInvariant);
+            if (!match.Success || match.Index > 0 && formula[match.Index - 1] == '#') continue;
+            string qualifier = match.Value;
+            if (qualifier.StartsWith('\'')) qualifier = qualifier[1..^1].Replace("''", "'", StringComparison.Ordinal);
+            // External references cannot be resolved without opening files, and are left unverified.
+            if (qualifier.Contains('[') || qualifier.Contains(']') || sheetNames is null) continue;
+            if (!sheetNames.Contains(qualifier) && Regex.IsMatch(qualifier, @"\.(?:xlsx?|xlsm|xlsb|xlam|xla|xll)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) continue;
+            foreach (string name in qualifier.Split(':'))
+                if (!sheetNames.Contains(name)) Error($"Worksheet '{name}' does not exist in the selected workbook.", "invalid-reference");
+        }
         return errors;
     }
 
@@ -183,28 +206,14 @@ public partial class RangeCommands
     /// <summary>
     /// Parses Excel cell address (e.g., "B1", "AA5") to (row, col) tuple
     /// </summary>
-    private static (int row, int col) ParseCellAddress(string cellAddress)
+    internal static (int row, int col) ParseCellAddress(string cellAddress)
     {
-        // Extract column letters and row number
-        string colPart = "";
-        string rowPart = "";
-
-        foreach (char c in cellAddress)
-        {
-            if (char.IsLetter(c))
-                colPart += c;
-            else
-                rowPart += c;
-        }
-
-        // Convert column letters to number (A=1, B=2, ..., Z=26, AA=27)
-        int col = 0;
-        foreach (char c in colPart)
-        {
-            col = col * 26 + (c - 'A' + 1);
-        }
-
-        int row = string.IsNullOrEmpty(rowPart) ? 1 : int.Parse(rowPart, System.Globalization.CultureInfo.InvariantCulture);
-        return (row, col);
+        var match = Regex.Match(cellAddress, @"^\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6})$", RegexOptions.CultureInvariant);
+        if (!match.Success) throw new ArgumentException("The validation target must start at an A1 cell reference.", nameof(cellAddress));
+        int column = 0;
+        foreach (char character in match.Groups[1].Value.ToUpperInvariant()) column = column * 26 + character - 'A' + 1;
+        int row = int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+        if (column > 16384 || row > 1048576) throw new ArgumentException("The validation target is outside Excel's worksheet bounds.", nameof(cellAddress));
+        return (row, column);
     }
 }

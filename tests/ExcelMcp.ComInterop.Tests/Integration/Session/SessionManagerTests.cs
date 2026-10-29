@@ -102,6 +102,7 @@ public class SessionManagerTests : IDisposable
         Assert.Equal(32, sessionId.Length); // GUID without hyphens
         Assert.Equal(1, manager.ActiveSessionCount);
         var batch = Assert.IsAssignableFrom<IExcelBatch>(manager.GetSession(sessionId));
+        Assert.Same(batch, manager.GetSession(sessionId));
         SessionWorkbookAssertions.AssertIdentity(batch, testFile);
         SessionWorkbookAssertions.WriteMarker(batch, "created-session");
         Assert.Equal("created-session", SessionWorkbookAssertions.ReadMarker(batch));
@@ -110,15 +111,16 @@ public class SessionManagerTests : IDisposable
     }
 
     [Fact]
-    public void CreateSession_NonExistentFile_ThrowsFileNotFoundException()
+    public void CreateSession_NonExistentFile_PreservesExcelOpenFailure()
     {
         using var manager = new SessionManager();
         var nonExistentFile = Path.Combine(_tempDir, "nonexistent.xlsx");
 
-        var ex = Assert.Throws<FileNotFoundException>(
+        var ex = Assert.Throws<InvalidOperationException>(
             () => manager.CreateSession(nonExistentFile));
 
-        Assert.Contains("Excel file not found", ex.Message);
+        Assert.IsType<System.Runtime.InteropServices.COMException>(ex.InnerException);
+        Assert.Contains(Path.GetFileName(nonExistentFile), ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, manager.ActiveSessionCount);
         Assert.Empty(manager.ActiveSessionIds);
         Assert.False(File.Exists(nonExistentFile));
@@ -126,25 +128,6 @@ public class SessionManagerTests : IDisposable
         var recoveredId = manager.CreateSession(recoveryFile);
         SessionWorkbookAssertions.AssertIdentity(Assert.IsAssignableFrom<IExcelBatch>(manager.GetSession(recoveredId)), recoveryFile);
         Assert.True(manager.CloseSession(recoveredId));
-        Assert.Empty(manager.ActiveSessionIds);
-    }
-
-    [Fact]
-    public void GetSession_ExistingSessionId_ReturnsValidBatch()
-    {
-        var testFile = CreateTestFile(nameof(GetSession_ExistingSessionId_ReturnsValidBatch));
-        using var manager = new SessionManager();
-        var sessionId = manager.CreateSession(testFile);
-
-        var batch = manager.GetSession(sessionId);
-
-        Assert.NotNull(batch);
-        Assert.Equal(1, manager.ActiveSessionCount);
-        Assert.Same(batch, manager.GetSession(sessionId));
-        SessionWorkbookAssertions.AssertIdentity(batch, testFile);
-        SessionWorkbookAssertions.WriteMarker(batch, "retrieved-session");
-        Assert.Equal("retrieved-session", SessionWorkbookAssertions.ReadMarker(batch));
-        Assert.True(manager.CloseSession(sessionId));
         Assert.Empty(manager.ActiveSessionIds);
     }
 
@@ -232,6 +215,7 @@ public class SessionManagerTests : IDisposable
 
         Assert.True(closed);
         Assert.Equal(0, manager.ActiveSessionCount);
+        Assert.Null(manager.GetSession(sessionId));
 
         // Verify changes were NOT persisted
         using var verifyBatch = ExcelSession.BeginBatch(testFile);
@@ -379,21 +363,6 @@ public class SessionManagerTests : IDisposable
     #endregion
 
     #region Close Operations
-
-    [Fact]
-    public void CloseSession_ExistingSession_RemovesSessionAndReturnsTrue()
-    {
-        var testFile = CreateTestFile(nameof(CloseSession_ExistingSession_RemovesSessionAndReturnsTrue));
-        using var manager = new SessionManager();
-        var sessionId = manager.CreateSession(testFile);
-        SessionWorkbookAssertions.AssertIdentity(Assert.IsAssignableFrom<IExcelBatch>(manager.GetSession(sessionId)), testFile);
-
-        var closed = manager.CloseSession(sessionId, save: false);
-
-        Assert.True(closed);
-        Assert.Equal(0, manager.ActiveSessionCount);
-        Assert.Null(manager.GetSession(sessionId));
-    }
 
     [Fact]
     public void CloseSession_NullOrWhitespaceSessionId_ReturnsFalse()
@@ -556,10 +525,10 @@ public class SessionManagerTests : IDisposable
         using (var fileLock = new FileStream(testFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
             var ex = Assert.Throws<InvalidOperationException>(() => manager.CreateSession(testFile));
-            Assert.Contains("already open", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.IsType<System.Runtime.InteropServices.COMException>(ex.InnerException);
         }
 
-        owned.AssertAllExited(expectProcess: false);
+        owned.AssertAllExited();
         Assert.Equal(0, manager.ActiveSessionCount);
         var recovered = manager.CreateSession(testFile);
         SessionWorkbookAssertions.AssertIdentity(Assert.IsAssignableFrom<IExcelBatch>(manager.GetSession(recovered)), testFile);
@@ -633,16 +602,6 @@ public class SessionManagerTests : IDisposable
         Assert.Equal(0, manager.ActiveSessionCount);
         Assert.Empty(manager.ActiveSessionIds);
         _owned.AssertAllExited();
-    }
-
-    [Fact]
-    public void Dispose_EmptyManager_CompletesImmediately()
-    {
-        using var manager = new SessionManager();
-
-        manager.Dispose();
-
-        Assert.Equal(0, manager.ActiveSessionCount);
     }
 
     [Fact]

@@ -13,7 +13,7 @@ the same features as the MCP Server and usually uses fewer AI tokens.
 > **Primary distribution: npm or standalone executable** — Run `npx -y @sbroenne/excelcli@latest --help` or download `excelcli.exe` from the [latest release](https://github.com/sbroenne/mcp-server-excel/releases/latest). No .NET runtime required.
 > **Secondary distribution: NuGet .NET tool** — `dotnet tool install --global Sbroenne.ExcelMcp.CLI` (requires .NET 10 runtime).
 
-The CLI provides 33 feature command categories with 424 operations matching the MCP Server, plus `session`, `service`, and `batch` commands — the same capabilities without loading 33 tool schemas into context.
+The CLI provides 33 feature command categories with 434 operations matching the MCP Server, plus `session`, `service`, and `batch` commands — the same capabilities without loading 33 tool schemas into context.
 
 | Interface | Best For | Why |
 |-----------|----------|-----|
@@ -67,11 +67,19 @@ dotnet tool install --global Sbroenne.ExcelMcp.CLI
 
 > 🔁 **Session Workflow:** Always start with `excelcli session open <file>` (captures the session id), pass `--session <id>` to other commands, then `excelcli session close --session <id> --save` when finished. Add `--show` when Excel must stay visible for IRM/AIP sign-in or other authentication prompts.
 
+For a known sequence, use `excelcli batch` to avoid launching the CLI for every
+step. Start with `excelcli batch --help` for runnable PowerShell examples and
+input/result rules. Action help, such as `excelcli range set-values --help`,
+also shows the exact batch command and argument names; no skill is required.
+Use individual commands when you need to inspect a result before choosing the
+next step. See [CLI batch jobs](../../docs/reference/workflows.md#cli-batch-jobs)
+for the complete workflow.
+
 ---
 
 ## 📋 What You Can Do
 
-ExcelMcp.CLI provides **424 operations** across 31 feature command categories including Power Query, Python in Excel, Data Model/DAX, What-If Analysis, PivotTables, Excel Tables, Charts, Drawings, VBA, Ranges, Worksheets, Workbooks, QueryTables, XML Maps, Connections, and Window Management.
+ExcelMcp.CLI provides **434 operations** across 31 feature command categories including Power Query, Python in Excel, Data Model/DAX, What-If Analysis, PivotTables, Excel Tables, Charts, Drawings, VBA, Ranges, Worksheets, Workbooks, QueryTables, XML Maps, Connections, and Window Management.
 
 Drives the **actual Excel application** via COM — not a file-format parser — so live operations (Power Query refresh, recalculation, DAX evaluation, VBA execution) run for real and existing workbooks stay intact.
 
@@ -193,6 +201,16 @@ Use `session discover`, check `complete` and `errors`, then explicitly attach
 with `session attach --workbook-id <ID>` to inspect the intended workbook.
 Do not infer that an unknown workbook is empty or safe to terminate.
 
+Excel work runs in separate private workers. Status and the tray read recorded
+information, so a responsive service does not prove that Excel is ready.
+Commands for workbooks in the same Excel application share one execution owner.
+If a stopped service retained a worker, explicit discovery can reconnect to it
+after the old service process exits; pending edits are not repeated. A different
+product build or another running owner is reported rather than replaced.
+Tray exit does not keep a report window's process alive. When Excel must remain
+open, its shutdown details are saved beside the private service tracking record
+under `%TEMP%\ExcelMcp\cli-daemon` as `<pipe-hash>.json.shutdown.txt`.
+
 ---
 
 ## 🛠️ Advanced Usage
@@ -203,7 +221,7 @@ Do not infer that an unknown workbook is empty or safe to terminate.
 # PowerShell script example
 $files = Get-ChildItem *.xlsx
 foreach ($file in $files) {
-    $sessionId = (excelcli -q session open $file.FullName | ConvertFrom-Json).sessionId
+    $sessionId = (excelcli -q session open $file.FullName | ConvertFrom-Json).data.sessionId
     excelcli -q powerquery refresh --session $sessionId --query-name "Sales Data"
     excelcli -q datamodel refresh --session $sessionId
     excelcli -q session close --session $sessionId --save
@@ -215,6 +233,18 @@ with code 1 when the command fails or its result reports `success: false` (for
 example, a `powerquery refresh-all` where one query failed), so scripts can
 check `$LASTEXITCODE`. In `batch` output, such a line has `success: false`, and
 `--stop-on-error` stops there.
+
+Individual commands and batch items return `command`, `success`, `durationMs`,
+and optional `data`, `warnings`, `error`, and `partialState`. Batch items add
+only `index`; the old `commandSummary` and `result` fields are removed.
+Read business fields under `data` and failure details under `error.message`
+and `error.category`. This also applies without quiet mode or redirection.
+Help and version output remain human-readable.
+
+Results retain warnings, errors, partial state, and inspection boundaries.
+Power Query lists omit formula previews; use `powerquery view` for full M code.
+Use bounded reads and paging options when less data is needed.
+See [result details and migration examples](../../docs/reference/workflows.md#reading-results).
 
 ### CI/CD Integration
 
@@ -239,7 +269,7 @@ jobs:
       - name: Process Excel Files
         shell: pwsh
         run: |
-          $sessionId = (excelcli -q session open data.xlsx | ConvertFrom-Json).sessionId
+          $sessionId = (excelcli -q session open data.xlsx | ConvertFrom-Json).data.sessionId
           excelcli -q powerquery create --session $sessionId --query-name "Query1" --m-code-file queries\query1.pq
           excelcli -q powerquery refresh --session $sessionId --query-name "Query1"
           excelcli -q session close --session $sessionId --save

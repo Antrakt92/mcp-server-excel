@@ -20,11 +20,16 @@ namespace Sbroenne.ExcelMcp.Core.Commands.PivotTable;
 /// - 'create-from-table': Use an Excel Table (ListObject) as source
 /// - 'create-from-datamodel': Use a Power Pivot Data Model table as source
 /// Worksheet-source creation accepts paired shareCacheWith/shareCacheWithSheet to reuse an existing cache
-/// with the exact same source identity. Omit both to keep independent caches. No existing reports are moved.
+/// with the exact same source identity. Omit both to keep independent caches. Use share-cache to move an existing report.
 /// </summary>
 [ServiceCategory("PivotTable")]
 [McpTool("pivottable", Title = "PivotTable Operations", Destructive = true, Category = "analysis",
-    Description = "Create, refresh, delete, and change sources/cache options for PivotTables. read returns field layout plus a bounded semantic snapshot of exact selected members and native label/value filters; supply sheet_name to select the exact PivotTable when names may repeat, and max_selected_members to bound returned member names (check snapshotComplete and membersTruncated). read/list include actual workbook-local cacheIndex, not a permanent ID. Unavailable getters are marked unavailable, not treated as empty selections. The read action does not return PivotTable cells, refresh, or save. Prefer refresh over delete+recreate to preserve field configs. REFRESH: Call after configuring fields with pivottable_field. CREATE: create-from-range, create-from-table, create-from-datamodel. Worksheet-source creation accepts paired share_cache_with/share_cache_with_sheet to reuse an existing regular cache with the exact same source identity; omit both for independent caches. Table and fixed-range sources are distinct. Shared calculated fields, grouping and cache refresh affect other cache users; slicer connections are separate. No existing reports are moved. TIMEOUT: 5 min for DataModel. SOURCE: set-source isolates worksheet-backed caches; set-connection changes one external PivotTable to an existing workbook connection with a compatible field schema. Inspect the connection, shared cache users and connected controls before changing it. Connected slicers/timelines must first be disconnected; set-connection rejects shared caches and workbook Data Model conversion. Shared cache options cannot change unrelated PivotTables. STYLING: Use pivottable_calc set-layout-options for native styles and preserveFormatting. Use pivottable_field for field management.")]
+    Description = "Create, refresh, delete, and change sources and cache options for PivotTables. " +
+        "CREATE: create-from-range, create-from-table, or create-from-datamodel. Worksheet-source creation can reuse an existing regular cache with the exact same source via share_cache_with/share_cache_with_sheet; omit both for an independent cache. Shared calculated fields, grouping, and cache refresh affect every PivotTable using that cache. " +
+        "REFRESH: call after configuring fields with pivottable_field. Prefer refresh over delete and recreate to keep field settings. TIMEOUT: 5 min for Data Model. " +
+        "SHARE-CACHE: moves an existing PivotTable onto share_cache_with without recreating it. Requires matching worksheet sources and compatible fields; grouping, calculated items, and conflicting calculated fields are rejected before changes. Disconnect slicers/timelines first; they are not reconnected. A PivotTable that already shares returns changed=false. " +
+        "SOURCE: set-source gives a worksheet-backed PivotTable its own cache; set-connection moves one external PivotTable to an existing workbook connection with compatible fields. Check the connection, shared cache users, and connected slicers/timelines first and disconnect those controls; set-connection rejects shared caches and Data Model conversion. " +
+        "Failures report the partial state; changes are not rolled back. Use pivottable_calc set-layout-options for native styles and preserveFormatting, and pivottable_field for fields.")]
 [McpReadOnlyActions("list", "read", "get-source", "get-cache-options", "get-connection")]
 public interface IPivotTableCommands
 {
@@ -48,7 +53,7 @@ public interface IPivotTableCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable</param>
-    /// <param name="sheetName">Optional exact worksheet for selecting a PivotTable when names may repeat.</param>
+    /// <param name="sheetName">Exact worksheet containing the selected PivotTable. Optional for read; required for share-cache, get-connection, and set-connection.</param>
     /// <param name="maxSelectedMembers">Maximum member names returned across all fields (1 through 1000; default 100).</param>
     /// <returns>All fields with positions, aggregation functions, filter states</returns>
     [ServiceAction("read")]
@@ -67,8 +72,8 @@ public interface IPivotTableCommands
     /// <param name="destinationSheet">Destination worksheet name</param>
     /// <param name="destinationCell">Destination cell address (e.g., "A1")</param>
     /// <param name="pivotTableName">Name for the new PivotTable</param>
-    /// <param name="shareCacheWith">Existing worksheet-backed PivotTable whose exact source and native cache to reuse. Requires shareCacheWithSheet; omitted creates an independent cache.</param>
-    /// <param name="shareCacheWithSheet">Exact worksheet containing shareCacheWith. Both sharing inputs must be nonblank. Shared calculated fields, grouping and cache refresh affect other cache users; slicer connections are separate.</param>
+    /// <param name="shareCacheWith">Existing worksheet-backed PivotTable whose exact source and native cache to reuse. Requires shareCacheWithSheet. Creation: omit both for an independent cache. share-cache: both are required.</param>
+    /// <param name="shareCacheWithSheet">Exact worksheet containing shareCacheWith. Both inputs must be nonblank when supplied. Shared calculations and refresh affect other cache users; moving existing reports rejects grouping and calculated items. Slicer connections are separate.</param>
     /// <returns>Created PivotTable name and initial field list</returns>
     [ServiceAction("create-from-range")]
     PivotTableCreateResult CreateFromRange(IExcelBatch batch,
@@ -142,6 +147,16 @@ public interface IPivotTableCommands
     [ServiceAction("set-source")]
     PivotSourceResult SetSource(IExcelBatch batch, string pivotTableName, string sourceSheetName,
         string? sourceRangeAddress = null, string? tableName = null);
+
+    /// <summary>Moves an existing worksheet-backed report onto another existing report's cache without recreating reports or creating a cache. Requires identical source identity and compatible fields and cached items. Preserves ordinary report settings; rejects grouping, calculated items, and missing/conflicting calculated fields before writes. Disconnect controls from the moved report first. The chosen cache's records, calculations and refresh settings are adopted; controls are not rebuilt or reconnected. Already sharing is an unchanged outcome. Failures do not undo changes.</summary>
+    /// <param name="batch">Excel batch session.</param>
+    /// <param name="sheetName">Exact worksheet containing the report to move.</param>
+    /// <param name="pivotTableName">Existing report to move, without recreating it.</param>
+    /// <param name="shareCacheWith">Existing worksheet-backed report whose native cache to use.</param>
+    /// <param name="shareCacheWithSheet">Exact worksheet containing shareCacheWith.</param>
+    [ServiceAction("share-cache")]
+    PivotCacheSharingResult ShareCache(IExcelBatch batch, string sheetName, string pivotTableName,
+        string shareCacheWith, string shareCacheWithSheet);
 
     /// <summary>Reads the selected PivotTable's connection identity, cache, shared users and connected controls without returning a connection string.</summary>
     /// <param name="batch">Excel batch session.</param>

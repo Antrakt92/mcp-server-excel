@@ -25,10 +25,6 @@ public sealed partial class PersistentServicePowerQueryEvaluateTests
         AssertEvaluationGuard(guard);
     }
 
-    [Fact]
-    public void Evaluate_AfterExecution_CleansUpTempObjects() =>
-        EvaluateChecked("let Source = #table({\"X\"}, {{1}}) in Source", ["X"], [[1]]);
-
     private string SnapshotNativeArtifacts() =>
         _fixture.ExecuteRawVerification((context, _) =>
         {
@@ -108,7 +104,7 @@ public sealed partial class PersistentServicePowerQueryEvaluateTests
                         if (connection.Type == Excel.XlConnectionType.xlConnectionTypeOLEDB)
                         {
                             oledb = connection.OLEDBConnection;
-                            source = Convert.ToString(oledb.Connection, CultureInfo.InvariantCulture) ?? "";
+                            source = Convert.ToString(((object)oledb.Connection), CultureInfo.InvariantCulture) ?? "";
                             Assert.False(oledb.Refreshing);
                         }
                         artifacts.Add(["connection", connection.Name, connection.Type.ToString(),

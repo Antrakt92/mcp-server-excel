@@ -32,7 +32,10 @@ public partial class RangeCommands
             try
             {
                 range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress);
-                sheet = (Excel.Worksheet)range!.Parent;
+                long cellCount = Convert.ToInt64((object)range!.CountLarge, CultureInfo.InvariantCulture);
+                RangeReadWindow.EnsureCellLimit(cellCount, 1, RangeReadWindow.MaximumPageCells,
+                    "Use get-format-summary for aggregate properties or smaller explicit ranges for complete per-cell details; no formatting was inspected.");
+                sheet = (Excel.Worksheet)range.Parent;
                 var result = new RangeFormatReadResult
                 {
                     FilePath = batch.WorkbookPath,
@@ -48,6 +51,43 @@ public partial class RangeCommands
                 result.CellCount = result.Cells.Count;
                 result.Success = true;
                 return result;
+            }
+            finally
+            {
+                ComUtilities.Release(ref sheet);
+                ComUtilities.Release(ref range);
+            }
+        });
+    }
+
+    /// <inheritdoc />
+    public RangeFormatSummaryResult GetFormatSummary(
+        IExcelBatch batch, string sheetName, string rangeAddress, FormatView view = FormatView.Stored)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rangeAddress);
+        if (!Enum.IsDefined(view)) throw new ArgumentOutOfRangeException(nameof(view));
+        return batch.Execute((ctx, ct) =>
+        {
+            Excel.Range? range = null;
+            Excel.Worksheet? sheet = null;
+            try
+            {
+                range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress)
+                    ?? throw new ArgumentException(RangeHelpers.GetResolveError(sheetName, rangeAddress));
+                var dimensions = RequireReadRectangle(range);
+                sheet = (Excel.Worksheet)range.Parent;
+                ct.ThrowIfCancellationRequested();
+                return new RangeFormatSummaryResult
+                {
+                    Success = true,
+                    FilePath = batch.WorkbookPath,
+                    SheetName = sheet.Name,
+                    RangeAddress = range.Address,
+                    CellCount = (long)dimensions.Rows * dimensions.Columns,
+                    View = view,
+                    Stored = view is FormatView.Stored or FormatView.Both ? ReadCellFormat(range, false, ct) : null,
+                    Displayed = view is FormatView.Displayed or FormatView.Both ? ReadCellFormat(range, true, ct) : null
+                };
             }
             finally
             {
@@ -121,12 +161,6 @@ public partial class RangeCommands
                 return null;
             }
         }
-        object? ReadThemeFont()
-        {
-            if (!tableStyleDefinition) return font.ThemeFont;
-            // PIA gap: differential Font.ThemeFont can be native null, unlike the declared value-type enum.
-            return ((dynamic)font).ThemeFont;
-        }
         var fontFormat = new CellFontFormat(
             ReadFormatText(Read(() => font.Name, "font.name"), "font.name", mixed),
             ReadFormatValue<double>(Read(() => font.Size, "font.size"), "font.size", mixed),
@@ -136,7 +170,7 @@ public partial class RangeCommands
             ReadFormatValue<bool>((object)font.Strikethrough, "font.strikethrough", mixed),
             ReadFormatValue<bool>(Read(() => font.Subscript, "font.subscript"), "font.subscript", mixed),
             ReadFormatValue<bool>(Read(() => font.Superscript, "font.superscript"), "font.superscript", mixed),
-            ReadFormatValue<int>(Read(ReadThemeFont, "font.themeFont"), "font.themeFont", mixed),
+            ReadFormatValue<int>(Read(() => font.ThemeFont, "font.themeFont"), "font.themeFont", mixed),
             ReadFormatColor(Read(() => font.Color, "font.color.rgb"), Read(() => font.ColorIndex, "font.color.colorIndex"), Read(() => font.TintAndShade, "font.color.tintAndShade"),
                 () => font.ThemeColor, "font.color", mixed));
         var fillFormat = new CellFillFormat(
@@ -235,11 +269,11 @@ public partial class RangeCommands
                 try
                 {
                     stop = stops[index];
-                    int color = Convert.ToInt32(stop.Color, CultureInfo.InvariantCulture);
-                    result.Add(new CellGradientStop(stop.Position,
+                    int color = Convert.ToInt32((object)stop.Color, CultureInfo.InvariantCulture);
+                    result.Add(new CellGradientStop((double)(object)stop.Position,
                         new CellColorFormat(FormattingHelpers.ColorToHex(color), null,
-                            ReadFormatTheme(() => stop.ThemeColor, $"fill.gradient.stops[{index}].themeColor", mixed),
-                            stop.TintAndShade)));
+                            ReadFormatTheme(() => (object)stop.ThemeColor, $"fill.gradient.stops[{index}].themeColor", mixed),
+                            (double)(object)stop.TintAndShade)));
                 }
                 finally
                 {

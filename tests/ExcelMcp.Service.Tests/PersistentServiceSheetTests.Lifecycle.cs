@@ -8,13 +8,6 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class PersistentServiceSheetTests
 {
     [Fact]
-    public void List_DefaultWorkbook_ReturnsDefaultSheets()
-    {
-        var sheets = ReadCurrentSheetNames();
-        Assert.Equal(["Sheet1"], sheets);
-    }
-
-    [Fact]
     public void List_VisibleSheets_ReturnsVisibleTrue()
     {
         var result = RequireSuccess(_sheetCommands.List(_fixture.BatchToken));
@@ -27,6 +20,7 @@ public sealed partial class PersistentServiceSheetTests
             try
             {
                 sheets = context.Book.Worksheets;
+                Assert.Equal(1, sheets.Count);
                 sheet = (Excel.Worksheet)sheets.Item["Sheet1"];
                 Assert.Equal(Excel.XlSheetVisibility.xlSheetVisible, sheet.Visible);
             }
@@ -329,9 +323,9 @@ public sealed partial class PersistentServiceSheetTests
                         try
                         {
                             cell = sheet.Range[$"{column}{row}"];
-                            cells.Add(cell.Value2);
-                            cells.Add(cell.Formula);
-                            cells.Add(cell.NumberFormat);
+                            cells.Add(((object)cell.Value2));
+                            cells.Add(((object)cell.Formula));
+                            cells.Add(((object)cell.NumberFormat));
                         }
                         finally { ComUtilities.Release(ref cell); }
                     }

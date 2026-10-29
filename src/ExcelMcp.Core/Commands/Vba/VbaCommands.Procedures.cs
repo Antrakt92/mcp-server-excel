@@ -4,15 +4,13 @@ using System.Security.Cryptography;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
+using Vbe = Microsoft.Vbe.Interop;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
 
 public partial class VbaCommands
 {
     private const int MaximumVbaReadLines = 500;
-    private const int VbPropertyLet = 1;
-    private const int VbPropertySet = 2;
-    private const int VbPropertyGet = 3;
 
     /// <inheritdoc />
     public VbaReadResult Read(
@@ -33,15 +31,14 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? component = null;
-            dynamic? codeModule = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
+            Vbe.VBComponent? component = null;
+            Vbe.CodeModule? codeModule = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, which is unavailable on supported Click-to-Run Office installs.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 vbComponents = vbaProject.VBComponents;
                 component = FindComponent(vbComponents, moduleName);
                 codeModule = component.CodeModule;
@@ -129,6 +126,7 @@ public partial class VbaCommands
         string vbaCode)
     {
         EnsureVbaFile(batch.WorkbookPath);
+        vbaCode = VbaModuleSource.Normalize(vbaCode);
         ValidateProcedureReplacement(moduleName, procedureName, procedureKind, expectedSourceHash, vbaCode);
 
         if (!IsVbaTrustEnabled())
@@ -138,16 +136,14 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
-            dynamic? vbaProject = null;
-            dynamic? vbComponents = null;
-            dynamic? component = null;
-            dynamic? codeModule = null;
-            string? partialState = null;
+            Vbe.VBProject? vbaProject = null;
+            Vbe.VBComponents? vbComponents = null;
+            Vbe.VBComponent? component = null;
+            Vbe.CodeModule? codeModule = null;
             try
             {
-                // PIA gap: VBProject is in Microsoft.Vbe.Interop, which is unavailable on supported Click-to-Run Office installs.
-                vbaProject = ((dynamic)ctx.Book).VBProject;
-                EnsureProjectUnlocked((object)vbaProject);
+                vbaProject = ctx.Book.VBProject;
+                EnsureProjectUnlocked(vbaProject);
                 string mode = GetProjectMode(Convert.ToInt32(vbaProject.Mode, CultureInfo.InvariantCulture));
                 if (mode != "Design")
                 {
@@ -178,18 +174,18 @@ public partial class VbaCommands
                 string bodySource = ReadLines(codeModule, procedure.BodyStartLine,
                     procedure.LineCount - (procedure.BodyStartLine - procedure.StartLine));
                 int bodyLineCount = VbaProcedureSource.GetBodyLineCount(bodySource, procedure.Kind);
-                codeModule.DeleteLines(procedure.BodyStartLine, bodyLineCount);
-                partialState = "The selected procedure body was deleted, but its replacement has not been confirmed.";
-                codeModule.InsertLines(procedure.BodyStartLine, vbaCode.TrimEnd('\r', '\n'));
-                partialState = "Replacement source was inserted, but read-back verification did not complete.";
-
-                VbaProcedureInfo updatedProcedure = FindProcedure(
-                    codeModule,
-                    procedureName,
-                    procedureKind,
-                    requireKind: true,
-                    cancellationToken: ct);
-                string storedSource = ReadLines(codeModule, updatedProcedure.StartLine, updatedProcedure.LineCount);
+                VbaProcedureInfo? updatedProcedure = null;
+                string storedSource = string.Empty;
+                VbaProcedureSource.Replace(moduleName, vbaCode,
+                    () => codeModule.DeleteLines(procedure.BodyStartLine, bodyLineCount),
+                    source => codeModule.InsertLines(procedure.BodyStartLine, source),
+                    () =>
+                    {
+                        updatedProcedure = FindProcedure(codeModule, procedureName, procedureKind, requireKind: true, cancellationToken: ct);
+                        storedSource = ReadLines(codeModule, updatedProcedure.StartLine, updatedProcedure.LineCount);
+                        return ReadLines(codeModule, procedure.BodyStartLine, VbaModuleSource.CountLines(vbaCode));
+                    },
+                    () => ReadLines(codeModule, 1, codeModule.CountOfLines), ct);
 
                 return new VbaProcedureEditResult
                 {
@@ -197,24 +193,12 @@ public partial class VbaCommands
                     FilePath = batch.WorkbookPath,
                     Action = "replace-procedure",
                     Message = "The procedure source was replaced and read back. This does not confirm that it compiles or runs correctly.",
-                    ProcedureName = updatedProcedure.Name,
+                    ProcedureName = updatedProcedure!.Name,
                     ProcedureKind = updatedProcedure.Kind,
                     SourceHash = VbaProcedureSource.ComputeHash(storedSource),
                     StartLine = updatedProcedure.StartLine,
                     LineCount = updatedProcedure.LineCount
                 };
-            }
-            catch (COMException comEx) when (partialState is not null)
-            {
-                throw new InvalidOperationException(
-                    $"{partialState} Module '{moduleName}', procedure '{procedureName}': {comEx.Message} No rollback was attempted. Inspect the module before continuing.",
-                    comEx);
-            }
-            catch (OperationFailureException ex) when (partialState is not null)
-            {
-                throw new OperationFailureException(ex.ErrorCategory,
-                    $"{partialState} Module '{moduleName}', procedure '{procedureName}': {ex.Message} No rollback was attempted. Inspect the module before continuing.",
-                    ex);
             }
             catch (COMException comEx) when (IsVbaTrustError(comEx))
             {
@@ -234,9 +218,8 @@ public partial class VbaCommands
         });
     }
 
-    internal static List<VbaProcedureInfo> GetProcedures(object codeModuleObject, CancellationToken cancellationToken = default)
+    internal static List<VbaProcedureInfo> GetProcedures(Vbe.CodeModule codeModule, CancellationToken cancellationToken = default)
     {
-        dynamic codeModule = codeModuleObject;
         int moduleLineCount = Convert.ToInt32(codeModule.CountOfLines, CultureInfo.InvariantCulture);
         var procedures = new List<VbaProcedureInfo>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -251,9 +234,9 @@ public partial class VbaCommands
                 continue;
             }
 
-            int procedureKind = GetVbProcedureKind(declaration.Kind);
+            Vbe.vbext_ProcKind procedureKind = GetVbProcedureKind(declaration.Kind);
             int startLine = Convert.ToInt32(
-                codeModule.ProcStartLine(declaration.Name, procedureKind),
+                codeModule.ProcStartLine[declaration.Name, procedureKind],
                 CultureInfo.InvariantCulture);
 
             string key = $"{startLine}:{declaration.Kind}";
@@ -263,7 +246,7 @@ public partial class VbaCommands
             }
 
             int count = Convert.ToInt32(
-                codeModule.ProcCountLines(declaration.Name, procedureKind),
+                codeModule.ProcCountLines[declaration.Name, procedureKind],
                 CultureInfo.InvariantCulture);
             procedures.Add(new VbaProcedureInfo
             {
@@ -271,7 +254,7 @@ public partial class VbaCommands
                 Kind = declaration.Kind,
                 StartLine = startLine,
                 BodyStartLine = Convert.ToInt32(
-                    codeModule.ProcBodyLine(declaration.Name, procedureKind), CultureInfo.InvariantCulture),
+                    codeModule.ProcBodyLine[declaration.Name, procedureKind], CultureInfo.InvariantCulture),
                 LineCount = count
             });
         }
@@ -361,14 +344,14 @@ public partial class VbaCommands
     }
 
     private static VbaProcedureInfo FindProcedure(
-        dynamic codeModule,
+        Vbe.CodeModule codeModule,
         string procedureName,
         string? procedureKind,
         bool requireKind,
         CancellationToken cancellationToken)
     {
         string normalizedKind = VbaProcedureSource.NormalizeKind(procedureKind ?? string.Empty);
-        List<VbaProcedureInfo> matches = GetProcedures((object)codeModule, cancellationToken)
+        List<VbaProcedureInfo> matches = GetProcedures(codeModule, cancellationToken)
             .Where(procedure => procedure.Name.Equals(procedureName, StringComparison.OrdinalIgnoreCase))
             .Where(procedure => normalizedKind.Length == 0 ||
                 procedure.Kind.Equals(normalizedKind, StringComparison.OrdinalIgnoreCase))
@@ -389,19 +372,19 @@ public partial class VbaCommands
         return matches[0];
     }
 
-    private static dynamic FindComponent(dynamic vbComponents, string moduleName)
+    private static Vbe.VBComponent FindComponent(Vbe.VBComponents vbComponents, string moduleName)
     {
         int componentCount = Convert.ToInt32(vbComponents.Count, CultureInfo.InvariantCulture);
         for (int index = 1; index <= componentCount; index++)
         {
-            dynamic? component = null;
+            Vbe.VBComponent? component = null;
             try
             {
                 component = vbComponents.Item(index);
                 string name = Convert.ToString(component.Name, CultureInfo.InvariantCulture) ?? string.Empty;
                 if (name.Equals(moduleName, StringComparison.OrdinalIgnoreCase))
                 {
-                    dynamic target = component;
+                    var target = component;
                     component = null;
                     return target;
                 }
@@ -415,21 +398,21 @@ public partial class VbaCommands
         throw new OperationFailureException(OperationFailureCategory.NotFound, $"Module '{moduleName}' not found.");
     }
 
-    private static string ReadLines(dynamic codeModule, int startLine, int count)
+    private static string ReadLines(Vbe.CodeModule codeModule, int startLine, int count)
     {
         return count <= 0
             ? string.Empty
             : Convert.ToString(codeModule.Lines[startLine, count], CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
-    private static int GetVbProcedureKind(string kind)
+    private static Vbe.vbext_ProcKind GetVbProcedureKind(string kind)
     {
         return kind switch
         {
-            "Property Let" => VbPropertyLet,
-            "Property Set" => VbPropertySet,
-            "Property Get" => VbPropertyGet,
-            _ => 0
+            "Property Let" => Vbe.vbext_ProcKind.vbext_pk_Let,
+            "Property Set" => Vbe.vbext_ProcKind.vbext_pk_Set,
+            "Property Get" => Vbe.vbext_ProcKind.vbext_pk_Get,
+            _ => Vbe.vbext_ProcKind.vbext_pk_Proc
         };
     }
 

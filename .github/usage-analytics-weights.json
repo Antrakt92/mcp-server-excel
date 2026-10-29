@@ -245,6 +245,10 @@
         "create": "medium",
         "discover": "light",
         "attach": "light",
+        "notices": "light",
+        "enable-editing": "medium",
+        "enable-connections": "medium",
+        "enable-macros": "medium",
         "list": "light",
         "open": "light",
         "save": "light",
@@ -285,7 +289,8 @@
         "refresh": "heavy",
         "set-cache-options": "medium",
         "set-connection": "medium",
-        "set-source": "heavy"
+        "set-source": "heavy",
+        "share-cache": "heavy"
       }
     },
     "pivottable_calc": {
@@ -401,6 +406,8 @@
         "get-special-cells": "light",
         "get-spill-info": "light",
         "get-used-range": "light",
+        "get-used-range-info": "light",
+        "get-values-page": "light",
         "get-values": "light",
         "set-formulas": "medium",
         "set-number-format": "medium",
@@ -441,6 +448,7 @@
         "auto-fit-rows": "medium",
         "format": "medium",
         "get-format": "light",
+        "get-format-summary": "light",
         "get-merge-info": "light",
         "get-style": "light",
         "get-validation": "light",
@@ -560,8 +568,10 @@
       "actions": {
         "delete": "medium",
         "import": "medium",
+        "invoke": "heavy",
         "list": "light",
         "read": "light",
+        "replace-module": "medium",
         "replace-procedure": "medium",
         "references": "light",
         "run": "heavy",

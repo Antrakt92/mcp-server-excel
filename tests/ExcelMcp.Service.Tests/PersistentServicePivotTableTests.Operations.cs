@@ -28,7 +28,7 @@ public sealed partial class PersistentServicePivotTableTests
                 cache = pivot.PivotCache();
                 Assert.False(cache.OLAP);
                 Assert.Equal(5, cache.RecordCount);
-                return (pivot.CacheIndex, SourceData: cache.SourceData.ToString());
+                return (pivot.CacheIndex, SourceData: ((object)cache.SourceData).ToString());
             }
             finally
             {
@@ -52,6 +52,7 @@ public sealed partial class PersistentServicePivotTableTests
 
         var refreshed = RequireSuccess(_pivotCommands.Refresh(batch, "TestPivot"));
         Assert.Equal("TestPivot", refreshed.PivotTableName);
+        Assert.True(refreshed.RefreshTime <= DateTime.Now);
         Assert.Equal(5, refreshed.SourceRecordCount);
         AssertPivotSales(625, 325);
     }
@@ -217,36 +218,6 @@ public sealed partial class PersistentServicePivotTableTests
 
     [Fact]
     [Trait("Speed", "Medium")]
-    public void Refresh_ExistingPivotTable_UpdatesData()
-    {
-        // Arrange
-
-        var batch = _fixture.BatchToken;
-        var createResult = _pivotCommands.CreateFromRange(
-            batch, _salesSheetName, "A1:D6", _salesSheetName, "F1", "TestPivot");
-        RequireSuccess(createResult);
-
-        RequireSuccess(_pivotCommands.AddRowField(batch, "TestPivot", "Region"));
-        RequireSuccess(_pivotCommands.AddValueField(batch, "TestPivot", "Sales", AggregationFunction.Sum, "Total Sales"));
-        RequireSuccess(_pivotCommands.Refresh(batch, "TestPivot"));
-        AssertPivotSales(325, 325);
-        var changed = _commands.SetValues(batch, _salesSheetName, "C2", [[400]], overwritePolicy: OverwritePolicy.Allow);
-        RequireSuccess(changed);
-        AssertPivotSales(325, 325);
-
-        var result = _pivotCommands.Refresh(batch, "TestPivot");
-
-        // Assert
-        RequireSuccess(result);
-        Assert.Equal("TestPivot", result.PivotTableName);
-        Assert.True(result.RefreshTime <= DateTime.Now);
-        Assert.Equal(5, result.SourceRecordCount);
-        AssertPivotSales(625, 325);
-    }
-    /// <inheritdoc/>
-
-    [Fact]
-    [Trait("Speed", "Medium")]
     public void GetData_ExistingPivotTable_ReturnsData()
     {
         // Arrange
@@ -272,6 +243,46 @@ public sealed partial class PersistentServicePivotTableTests
         Assert.NotEmpty(result.Values);
         Assert.Equal(["North", "South"], result.Values
             .Select(row => row[0]?.ToString()).Where(value => value is "North" or "South"));
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, true)]
+    [Trait("Speed", "Medium")]
+    public void GetData_RowAndMeasureFields_ReturnsHeadersAndGrandTotals(
+        bool rowGrand, bool columnGrand, bool hasReportFilter)
+    {
+        var batch = _fixture.BatchToken;
+        RequireSuccess(_pivotCommands.CreateFromRange(
+            batch, _salesSheetName, "A1:D6", _salesSheetName, "F1", "TestPivot"));
+        RequireSuccess(_pivotCommands.AddRowField(batch, "TestPivot", "Region"));
+        RequireSuccess(_pivotCommands.AddValueField(
+            batch, "TestPivot", "Sales", AggregationFunction.Sum, "Total Sales"));
+        if (hasReportFilter)
+            RequireSuccess(_pivotCommands.AddFilterField(batch, "TestPivot", "Product"));
+        RequireSuccess(_pivotCommands.SetGrandTotals(batch, "TestPivot", rowGrand, columnGrand));
+        Assert.Equal((rowGrand, columnGrand), ReadGrandTotals(_salesSheetName, "TestPivot"));
+
+        var result = RequireSuccess(_pivotCommands.GetData(batch, "TestPivot"));
+
+        Assert.Equal(["Total Sales"], result.ColumnHeaders);
+        Assert.Equal(["North", "South"], result.RowHeaders);
+        if (columnGrand)
+        {
+            Assert.Equal(650, Convert.ToInt32(Assert.Single(result.GrandTotals).Value,
+                System.Globalization.CultureInfo.InvariantCulture));
+            Assert.True(result.GrandTotals.ContainsKey("Total Sales"));
+        }
+        else
+        {
+            Assert.Empty(result.GrandTotals);
+        }
     }
 
     private void AssertPivotSales(int north, int south, string pivotName = "TestPivot")

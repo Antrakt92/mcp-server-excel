@@ -71,68 +71,23 @@ public sealed partial class PersistentServiceRangeFormulaValidationTests
         Assert.All(Assert.Single(values.Values), Assert.Null);
     }
 
-    [Fact]
-    [Trait("Feature", "Range")]
-    public void ValidateFormulas_WithUndefinedFunction_DetectsError()
+    [Theory]
+    [InlineData("=GETVM3(4,16,\"region\")")]
+    [InlineData("=GETAKS(2,4)")]
+    [InlineData("=XA2.GETVM3(4,16,\"region\")")]
+    [InlineData("=CustomWorkbookUdf(1)")]
+    public void ValidateFormulas_DoesNotGuessFunctionAvailabilityFromItsName(string formula)
     {
-        // Arrange - use shared file
         var batch = _fixture.BatchToken;
         var sheetName = _fixture.CreateTestSheet(batch);
-
-        var formulas = new List<List<object?>> {
-            new() { "=GETVM3(4,16,\"region\")" }  // Missing XA2. namespace
-        };
         RequireSuccess(_commands.SetValues(batch, sheetName, "B1", [["guard"]]));
-
-        // Act - validate should detect missing namespace
-        var result = _commands.ValidateFormulas(batch, sheetName, "B1", formulas);
-
-        // Assert
-        RequireSuccess(result);
-        Assert.False(result.IsValid);
+        var result = RequireSuccess(_commands.ValidateFormulas(batch, sheetName, "B1", [[formula]]));
+        Assert.True(result.IsValid);
         Assert.Equal(1, result.FormulaCount);
-        Assert.Equal(0, result.ValidCount);
-        Assert.Equal(1, result.ErrorCount);
-        Assert.NotNull(result.Errors);
-        Assert.Single(result.Errors);
-
-        var error = result.Errors[0];
-        Assert.Equal("B1", error.CellAddress);
-        Assert.Contains("GETVM3", error.Message);
-        Assert.Contains("XA2.", error.Suggestion ?? "");
-        Assert.Equal("undefined-function", error.Category);
-        AssertCellUnchanged(batch, sheetName, "B1", "guard", null);
-    }
-
-    [Fact]
-    [Trait("Feature", "Range")]
-    public void ValidateFormulas_WithMissingNamespace_SuggestsCorrection()
-    {
-        // Arrange
-        var batch = _fixture.BatchToken;
-        var sheetName = _fixture.CreateTestSheet(batch);
-
-        var formulas = new List<List<object?>> {
-            new() { "=GETAKS(2,4)" },     // Missing XA2.
-            new() { "=XA2.GETVM3(4,16,\"region\")" }  // Correct
-        };
-        RequireSuccess(_commands.SetValues(batch, sheetName, "B1:B2", [["guard-1"], ["guard-2"]]));
-
-        // Act
-        var result = _commands.ValidateFormulas(batch, sheetName, "B1:B2", formulas);
-
-        // Assert
-        RequireSuccess(result);
-        Assert.False(result.IsValid);
-        Assert.Equal(2, result.FormulaCount);
         Assert.Equal(1, result.ValidCount);
-        Assert.Equal(1, result.ErrorCount);
-
-        var error = result.Errors![0];
-        Assert.Equal("B1", error.CellAddress);
-        Assert.Contains("=XA2.GETAKS", error.Suggestion ?? "");
-        AssertCellUnchanged(batch, sheetName, "B1", "guard-1", null);
-        AssertCellUnchanged(batch, sheetName, "B2", "guard-2", null);
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Null(result.Errors);
+        AssertCellUnchanged(batch, sheetName, "B1", "guard", null);
     }
 
     [Fact]

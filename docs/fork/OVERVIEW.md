@@ -1,16 +1,16 @@
 # Fork overview
 
-ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 2.5.4 release line starts from upstream [v2.5.3](https://github.com/sbroenne/mcp-server-excel/tree/v2.5.3).
+ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 3.0.0 release line starts from upstream [v2.6.0](https://github.com/sbroenne/mcp-server-excel/tree/v2.6.0). Fork 2.5.4 was based on upstream 2.5.3. The major version reflects incompatible CLI JSON output and removed options inherited in this upgrade; see [migration](../../README.md#migrate-from-fork-254).
 
 ## Scope
 
-The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It preserves the upstream command model and uses native Excel for workbook operations.
+The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It uses native Excel for workbook operations. Current fork additions include persistent audit sessions, bounded range reads and formatting summaries, guarded whole-module replacement and typed VBA invocation. [Agent workflows](AGENT-WORKFLOWS.md) describes their inputs and limits.
 
 CLI connection drain is bounded after shutdown: clients receive the existing response grace, then retained transport pipes are closed after two seconds. This closes connections, not workbook operations. Standard MCP responses also avoid a duplicate JSON parse while retaining their public content and error classification.
 
-Upstream 2.5.3 already defines workbook lifetime and cancellation recovery. Normal shutdown hands unsaved workbooks back open and visible, attached workbooks remain untouched, and timeout/cancellation does not authorize closing, saving or discarding workbooks. The governing design is [ADR-005](../ADR-005-SESSION-AND-FAILURE-OWNERSHIP.md). Older forced-close or automatic-save behavior must not be transplanted from the 2.4.1 patch.
+Upstream 2.6.0 isolates Excel work in private workers and defines workbook lifetime and cancellation recovery. Normal shutdown hands unsaved workbooks back open and visible, attached workbooks remain untouched, and timeout/cancellation does not authorize closing, saving or discarding workbooks. The governing design is [ADR-005](../ADR-005-SESSION-AND-FAILURE-OWNERSHIP.md). Older forced-close or automatic-save behavior must not be transplanted from the 2.4.1 patch.
 
-The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed as a legacy recovery asset, it is labeled separately and is not the recommended current runtime. Its stress results and timings do not establish correctness or performance for 2.5.4.
+The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed as a legacy recovery asset, it is labeled separately and is not the recommended current runtime. Its stress results and timings do not establish correctness or performance for the current release.
 
 ## Distribution
 

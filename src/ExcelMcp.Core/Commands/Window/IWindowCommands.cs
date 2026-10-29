@@ -66,13 +66,18 @@ public class WindowInfoResult : OperationResult
 /// STATUS BAR: 'set-status-bar' displays text in Excel's status bar. 'clear-status-bar' restores default.
 ///
 /// WORKSHEET VIEW: View properties belong to a workbook window and apply to the named active worksheet.
-/// 'freeze-panes' uses row and column counts above/left of the pane boundary.
+/// 'freeze-panes' replaces existing pane boundaries with counts from the top/left,
+/// without selecting a boundary cell. Page Layout view must be changed to Normal
+/// in Excel before freezing; the command does not change the view mode.
 /// 'set-split' creates movable panes and disables frozen panes.
 /// Zoom must be between 10 and 400 percent.
 /// </summary>
 [ServiceCategory("Window")]
 [McpTool("window", Title = "Window Management", Destructive = false, Category = "settings",
-    Description = "Control Excel window visibility, position, state, status bar, and worksheet-specific views. VIEW: get-view, freeze-panes, unfreeze-panes, set-split, set-zoom, and set-display-options for gridlines, headings, outline symbols, and formulas. get-view activates the workbook window and requested worksheet without restoring the prior active view; it is not inspection-only. freeze-panes uses row/column counts above and left of the pane boundary. set-split creates movable panes and disables frozen panes. Zoom range: 10-400. VISIBILITY: show reveals/restores Excel and reports isVisible and isForeground; Windows may refuse foreground focus. hide hides it. Both work while Excel is waiting on a dialog. Confirmed blocking dialogs automatically show Excel; ask the user to check it. Readable dialog titles and message labels are included automatically in session status and timeout errors; unavailable or partial reads are reported. Input values are not read. Dialog types are not identified, and dialogs are never answered or dismissed. WINDOW STATE: normal, minimized, maximized. ARRANGE presets: left-half, right-half, top-half, bottom-half, center, full-screen. Arrange verifies the requested placement and returns isForeground; Windows refusing focus does not fail a verified placement.")]
+    Description = "Control Excel window visibility, position, state, status bar, and worksheet views. " +
+        "VIEW: get-view, freeze-panes, unfreeze-panes, set-split, set-zoom (10-400), and set-display-options (gridlines, headings, outline symbols, formulas). get-view activates the workbook window and worksheet; it is not inspection-only. freeze-panes replaces existing panes using row/column counts from the top-left, activates the worksheet, and keeps the selection; Page Layout view is rejected, so ask the user to switch to Normal view. set-split creates movable panes and removes frozen panes. " +
+        "VISIBILITY: show reveals Excel and reports isVisible and isForeground (Windows may refuse focus); hide hides it. Both work while a dialog is open; dialogs are never answered or dismissed. " +
+        "WINDOW STATE: normal, minimized, maximized. ARRANGE presets: left-half, right-half, top-half, bottom-half, center, full-screen; a verified placement succeeds even if Windows refuses focus.")]
 [McpReadOnlyActions("get-context", "get-info")]
 public interface IWindowCommands
 {
@@ -174,6 +179,11 @@ public interface IWindowCommands
     /// <summary>
     /// Freezes rows above and columns left of a pane boundary.
     /// At least one of frozenRows or frozenColumns must be greater than zero.
+    /// Activates the requested worksheet, replaces existing pane boundaries, and scrolls
+    /// frozen directions to the start without changing the selection.
+    /// Rejects Page Layout view before changing pane settings or selection; switch
+    /// to Normal view in Excel and retry. Does not automatically undo partial changes
+    /// if a later Excel operation fails.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet whose panes should be frozen</param>

@@ -18,9 +18,21 @@ Extract into a new version-specific directory. Do not overwrite a running execut
 
 To roll back, repeat these steps with the previous verified release. Preserve workbook state first. Switching binaries cannot undo workbook edits.
 
+## Migrate automation from fork 2.5.4
+
+Fork 3.0.0 uses upstream 2.6.0 and requires CLI consumer changes:
+
+- Read returned values from `data` and failure details from `error`; the common envelope also includes `command`, `success` and `durationMs`. Batch entries retain their `index`.
+- Replace `--sheet` and `--range` with `--sheet-name` and `--range-address`. Remove obsolete result-field selection from saved requests; current action help is authoritative.
+- Check formula preflight `validationScope` and `unverifiedChecks`; `isValid` does not prove Excel compilation, UDF availability or safe overwriting.
+- Rediscover MCP tools after reconnecting. Tool results retain JSON text and structured content; do not infer success from transport delivery alone.
+- Normal opens disable VBA macros. The explicit enable-macros approval and saved-workbook reopening gate applies to both `vba run` and `vba invoke`; audit sessions cannot enable or execute macros.
+
+Finish or explicitly hand over current workbook work with the old version before switching. Test migrated automation on synthetic data before using operational workbooks. See [agent workflows](AGENT-WORKFLOWS.md) for current inspection and VBA limits. Older verification records describe their own release only.
+
 ## After cancellation, timeout or a lost connection
 
-Cancellation and timeout stop waiting; Excel's work may continue. Check the Excel window and discover/list sessions before retrying. Do not assume the operation failed, undo partial changes automatically, or close a workbook as cleanup. If the host exits, unsaved workbooks may remain open and visible and attached workbooks stay untouched, following upstream 2.5.3 ownership rules. AutoSave may already have saved changes independently.
+Cancellation and timeout stop waiting; Excel's work may continue. Check the Excel window and discover/list sessions before retrying. Do not assume the operation failed, undo partial changes automatically, or close a workbook as cleanup. If the host exits, unsaved workbooks may remain open and visible and attached workbooks stay untouched, following upstream 2.6.0 ownership rules. Pending work can remain in a retained worker; inspect its reported state using the matching build before retrying. Changing binaries does not finish, reverse or authorize cleanup of that work. AutoSave may already have saved changes independently.
 
 If recovery requires a process-level action, establish the exact owned process identity and current workbook state first. A process name alone does not establish ownership. Unrelated Excel instances must remain untouched.
 

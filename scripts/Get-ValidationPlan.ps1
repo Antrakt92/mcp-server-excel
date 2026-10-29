@@ -152,7 +152,8 @@ function Get-ValidationPlan {
         if ($path -match '^(docs/(?!agents/)|gh-pages/|samples/world-bank-dashboard/|README\.md$|FEATURES\.md$|CHANGELOG\.md$|LICENSE$|doc-counts\.json$)') { $plan.Docs = $true }
         switch -Regex -CaseSensitive ($path) {
             '^(skills/|scripts/Build-AgentSkills\.ps1$|docs/(AGENT-SKILLS\.md|reference/report-formatting\.md)$)' {
-                Add-Filter Tooling SkillGeneration 'Feature=SkillGeneration'; break
+                Add-Filter Tooling SkillGeneration 'Feature=SkillGeneration'
+                Add-Filter Tooling Packaging 'Feature=PluginBootstrap'; break
             }
             '^(\.github/plugins/|scripts/(Build-Plugins|Sync-PublishedPluginRepo|Publish-PreparedPlugins)\.ps1$|\.github/workflows/publish-plugins\.yml$)' {
                 Add-Filter Tooling Packaging 'Feature=PluginPublication|Feature=PluginBootstrap|Feature=PluginSkillVersion'; break
@@ -229,6 +230,12 @@ function Get-ValidationPlan {
             }
             '^(Directory\.|global\.json$|NuGet\.Config$|Sbroenne\.ExcelMcp\.sln$|tests/Directory\.)' {
                 Add-Shared $allOwners; break
+            }
+            '^scripts/(Import-AdoDefinitions|Install-AdoBuildTools)\.ps1$' {
+                Add-Shared @('ComInterop', 'ScriptSafety')
+                $plan.FullSolutionBuild = $true
+                $plan.PackageComponents += @('Cli', 'Mcp')
+                break
             }
             '^src/ExcelMcp\.(Core|ComInterop|Service|Cleanup)/' { Add-Shared $runtime; break }
             '^(src/ExcelMcp\.Analyzers/|BannedSymbols[^/]*\.txt$|scripts/check-(com-leaks|success-flag|dynamic-casts|workbook-package-access)\.ps1$)' {

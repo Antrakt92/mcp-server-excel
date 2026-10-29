@@ -16,6 +16,7 @@ public sealed class ServiceClient : IDisposable
     private readonly TimeSpan _requestTimeout;
     private readonly TimeProvider _timeProvider;
     private bool _disposed;
+    private readonly bool _useControlEndpoint;
 
     public static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan DefaultRequestTimeout =
@@ -24,12 +25,14 @@ public sealed class ServiceClient : IDisposable
     /// <summary>Whether this client has established a connection to the service.</summary>
     public bool HasConnected { get; private set; }
 
-    public ServiceClient(string pipeName, TimeSpan? connectTimeout = null, TimeSpan? requestTimeout = null)
+    public ServiceClient(string pipeName, TimeSpan? connectTimeout = null, TimeSpan? requestTimeout = null,
+        bool useControlEndpoint = false)
         : this(
             pipeName,
             connectTimeout,
             requestTimeout,
-            TimeProvider.System)
+            TimeProvider.System,
+            useControlEndpoint)
     {
     }
 
@@ -37,14 +40,22 @@ public sealed class ServiceClient : IDisposable
         string pipeName,
         TimeSpan? connectTimeout,
         TimeSpan? requestTimeout,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        bool useControlEndpoint = false)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         _pipeName = pipeName;
         _connectTimeout = connectTimeout ?? DefaultConnectTimeout;
         _requestTimeout = requestTimeout ?? DefaultRequestTimeout;
         _timeProvider = timeProvider;
+        _useControlEndpoint = useControlEndpoint;
     }
+
+    internal static bool IsControlCommand(string command) =>
+        command is "service.ping" or "service.status" or "service.shutdown" or "session.list"
+            or "window.show" or "window.hide";
+
+    internal static string GetControlPipeName(string pipeName) => pipeName + "-control";
 
     /// <summary>
     /// Sends a request to the service and waits for response via StreamJsonRpc.
@@ -74,7 +85,8 @@ public sealed class ServiceClient : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var startedAt = _timeProvider.GetTimestamp();
-        using var pipe = ServiceSecurity.CreateClient(_pipeName);
+        using var pipe = ServiceSecurity.CreateClient(
+            _useControlEndpoint && IsControlCommand(request.Command) ? GetControlPipeName(_pipeName) : _pipeName);
         var connected = false;
 
         try
@@ -126,11 +138,14 @@ public sealed class ServiceClient : IDisposable
                     && disconnectTask.Result
                     && !callTask.IsCompleted)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     return CreateConnectionLostResponse(request);
                 }
 
                 await disconnectMonitorCts.CancelAsync();
-                return await callTask.WaitAsync(requestCts.Token);
+                var response = await callTask.WaitAsync(requestCts.Token);
+                cancellationToken.ThrowIfCancellationRequested();
+                return response;
             }
             finally
             {
@@ -140,7 +155,12 @@ public sealed class ServiceClient : IDisposable
         }
         catch (TimeoutException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return CreateTimeoutResponse(request, connected, nameof(TimeoutException));
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ex.Message, ex, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -148,10 +168,12 @@ public sealed class ServiceClient : IDisposable
         }
         catch (ConnectionLostException)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return CreateConnectionLostResponse(request);
         }
         catch (DirectoryNotFoundException ex) when (!connected)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new ServiceResponse
             {
                 Success = false,
@@ -164,6 +186,7 @@ public sealed class ServiceClient : IDisposable
         }
         catch (IOException ex) when (ex.Message.Contains("pipe"))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new ServiceResponse
             {
                 Success = false,
@@ -193,11 +216,14 @@ public sealed class ServiceClient : IDisposable
             throw new TimeoutException();
         }
 
-        return configuredTimeout <= remaining ? configuredTimeout : remaining;
+        return configuredTimeout != Timeout.InfiniteTimeSpan && configuredTimeout <= remaining
+            ? configuredTimeout
+            : remaining;
     }
 
-    private static int ToTimeoutMilliseconds(TimeSpan timeout) =>
-        Math.Max(1, checked((int)Math.Ceiling(timeout.TotalMilliseconds)));
+    internal static int ToTimeoutMilliseconds(TimeSpan timeout) =>
+        timeout == Timeout.InfiniteTimeSpan ? Timeout.Infinite
+            : Math.Max(1, checked((int)Math.Ceiling(timeout.TotalMilliseconds)));
 
     private static ServiceResponse CreateTimeoutResponse(
         ServiceRequest request,

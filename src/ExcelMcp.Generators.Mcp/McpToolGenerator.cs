@@ -146,7 +146,7 @@ public class McpToolGenerator : IIncrementalGenerator
         {
             var methods = group.ToList();
             var readOnly = methods.All(method => method.McpToolReadOnly);
-            var description = readOnly
+            var description = readOnly && !(info.McpToolReadOnly && group.Key == info.McpToolName)
                 ? "Read-only actions: " + string.Join(" ", methods.Select(method =>
                     string.IsNullOrWhiteSpace(method.XmlDocSummary)
                         ? $"{method.ActionName}."
@@ -159,7 +159,7 @@ public class McpToolGenerator : IIncrementalGenerator
                 info.NoSession,
                 methods,
                 readOnly ? $"Read-only {info.CategoryPascal} actions." : info.XmlDocSummary,
-                readOnly ? $"Read-only {info.CategoryPascal} Operations" : info.McpToolTitle,
+                readOnly && group.Key != info.McpToolName ? $"Read-only {info.CategoryPascal} Operations" : info.McpToolTitle,
                 readOnly ? false : info.McpToolDestructive,
                 readOnly,
                 info.McpToolCategory,
@@ -212,8 +212,6 @@ public class McpToolGenerator : IIncrementalGenerator
         GenerateToolMethod(sb, info, hasProgress);
 
         sb.AppendLine("}");
-        sb.AppendLine();
-        GenerateOutputSchemaClass(sb, info);
         return sb.ToString();
     }
 
@@ -240,6 +238,13 @@ public class McpToolGenerator : IIncrementalGenerator
     private static void GenerateToolMethod(StringBuilder sb, ServiceInfo info, bool hasProgress)
     {
         var enumTypeName = GetActionTypeName(info);
+        var hasSession = !info.NoSession && info.Methods.Any(method => method.HasBatchParameter);
+        var requiresSession = hasSession && info.Methods.All(method => method.HasBatchParameter);
+        var sessionDescription = requiresSession
+            ? "Session ID from file 'open' action"
+            : "Session ID required for: " + string.Join(", ", info.Methods
+                .Where(method => method.HasBatchParameter).Select(method => method.ActionName)) +
+              ". Not used by actions that open and close files automatically.";
 
         // Get all exposed parameters (aggregated across methods)
         var exposedParams = ServiceInfoExtractor.GetAllExposedParameters(info);
@@ -262,7 +267,7 @@ public class McpToolGenerator : IIncrementalGenerator
 
         // XML doc: parameter descriptions
         sb.AppendLine($"    /// <param name=\"action\">The action to perform</param>");
-        if (!info.NoSession)
+        if (hasSession)
         {
             sb.AppendLine($"    /// <param name=\"workbook_session_id\">Session ID from file 'open' action</param>");
         }
@@ -279,11 +284,11 @@ public class McpToolGenerator : IIncrementalGenerator
         var title = info.McpToolTitle ?? $"Excel {info.CategoryPascal} Operations";
         var destructive = info.McpToolDestructive ? "true" : "false";
         var readOnly = info.McpToolReadOnly ? "true" : "false";
-        sb.AppendLine($"    [McpServerTool(Name = \"{info.McpToolName}\", Title = \"{title}\", Destructive = {destructive}, ReadOnly = {readOnly}, UseStructuredContent = true, OutputSchemaType = typeof({GetOutputSchemaClassName(info)}))]");
+        sb.AppendLine($"    [McpServerTool(Name = \"{info.McpToolName}\", Title = \"{title}\", Destructive = {destructive}, ReadOnly = {readOnly})]");
 
         var category = info.McpToolCategory ?? "data";
         sb.AppendLine($"    [McpMeta(\"category\", \"{category}\")]");
-        sb.AppendLine($"    [McpMeta(\"requiresSession\", {(!info.NoSession).ToString().ToLower()})]");
+        sb.AppendLine($"    [McpMeta(\"requiresSession\", {requiresSession.ToString().ToLowerInvariant()})]");
 
         // Tool prose stays concise; parameter details come from Core XML documentation.
         if (!string.IsNullOrEmpty(info.McpToolDescription))
@@ -303,9 +308,10 @@ public class McpToolGenerator : IIncrementalGenerator
         sb.AppendLine("        Sbroenne.ExcelMcp.McpServer.ServiceBridge.ServiceBridge bridge,");
 
         // Session parameter (if required)
-        if (!info.NoSession)
+        if (hasSession)
         {
-            sb.Append("        [Description(\"Session ID from file 'open' action\")] string workbook_session_id");
+            sb.Append($"        [Description(\"{EscapeStringLiteral(sessionDescription)}\")] ");
+            sb.Append(requiresSession ? "string workbook_session_id" : "string? workbook_session_id = null");
             sb.Append(",");
             sb.AppendLine();
         }
@@ -345,105 +351,9 @@ public class McpToolGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
-    private static void GenerateOutputSchemaClass(StringBuilder sb, ServiceInfo info)
-    {
-        sb.AppendLine($"internal sealed class {GetOutputSchemaClassName(info)}");
-        sb.AppendLine("{");
-
-        foreach (var property in GetOutputSchemaProperties(info))
-        {
-            if (property.Name == "SessionId")
-                sb.AppendLine("    [JsonPropertyName(\"workbook_session_id\")]");
-            sb.AppendLine("    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]");
-            sb.AppendLine($"    public {property.TypeName} {property.Name} {{ get; set; }}");
-        }
-
-        sb.AppendLine("}");
-    }
-
-    private static string GetOutputSchemaClassName(ServiceInfo info) =>
-        $"{GetToolIdentifier(info)}ToolOutputSchema";
-
-    private static OutputSchemaProperty[] GetOutputSchemaProperties(ServiceInfo info)
-    {
-        var properties = new Dictionary<string, OutputSchemaProperty>(StringComparer.Ordinal);
-        properties.Add("SessionId", new("SessionId", "string?"));
-
-        foreach (var method in info.Methods)
-        {
-            if (method.ReturnTypeSymbol is not INamedTypeSymbol returnType || !DerivesFromResultBase(returnType))
-            {
-                if (method.ReturnTypeSymbol.SpecialType != SpecialType.System_Void)
-                {
-                    var typeName = GetOptionalSchemaTypeName(method.ReturnTypeSymbol);
-                    if (properties.TryGetValue("Result", out var existing) && existing.TypeName != typeName)
-                    {
-                        properties["Result"] = new("Result", "System.Text.Json.JsonElement?");
-                    }
-                    else
-                    {
-                        properties["Result"] = new("Result", typeName);
-                    }
-                }
-
-                continue;
-            }
-
-            for (var type = returnType; type is not null; type = type.BaseType)
-            {
-                foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
-                {
-                    if (property.IsStatic || property.IsIndexer ||
-                        property.DeclaredAccessibility != Accessibility.Public || property.GetMethod is null)
-                        continue;
-
-                    var typeName = GetOptionalSchemaTypeName(property.Type);
-                    if (properties.TryGetValue(property.Name, out var existing) && existing.TypeName != typeName)
-                    {
-                        properties[property.Name] = new(property.Name, "System.Text.Json.JsonElement?");
-                    }
-                    else
-                    {
-                        properties[property.Name] = new(property.Name, typeName);
-                    }
-                }
-            }
-        }
-
-        return properties.Values
-            .OrderBy(p => p.Name == "Success" ? 0 : 1)
-            .ThenBy(p => p.Name, StringComparer.Ordinal)
-            .ToArray();
-    }
-
-    private static string GetOptionalSchemaTypeName(ITypeSymbol type)
-    {
-        var typeName = TypeNameHelper.GetTypeName(type, type.NullableAnnotation);
-        if (!typeName.EndsWith("?", StringComparison.Ordinal))
-            typeName += "?";
-
-        return typeName;
-    }
-
-    private static bool DerivesFromResultBase(INamedTypeSymbol type)
-    {
-        for (var current = type; current is not null; current = current.BaseType)
-        {
-            if (current.Name == "ResultBase" &&
-                current.ContainingNamespace.ToDisplayString() == "Sbroenne.ExcelMcp.Core.Models")
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private sealed class OutputSchemaProperty(string name, string typeName)
-    {
-        public string Name { get; } = name;
-        public string TypeName { get; } = typeName;
-    }
+    private static bool HasImageResult(ServiceInfo info) =>
+        info.Methods.All(method => method.ReturnTypeSymbol.ToDisplayString() ==
+            "Sbroenne.ExcelMcp.Core.Commands.Screenshot.ScreenshotResult");
 
     /// <summary>
     /// Generates the method body that calls ServiceRegistry.RouteAction.
@@ -478,6 +388,17 @@ public class McpToolGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}    ServiceRegistry.{registryName}.ToActionString({serviceAction}),");
         sb.AppendLine($"{indent}    () =>");
         sb.AppendLine($"{indent}    {{");
+        var sessionlessMethods = info.Methods.Where(method => !method.HasBatchParameter).ToArray();
+        var hasSession = !info.NoSession && info.Methods.Any(method => method.HasBatchParameter);
+        var mixedSession = hasSession && sessionlessMethods.Length > 0;
+        if (mixedSession)
+        {
+            var sessionlessActions = string.Join(" or ", sessionlessMethods.Select(method =>
+                $"{registryName}Action.{method.MethodName}"));
+            sb.AppendLine($"{indent}        if (serviceAction is not ({sessionlessActions}) && string.IsNullOrWhiteSpace(workbook_session_id))");
+            sb.AppendLine($"{indent}            throw new ArgumentException(\"workbook_session_id is required for this action. Use file 'open' action to start a session.\");");
+            sb.AppendLine($"{indent}        var sessionId = serviceAction is {sessionlessActions} ? \"\" : workbook_session_id!;");
+        }
         foreach (var parameter in mcpParams.Where(parameter => parameter.PreProcessingCode != null))
         {
             sb.AppendLine($"{indent}        {parameter.PreProcessingCode}");
@@ -489,9 +410,9 @@ public class McpToolGenerator : IIncrementalGenerator
         sb.AppendLine($"{indent}        return ServiceRegistry.{registryName}.RouteAction(");
         sb.AppendLine($"{indent}            {serviceAction},");
 
-        if (!info.NoSession)
+        if (hasSession)
         {
-            sb.AppendLine($"{indent}            workbook_session_id,");
+            sb.AppendLine($"{indent}            {(mixedSession ? "sessionId" : "workbook_session_id")},");
         }
         else
         {
@@ -512,7 +433,8 @@ public class McpToolGenerator : IIncrementalGenerator
         }
 
         sb.AppendLine($"{indent}        );");
-        sb.AppendLine($"{indent}    }}, cancellationToken);");
+        var resultFactory = HasImageResult(info) ? ", ScreenshotImageResult.CreateToolResult" : "";
+        sb.AppendLine($"{indent}    }}, cancellationToken{resultFactory});");
 
         // Close progress try/finally block
         if (hasProgress)
