@@ -1,10 +1,10 @@
 # Verify, upgrade and recover
 
-Use packages from [this fork's releases](https://github.com/Antrakt92/mcp-server-excel/releases). Download the MCP or CLI ZIP together with `SHA256SUMS` and `RELEASE-MANIFEST.json` from the **same release**.
+Use packages from [this fork's releases](https://github.com/Antrakt92/mcp-server-excel/releases). Download the MCP or CLI ZIP together with `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json` from the **same release**.
 
 ## Verify a download
 
-Run `Get-FileHash <downloaded-zip> -Algorithm SHA256` and compare the full value with the matching filename in `SHA256SUMS`. Check the manifest's version, upstream base and source revision before extracting. Hashes verify that your download matches the publisher's release; they do not independently establish publisher trust or workbook correctness.
+Run `Get-FileHash <downloaded-file> -Algorithm SHA256` for the ZIP, manifest and verification receipt, and compare each full value with its matching filename in `SHA256SUMS`. Check the manifest's version, upstream base and source revision before extracting. Match the verification receipt's source revision and executable hashes to the manifest and the extracted executables; see [release verification](OVERVIEW.md#distribution). Hashes verify that your download matches the publisher's release; they do not independently establish publisher trust or workbook correctness.
 
 Extract into a new version-specific directory. Do not overwrite a running executable. Keep the previous verified package until the new version has passed the checks relevant to your work.
 

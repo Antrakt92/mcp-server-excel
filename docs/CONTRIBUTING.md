@@ -2,16 +2,14 @@
 
 This guide covers contributions to [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The fork retains upstream assembly names and the original MIT license. Target `main` for fork pull requests; see [AGENTS.md](../AGENTS.md) for the governing rules and [the fork overview](fork/OVERVIEW.md) for distribution boundaries.
 
-## 🎯 Project Vision
+## Project scope
 
-ExcelMcp aims to be the go-to command-line tool for coding agents to interact with Microsoft Excel files. We prioritize:
+ExcelMCP exposes desktop Excel operations through MCP and the CLI. Contributions
+should keep commands predictable, preserve COM ownership and error reporting,
+and provide equivalent workbook behavior through both entry points. Shared Core
+contracts and generated adapters define how operations are extended.
 
-- **Simplicity** - Clear, predictable commands
-- **Reliability** - Robust COM automation
-- **Extensibility** - Easy to add new features
-- **Agent-Friendly** - Designed for AI coding assistants
-
-## 🚀 Getting Started
+## Getting Started
 
 ### Development Environment
 
@@ -43,7 +41,7 @@ ExcelMcp aims to be the go-to command-line tool for coding agents to interact wi
    Run Excel-dependent checks sequentially on the local Windows desktop. Hosted
    CI is not a substitute for Excel and is not launched by these setup commands.
 
-## 🚨 **CRITICAL: Pull Request Workflow Required**
+## Pull Request Workflow
 
 **All changes must be made through Pull Requests (PRs).** Direct commits to `main` are prohibited.
 
@@ -68,9 +66,9 @@ Target this fork's `main` branch. A maintainer chooses an enabled merge method a
    - Verify the resulting commit accurately describes the changes
    - Delete a finished branch only after confirming it contains no unique unmerged work and no active worktree needs it
 
-📋 **Detailed workflow**: See [DEVELOPMENT.md](DEVELOPMENT.md) for complete instructions.
+**Detailed workflow**: See [DEVELOPMENT.md](DEVELOPMENT.md) for complete instructions.
 
-## 📋 Development Guidelines
+## Development Guidelines
 
 ### Portable npm lockfiles
 
@@ -225,7 +223,7 @@ Before submitting a PR:
 4. Build has zero warnings
 5. Pre-commit passes the selected Release build and quick unit tests. Before PR delivery, cover affected behavior, callers, and failure paths following the [local validation scope rule](../AGENTS.md#build-and-validation). Review the changed-area plan before running it; a shared file change does not automatically require every feature, acceptance test, or diagnostic. Record the chosen checks, results, and reason for any narrower scope. Passing the hook alone is not complete PR validation; required CI checks still apply.
 
-## 🔧 Adding a New Operation
+## Adding a New Operation
 
 New operations are added to the **Core** interface/implementation; CLI commands and MCP tool schemas are then generated automatically — you don't hand-write CLI arg parsing or MCP tool registration.
 
@@ -299,7 +297,7 @@ contract/skill tests; compilation does not prepare or validate every skill outpu
 See the [website authoring guide](../gh-pages/README.md#publishing-canonical-documentation)
 for source maps, wrappers, navigation, and machine-readable outputs.
 
-## 📝 Pull Request Process
+## Pull Request Process
 
 ### Before Submitting
 
@@ -335,7 +333,7 @@ Brief description of changes
 - [ ] Updated documentation as needed
 ```
 
-## 🎨 UI Guidelines
+## UI Guidelines
 
 ### Spectre.Console Usage
 
@@ -363,7 +361,7 @@ AnsiConsole.MarkupLine($"[cyan]{title}[/]");
 - **Progress indicators** for long operations
 - **Clear error messages** with actionable guidance
 
-## 🐛 Bug Reports
+## Bug Reports
 
 When reporting bugs, please include:
 
@@ -376,27 +374,27 @@ When reporting bugs, please include:
 Report suspected vulnerabilities through [the security policy](../SECURITY.md),
 not a public issue or PR.
 
-## 💡 Feature Requests
+## Feature Requests
 
-Great feature requests include:
+Include these details in a feature request:
 
 - **Use case description** - Why is this needed?
 - **Proposed command syntax** - How should it work?
 - **Excel operations involved** - What APIs would be used?
 - **Target users** - Coding agents? Direct users?
 
-## 📚 Learning Resources
+## Learning Resources
 
 - [Excel VBA Object Model Reference](https://docs.microsoft.com/en-us/office/vba/api/overview/excel)
 - [Power Query M Language Reference](https://docs.microsoft.com/en-us/powerquery-m/)
 - [Spectre.Console Documentation](https://spectreconsole.net/)
 - [.NET COM Interop Guide](https://learn.microsoft.com/en-us/dotnet/framework/interop/)
 
-## 📦 For Maintainers
+## For Maintainers
 
 - [NuGet Publishing Guide](NUGET-GUIDE.md) - Complete guide for publishing all packages with OIDC trusted publishing
 
-## 🏷️ Issue Labels
+## Issue Labels
 
 - `bug` - Something isn't working
 - `enhancement` - New feature or improvement

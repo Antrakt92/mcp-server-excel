@@ -95,7 +95,7 @@ Required checks and branch protection are repository settings that must be
 verified separately. Passing compilation or static analysis does not establish
 native Excel correctness, complete COM cleanup, workbook integrity or runtime
 acceptance. Release receipts bind actual package checks to source and executable
-hashes; see [verification](docs/fork/VERIFICATION-3.0.0.md).
+hashes; see [the release verification route](docs/fork/OVERVIEW.md#distribution).
 
 Report reproducible defects in these boundaries with their actual caller,
 workbook state and impact. Do not include private workbook data in public
