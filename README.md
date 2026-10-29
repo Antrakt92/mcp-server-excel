@@ -4,31 +4,31 @@ Automate desktop Microsoft Excel through MCP or the `excelcli` command line, usi
 
 This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **3.0.0 fork release line is based on upstream 2.6.0**. It adds persistent read-only audit sessions, bounded range inspection and guarded VBA workflows while retaining fork transport shutdown, request admission and connection drain. This is a major upgrade from fork 2.5.4 because CLI result fields and accepted options changed; see [migration](#migrate-from-fork-254).
 
-The `main` branch also includes upstream 2.6.1 maintenance. Published fork 3.0.0 archives and their verification receipts retain their original upstream 2.6.0 base.
+Fork **3.0.1** integrates upstream 2.6.1 maintenance and its subsequent chart-label removal fix, along with fork named-range, dependency and guidance repairs. Published fork 3.0.0 archives and their verification receipts retain their original upstream 2.6.0 base.
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.0.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
+[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.1.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
 
 ## Choose a package
 
 | Package | Use |
 | --- | --- |
-| [ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
-| [ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
+| [ExcelMcp-Antrakt-MCP-3.0.1-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.1/ExcelMcp-Antrakt-MCP-3.0.1-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
+| [ExcelMcp-Antrakt-CLI-3.0.1-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.1/ExcelMcp-Antrakt-CLI-3.0.1-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
 PowerShell download example:
 
 ```powershell
-$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip'
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.1'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.0.1-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.0.1-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.0.1-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.0.1-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
 Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
-Get-FileHash .\ExcelMcp-Antrakt-*-3.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\ExcelMcp-Antrakt-*-3.0.1-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 
