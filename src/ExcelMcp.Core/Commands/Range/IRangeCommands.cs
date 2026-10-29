@@ -277,7 +277,9 @@ public interface IRangeCommands
     // === NUMBER FORMAT OPERATIONS ===
 
     /// <summary>
-    /// Gets number format codes from range (2D array matching range dimensions).
+    /// Gets number format codes from one rectangle (2D array matching range dimensions).
+    /// Rejects scopes above 10,000 cells before reading formatting and enforces the conservative
+    /// 4 MiB response budget. Use get-format-summary for aggregates or smaller explicit rectangles.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
