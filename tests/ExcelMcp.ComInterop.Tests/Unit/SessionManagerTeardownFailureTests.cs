@@ -14,6 +14,44 @@ namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 [Trait("Speed", "Fast")]
 public sealed class SessionManagerTeardownFailureTests
 {
+    [Fact]
+    public void SaveAs_HardLinkReservationSurvivesReplacementAndReleasesOriginalPath()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "excelmcp-saveas-identity-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var original = Path.Combine(root, "source.xlsx");
+            var alias = Path.Combine(root, "destination.xlsx");
+            var other = Path.Combine(root, "other.xlsx");
+            File.WriteAllText(original, "synthetic-source");
+            File.WriteAllText(other, "synthetic-other");
+            if (!CreateHardLink(alias, original, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            using var manager = new SessionManager();
+            RegisterSession(manager, "source", original, new ConfigurableFailingBatch(false, false));
+            RegisterSession(manager, "other", other, new ConfigurableFailingBatch(false, false));
+            Assert.Throws<InvalidOperationException>(() => manager.ReserveSessionFilePath("other", alias));
+            Assert.Equal(alias, manager.ReserveSessionFilePath("source", alias));
+            var replacement = Path.Combine(root, "replacement.xlsx");
+            File.WriteAllText(replacement, "synthetic-new-package");
+            File.Move(replacement, alias, overwrite: true);
+            manager.UpdateSessionFilePath("source", alias);
+            Assert.Equal([alias], manager.GetOwnedFilePaths("source"));
+            Assert.Equal(original, manager.ReserveSessionFilePath("other", original));
+            manager.ReleaseSessionFilePathReservation("other", original);
+            Assert.Throws<InvalidOperationException>(() => manager.ReserveSessionFilePath("other", alias));
+            Assert.True(manager.CloseSession("source", save: false));
+            Assert.Equal(alias, manager.ReserveSessionFilePath("other", alias));
+            manager.ReleaseSessionFilePathReservation("other", alias);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string alias, string original, IntPtr security);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -46,7 +84,7 @@ public sealed class SessionManagerTeardownFailureTests
             Assert.Equal(0, manager.ActiveSessionCount);
             Assert.False(manager.HasActiveConnections);
             Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePaths"));
-            Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths"));
+            Assert.Empty(GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths"));
         }
         finally
         {
@@ -146,7 +184,7 @@ public sealed class SessionManagerTeardownFailureTests
             Assert.Equal(2, batch.DisposeCallCount);
             Assert.Equal(0, batch.SaveCallCount);
             Assert.Equal(0, manager.ActiveSessionCount);
-            Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths"));
+            Assert.Empty(GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths"));
             Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePaths"));
         }
         finally
@@ -377,7 +415,7 @@ public sealed class SessionManagerTeardownFailureTests
     {
         GetField<ConcurrentDictionary<string, IExcelBatch>>(manager, "_activeSessions")
             [sessionId] = batch;
-        GetField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths")
+        GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths")
             [filePath] = sessionId;
         GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePaths")
             [sessionId] = filePath;

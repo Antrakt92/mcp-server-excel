@@ -52,9 +52,7 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
     {
         var path = location is null
             ? name
-            : WorkbookLocation.IsRemote(location)
-                ? WorkbookLocation.SanitizeExistingRemoteWorkbookLocation(location)
-                : WorkbookLocation.Normalize(location);
+            : WorkbookLocation.Normalize(location);
         lock (LocationSyncRoot)
         {
             if (!string.Equals(_path, path, StringComparison.Ordinal)
@@ -101,7 +99,7 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_detached, this);
-        ExcelBusyException.ThrowIfNotReady(owner.GetExecutionPreflightState(), "save");
+        ExcelBusyException.ThrowIfNotReady(owner.GetExecutionPreflightState(), "save", this);
         Execute((context, token) =>
         {
             ExcelBusyException.ThrowIfNotReady(

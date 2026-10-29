@@ -28,18 +28,13 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 /// </summary>
 [ServiceCategory("RangeFormat")]
 [McpTool("range_format", Title = "Range Format Operations", Destructive = true, Category = "data",
-    Description = "Range formatting: styles, custom visual formatting, data validation, merge, auto-fit. " +
-        "set-visibility: Required axis rows/columns and hidden true/false. Preserve stored dimensions; do not remove filter criteria or groups. Disjoint gaps remain unchanged. " +
-        "set-style: Named styles (Good/Bad/Neutral have fills and are theme-aware; Heading 1/2/3 for document hierarchy; Normal to reset). " +
-        "NOTE: Heading styles do NOT include a fill colour — use format for coloured header rows. " +
-        "format: One format_options JSON object for one or more range_addresses. Includes independent edge/inside/diagonal borders, font settings, theme colors/tints, indentation, alignment and number format. Omitted settings preserve existing state. " +
-        "All targets and known invalid options are checked before mutation. Native failures do not promise rollback. Fixed RGB and theme colors are mutually exclusive for each component. " +
-        "COLORS: Hex #RRGGBB. FONT: size in points, alignment left/center/right, top/middle/bottom. " +
-        "DATA VALIDATION: Types list/whole/decimal/date/time/textLength/custom. For list: formula1 is source (=$A$1:$A$10 or \"A,B,C\"). " +
-        "MERGE: Only top-left cell value preserved. " +
-        "TABLES: For Excel Table visual styling use table(action:'set-style') — do not apply range_format to table header or data rows, table style manages all table formatting. " +
-        "PIVOTTABLES: Do not apply range_format to PivotTable cells — formatting is overwritten on the next refresh.")]
-[McpReadOnlyActions("get-visibility", "get-format", "get-style", "get-validation", "get-merge-info")]
+    Description = "Range formatting: styles, visual formatting, data validation, merge, auto-fit, and row/column visibility. " +
+        "format: one format_options object for one or more range_addresses: edge/inside/diagonal borders, font, fill, theme colors/tints, indentation, alignment, and number format. Omitted settings keep their current state. All targets and known invalid options are checked before changes; Excel failures are not rolled back. Fixed RGB and theme colors are mutually exclusive per component. Colors use #RRGGBB. " +
+        "set-style: named styles; Good/Bad/Neutral include fills, Heading 1/2/3 do NOT include a fill (use format for colored header rows), Normal resets. " +
+        "set-visibility: axis rows/columns and hidden true/false; keeps stored sizes, filters, and groups. Disjoint gaps remain unchanged. " +
+        "DATA VALIDATION: for list, formula1 is the source (=$A$1:$A$10 or \"A,B,C\"). MERGE: only the top-left value is kept. " +
+        "Do not format Excel Table cells (use table set-style) or PivotTable cells (refresh overwrites the formatting).")]
+[McpReadOnlyActions("get-format-summary", "get-visibility", "get-format", "get-style", "get-validation", "get-merge-info")]
 public interface IRangeFormatCommands
 {
     /// <summary>
@@ -77,7 +72,7 @@ public interface IRangeFormatCommands
     /// Stored reads report workbook formatting; displayed reads include conditional
     /// formatting. Both returns the two snapshots without changing cells or selection.
     /// Mixed rich-text properties are identified explicitly, not replaced with defaults.
-    /// There is no preview limit. Use get-style only when the style name is sufficient.
+    /// Rejects scopes above 10,000 cells before inspecting formatting. Use smaller explicit ranges for details or get-format-summary for native aggregate properties.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name, or empty string for a named range</param>
@@ -87,11 +82,19 @@ public interface IRangeFormatCommands
     RangeFormatReadResult GetFormat(IExcelBatch batch, [AllowEmptyString] string sheetName,
         [RequiredParameter] string rangeAddress, [FromString] FormatView view = FormatView.Stored);
 
+    /// <summary>Reads aggregate native formatting for one rectangle without visiting individual cells. Null properties and mixedFields describe Excel mixed values, not a complete per-cell style inventory. Stored/displayed/both views preserve selection and do not calculate.</summary>
+    /// <param name="batch">Excel session</param>
+    /// <param name="sheetName">Worksheet, or empty string for a named range</param>
+    /// <param name="rangeAddress">Exact rectangular scope</param>
+    /// <param name="view">stored (default), displayed, or both</param>
+    [ServiceAction("get-format-summary")]
+    RangeFormatSummaryResult GetFormatSummary(IExcelBatch batch, [AllowEmptyString] string sheetName,
+        [RequiredParameter] string rangeAddress, [FromString] FormatView view = FormatView.Stored);
+
     // === STYLE OPERATIONS ===
 
     /// <summary>
     /// Applies an existing built-in or custom Excel cell style to a range.
-    /// Excel COM: Range.Style = styleName
     /// </summary>
     /// <param name="batch">Excel batch context</param>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
@@ -102,7 +105,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Gets the native cell style applied to a range, including built-in/custom status.
-    /// Excel COM: Range.Style.Name property
     /// When Excel reports no single style for a mixed-style range, returns the
     /// existing Normal fallback without changing individual cell styles. This does
     /// not mean every cell uses Normal; use get-format to inspect each cell's distinct style.
@@ -136,7 +138,6 @@ public interface IRangeFormatCommands
     /// Adds data validation rules to range.
     /// Invalid type, comparison operator, and error style are rejected before replacing an existing rule.
     /// A later Excel error applying the replacement is not rolled back.
-    /// Excel COM: Range.Validation.Add()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address to validate (e.g., 'A1:D10')</param>
@@ -174,7 +175,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Gets data validation settings from first cell in range.
-    /// Excel COM: Range.Validation
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address (e.g., 'A1:D10')</param>
@@ -183,7 +183,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Removes data validation from range.
-    /// Excel COM: Range.Validation.Delete()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address (e.g., 'A1:D10')</param>
@@ -194,7 +193,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Auto-fits column widths to content.
-    /// Excel COM: Range.Columns.AutoFit()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Column range to auto-fit (e.g., 'A:D' or 'A1:D100')</param>
@@ -203,7 +201,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Auto-fits row heights to content.
-    /// Excel COM: Range.Rows.AutoFit()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Row range to auto-fit (e.g., '1:10' or 'A1:D100')</param>
@@ -214,7 +211,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Merges cells in range into a single cell.
-    /// Excel COM: Range.Merge()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Cell range to merge into a single cell (e.g., 'A1:D1')</param>
@@ -223,7 +219,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Unmerges previously merged cells.
-    /// Excel COM: Range.UnMerge()
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Cell range to unmerge (e.g., 'A1:D1')</param>
@@ -232,7 +227,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Checks if range contains merged cells and returns distinct merge areas.
-    /// Excel COM: Range.MergeCells
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Cell range to check for merged cells (e.g., 'A1:D10')</param>
@@ -243,7 +237,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Sets the width of columns in a range.
-    /// Excel COM: Range.ColumnWidth property
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Column range to set width (e.g., 'A:A' or 'A1:D100')</param>
@@ -253,7 +246,6 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Sets the height of rows in a range.
-    /// Excel COM: Range.RowHeight property
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Row range to set height (e.g., '1:10' or 'A1:D100')</param>

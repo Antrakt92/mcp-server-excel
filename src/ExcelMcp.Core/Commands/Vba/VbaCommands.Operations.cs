@@ -3,8 +3,6 @@ using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
-using Sbroenne.ExcelMcp.Core.Utilities;
-using Office = Microsoft.Office.Core;
 using Vbe = Microsoft.Vbe.Interop;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
@@ -38,21 +36,15 @@ public partial class VbaCommands
 
         Func<OperationResult> execute = () => batch.Execute((ctx, ct) =>
         {
+            EnsureMacroApproval(batch, ctx.Book);
             var originalCulture = CultureInfo.CurrentCulture;
             var originalUiCulture = CultureInfo.CurrentUICulture;
-            Office.MsoAutomationSecurity? originalAutomationSecurity = null;
-            Exception? operationFailure = null;
+            object? returned = null;
             try
             {
                 var excelCulture = CultureInfo.GetCultureInfo("en-US");
                 CultureInfo.CurrentCulture = excelCulture;
                 CultureInfo.CurrentUICulture = excelCulture;
-
-                // Explicit macro execution is an opt-in operation. Temporarily switch automation
-                // security to low so Application.Run can execute on workbooks reopened by the
-                // automation host, then restore the previous setting after the call.
-                originalAutomationSecurity = ctx.App.AutomationSecurity;
-                ctx.App.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityLow;
 
                 string qualifiedName = $"'{ctx.Book.Name.Replace("'", "''", StringComparison.Ordinal)}'!{procedureName}";
                 var args = new object[30];
@@ -62,35 +54,18 @@ public partial class VbaCommands
                     args[i] = parameters[i];
                 }
 
-                ctx.App.Run(qualifiedName,
+                returned = ctx.App.Run(qualifiedName,
                     args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9],
                     args[10], args[11], args[12], args[13], args[14], args[15], args[16], args[17], args[18], args[19],
                     args[20], args[21], args[22], args[23], args[24], args[25], args[26], args[27], args[28], args[29]);
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
-            catch (Exception ex)
-            {
-                operationFailure = ex;
-                throw;
-            }
             finally
             {
-                try
-                {
-                    if (originalAutomationSecurity != null)
-                    {
-                        OperationCleanup.Run(() =>
-                        {
-                            ctx.App.AutomationSecurity = originalAutomationSecurity.Value;
-                        }, operationFailure);
-                    }
-                }
-                finally
-                {
-                    CultureInfo.CurrentCulture = originalCulture;
-                    CultureInfo.CurrentUICulture = originalUiCulture;
-                }
+                CultureInfo.CurrentCulture = originalCulture;
+                CultureInfo.CurrentUICulture = originalUiCulture;
+                VbaInvocationValues.ReleaseReturnedObjects(returned);
             }
         }, timeoutCts?.Token ?? default);
 

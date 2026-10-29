@@ -17,6 +17,28 @@ public sealed class PersistentServiceFormulaTraceTests(
     PersistentServiceWorkbookTestBase(fixture),
     IClassFixture<PersistentServiceWorkbookFixture>
 {
+    [Theory]
+    [InlineData("trace-precedents")]
+    [InlineData("trace-dependents")]
+    public void ErrorCodeShapedNumbers_RemainNumbersBesideRealErrors(string action)
+    {
+        var sheet = _fixture.CreateTestSheet(_fixture.BatchToken);
+        const double number = -2146826281d;
+        RequireSuccess(_commands.SetValues(_fixture.BatchToken, sheet, "A1", [[number]]));
+        RequireSuccess(_commands.SetFormulas(_fixture.BatchToken, sheet, "B1:C1", [["=A1", "=1/0"]]));
+        var response = _fixture.Send($"range.{action}", new { sheetName = sheet, rangeAddress = "A1:C1" });
+        using var result = JsonDocument.Parse(response.Result!);
+        var nodes = result.RootElement.GetProperty("nodes").EnumerateArray().ToDictionary(
+            node => node.GetProperty("address").GetString()!);
+        Assert.Equal(number, nodes["$A$1"].GetProperty("value").GetDouble());
+        Assert.Equal(number, nodes["$B$1"].GetProperty("value").GetDouble());
+        Assert.Equal("#DIV/0!", nodes["$C$1"].GetProperty("value").GetString());
+        var values = RequireSuccess(_commands.GetValues(_fixture.BatchToken, sheet, "A1:C1"));
+        RangeReadAssertions.Number(number, values.Values[0][0]);
+        RangeReadAssertions.Number(number, values.Values[0][1]);
+        Assert.Equal("#DIV/0!", values.Values[0][2]);
+    }
+
     private static readonly int[] PreservationDepths = [3, 0];
 
     [Theory]

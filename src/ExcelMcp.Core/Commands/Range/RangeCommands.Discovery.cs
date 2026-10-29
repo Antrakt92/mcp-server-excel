@@ -1,7 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
-using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
 
 
@@ -43,10 +42,7 @@ public partial class RangeCommands
                 range = sheet.UsedRange;
                 result.RangeAddress = range.Address;
 
-                var values = ExcelValueNormalizer.Normalize((object?)range.Value2);
-                result.RowCount = values.RowCount;
-                result.ColumnCount = values.ColumnCount;
-                result.Values.AddRange(values.Values);
+                ReadValueGrid(ctx, range, result, ct);
 
                 result.Success = true;
                 return result;
@@ -84,10 +80,7 @@ public partial class RangeCommands
                 region = cell.CurrentRegion;
                 result.RangeAddress = region.Address;
 
-                var values = ExcelValueNormalizer.Normalize((object?)region.Value2);
-                result.RowCount = values.RowCount;
-                result.ColumnCount = values.ColumnCount;
-                result.Values.AddRange(values.Values);
+                ReadValueGrid(ctx, region, result, ct);
 
                 result.Success = true;
                 return result;

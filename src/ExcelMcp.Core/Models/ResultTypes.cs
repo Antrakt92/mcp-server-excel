@@ -1002,6 +1002,9 @@ public class VbaSearchMatch
 /// </summary>
 public class VbaViewResult : ResultBase
 {
+    /// <summary>Fingerprint of the complete source, for guarded whole-module replacement.</summary>
+    public string SourceHash { get; set; } = string.Empty;
+
     /// <summary>
     /// Module name
     /// </summary>
@@ -1191,11 +1194,6 @@ public class FileValidationInfo
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
 
-    /// <summary>
-    /// File testing reports a diagnostic result, not a tool execution failure.
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? IsError { get; }
 }
 
 /// <summary>
@@ -1370,6 +1368,16 @@ public class RangeCellError
 /// </summary>
 public class RangeFormulaValidationResult : ResultBase
 {
+    /// <summary>Exact checks performed; IsValid means no issue was found within this scope.</summary>
+    public string ValidationScope { get; set; } = "lexical-and-local-sheet-references";
+
+    /// <summary>Checks this read-only preflight does not perform.</summary>
+    public IReadOnlyList<string> UnverifiedChecks { get; set; } =
+    [
+        "excel-compilation", "full-formula-grammar", "function-and-udf-availability",
+        "external-references", "defined-names", "circular-references", "overwrite-and-write-eligibility"
+    ];
+
     /// <summary>
     /// Sheet name
     /// </summary>
@@ -1767,6 +1775,7 @@ public class PowerQueryRefreshResult : PowerQueryOperationResult
 public class PowerQueryRefreshAllResult : OperationResult
 {
     /// <summary>Verified metrics for successfully refreshed queries, excluding skipped or failed queries.</summary>
+    [ResultOutcome]
     public List<PowerQueryOperationResult> QueryMetrics { get; set; } = [];
 
     /// <summary>

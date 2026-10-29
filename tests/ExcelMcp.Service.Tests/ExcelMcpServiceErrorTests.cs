@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Sbroenne.ExcelMcp.ComInterop;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -70,7 +71,7 @@ public sealed class ExcelMcpServiceErrorTests
             Assert.True(manager.TryGetFilePath(session, out var reconciled));
             Assert.Equal(target, reconciled);
             Assert.Empty(GetPrivateField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePathReservations"));
-            var claims = GetPrivateField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths");
+            var claims = GetPrivateField<WorkbookPathReservations<string>>(manager, "_activeFilePaths");
             Assert.False(claims.ContainsKey(original));
             Assert.Equal(session, claims[target]);
         }
@@ -148,7 +149,7 @@ public sealed class ExcelMcpServiceErrorTests
         var method = typeof(ExcelMcpService).GetMethod("SerializePartialState",
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        var result = method.Invoke(null, [query, operation]);
+        var result = method.Invoke(null, [query, operation, null, null]);
         if (!hasQuery && !waitExpired)
         {
             Assert.Null(result);
@@ -193,7 +194,7 @@ public sealed class ExcelMcpServiceErrorTests
             new InvalidOperationException("Original error"), state);
         var create = typeof(ExcelMcpService).GetMethod("CreateErrorResponse",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
-        var response = Assert.IsType<ServiceResponse>(create.Invoke(service, [error, null, null]));
+        var response = Assert.IsType<ServiceResponse>(create.Invoke(service, [error, null, null, null, null]));
         var attach = typeof(ExcelMcpService).GetMethod("AttachRequestContext",
             BindingFlags.Static | BindingFlags.NonPublic)!;
         response = Assert.IsType<ServiceResponse>(attach.Invoke(null,
@@ -244,7 +245,7 @@ public sealed class ExcelMcpServiceErrorTests
 #pragma warning restore CA2201
         var method = typeof(ExcelMcpService).GetMethod("CreateErrorResponse",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
-        var response = Assert.IsType<ServiceResponse>(method.Invoke(service, [error, "vba.run", "session"]));
+        var response = Assert.IsType<ServiceResponse>(method.Invoke(service, [error, "vba.run", "session", null, null]));
 
         Assert.False(response.Success);
         Assert.Equal(category, response.ErrorCategory);
@@ -816,7 +817,7 @@ public sealed class ExcelMcpServiceErrorTests
     {
         var sessionManager = GetPrivateField<SessionManager>(service, "_sessionManager");
         var activeSessions = GetPrivateField<ConcurrentDictionary<string, IExcelBatch>>(sessionManager, "_activeSessions");
-        var activeFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_activeFilePaths");
+        var activeFilePaths = GetPrivateField<WorkbookPathReservations<string>>(sessionManager, "_activeFilePaths");
         var sessionFilePaths = GetPrivateField<ConcurrentDictionary<string, string>>(sessionManager, "_sessionFilePaths");
         var activeOperationCounts = GetPrivateField<ConcurrentDictionary<string, int>>(sessionManager, "_activeOperationCounts");
         var showExcelFlags = GetPrivateField<ConcurrentDictionary<string, bool>>(sessionManager, "_showExcelFlags");

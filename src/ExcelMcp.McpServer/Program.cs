@@ -1,11 +1,11 @@
 using System.IO.Pipelines;
-using System.Runtime.InteropServices;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 using Sbroenne.ExcelMcp.McpServer.Telemetry;
+using Sbroenne.ExcelMcp.Service;
 
 namespace Sbroenne.ExcelMcp.McpServer;
 
@@ -27,6 +27,8 @@ public class Program
         CancellationToken runToken = default,
         Func<ServiceBridge.IServiceBridgeBackend>? serviceFactory = null)
     {
+        if (Service.ExcelController.IsWorkerMode(args))
+            return await Service.ExcelController.RunWorkerAsync(args);
         // Handle --help and --version flags for easy verification
         if (args.Length > 0)
         {
@@ -76,7 +78,7 @@ public class Program
         ConfigureStdioLogging(builder.Logging);
 
         builder.Services.AddSingleton(services => new ServiceBridge.ServiceBridge(
-            serviceFactory ?? (() => new ServiceBridge.ExcelMcpServiceBackend(new Service.ExcelMcpService())),
+            serviceFactory ?? (() => new ServiceBridge.ExcelControllerBackend(new Service.ExcelController())),
             services.GetRequiredService<ILogger<ServiceBridge.ServiceBridge>>()));
 
         // Configure MCP Server - use test transport if configured, otherwise stdio
@@ -104,6 +106,9 @@ public class Program
                     Confirmed blocking dialogs automatically reveal Excel. If file_read list reports excelState:dialogOpen, ask the user to check Excel and respond there.
                     Readable dialog text is included automatically in session blockingMessage and timeout errors; partial or unavailable reads are reported. Input values are not read, and dialogs are not classified, answered, or dismissed. A pending operation is not a completed or failed operation.
                     The server does not request confirmation through MCP elicitation; the client must obtain any needed consent.
+                    Normal file opens disable VBA macros, including .xlsm files. file_read notices reports known restrictions, not every notification bar.
+                    Enable editing or data connections only after workbook-specific approval and approval that Excel may remember trust (file enable-editing or enable-connections, approved:true, allow_remembered_trust:true).
+                    Enabling macros requires separate approval to reopen the saved workbook (file enable-macros, approved:true, allow_reopen:true); opening event code can run. Unsaved changes and attached workbooks are not reopened. These flags are caller-supplied approval, not a confirmation dialog, and do not bypass company restrictions.
                     Normal shutdown closes saved workbooks opened by this service and leaves unsaved ones open and visible without saving or discarding. Attached workbooks stay untouched. Open and attach preserve AutoSave; when enabled, Excel may save edits automatically. Use workbook set-auto-save to change it explicitly; enabling may save pending edits.
                     Crashes, timeouts, and forced cleanup may lose edits.
                     Cancellation is not undo: inspect file_read list before continuing, and do not blindly retry a change.
@@ -127,26 +132,22 @@ public class Program
                 filters.AddCallToolFilter(ToolArgumentFilter.Wrap);
             });
 
-        if (testInputPipe != null && testOutputPipe != null)
-        {
-            // Test mode: use in-memory pipe transport
-            mcpBuilder.WithStreamServerTransport(
-                testInputPipe.Reader.AsStream(),
-                testOutputPipe.Writer.AsStream());
-        }
-        else
-        {
-            // Production mode: use stdio transport
-            mcpBuilder.WithStdioServerTransport();
-        }
+        IHostApplicationLifetime? transportLifetime = null;
+        var testTransport = testInputPipe != null && testOutputPipe != null;
+        var input = testTransport ? testInputPipe!.Reader.AsStream() : Console.OpenStandardInput();
+        var output = testTransport ? testOutputPipe!.Writer.AsStream() : ProtocolOutput.Open();
+        mcpBuilder.WithStreamServerTransport(
+            new TransportLifetimeStream(input, () => transportLifetime?.StopApplication()),
+            new TransportLifetimeStream(output, () => transportLifetime?.StopApplication()));
 
         using var host = builder.Build();
+        transportLifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
 
         // Note: Update checks are handled by ExcelMCP Service (shown via Windows notification)
         // to avoid duplicate notifications when running in unified package mode
 
-        var stdinMonitor = testInputPipe == null
-            ? StdinPipeMonitor.Start(host.Services.GetRequiredService<IHostApplicationLifetime>())
+        var parentMonitor = !testTransport
+            ? ParentProcessMonitor.Start(transportLifetime)
             : null;
 
         try
@@ -174,7 +175,7 @@ public class Program
 #pragma warning restore CA1031
         finally
         {
-            stdinMonitor?.Dispose();
+            parentMonitor?.Dispose();
             ExcelMcpTelemetry.SignalExit();
         }
     }
@@ -245,7 +246,7 @@ public class Program
             Provides {McpToolSurface.ToolCount} tools with {McpToolSurface.OperationCount} operations for AI assistants.
 
             Usage:
-              mcp-excel.exe [options]
+              Sbroenne.ExcelMcp.McpServer.exe [options]
 
             Options:
               -h, --help      Show this help message
@@ -257,11 +258,11 @@ public class Program
               - Windows x64
               - Microsoft Excel 2016 or later (desktop version)
 
-            Documentation:
+            Upstream documentation:
               https://sbroenne.github.io/mcp-server-excel/
 
             Source:
-              https://github.com/sbroenne/mcp-server-excel
+              {DistributionInfo.RepositoryUrl}
             """;
     }
 
@@ -281,75 +282,7 @@ public class Program
         {
             Console.WriteLine();
             Console.WriteLine($"Update available: {currentVersion} -> {latestVersion}");
-            Console.WriteLine("Download: https://github.com/sbroenne/mcp-server-excel/releases/latest");
+            Console.WriteLine($"Download: {DistributionInfo.ReleasesUrl}");
         }
-    }
-}
-
-/// <summary>
-/// Monitors the stdin pipe to detect when the parent MCP client process exits.
-///
-/// Lifecycle: MCP stdio transport keeps this server alive via stdin/stdout pipes.
-/// When the parent process exits cleanly, the MCP SDK detects the closed pipe and
-/// shuts down the host. However, if the parent crashes or is killed (e.g., Task
-/// Manager, SIGKILL), the SDK may not notice. This monitor polls the stdin handle
-/// to detect the broken pipe and trigger graceful shutdown, ensuring COM handles
-/// are released and the Excel process is not orphaned.
-///
-/// Only activates when stdin is a named pipe (the normal stdio MCP transport case).
-/// Terminal, debugger, test harness, and file-redirection launches are left alone --
-/// they shut down through their own normal mechanisms.
-/// </summary>
-internal static class StdinPipeMonitor
-{
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool PeekNamedPipe(
-        IntPtr hNamedPipe, IntPtr lpBuffer, uint nBufferSize,
-        IntPtr lpBytesRead, out uint lpTotalBytesAvail,
-        out uint lpBytesLeftThisMessage);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GetStdHandle(int nStdHandle);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint GetFileType(IntPtr hFile);
-
-    private const int StdInputHandle = -10;
-    private const uint FileTypePipe = 0x0003;
-    internal const int ErrorBrokenPipe = 109;   // ERROR_BROKEN_PIPE
-    internal const int ErrorNoData = 232;       // ERROR_NO_DATA (write end closed)
-
-    /// <summary>
-    /// Starts the stdin pipe monitor. Returns null if stdin is not a pipe
-    /// (terminal, debugger, file redirection) since those cases don't need
-    /// broken-pipe detection.
-    /// </summary>
-    public static Timer? Start(IHostApplicationLifetime lifetime) =>
-        Start(lifetime, GetStdHandle(StdInputHandle));
-
-    internal static Timer? Start(IHostApplicationLifetime lifetime, IntPtr handle)
-    {
-        if (handle == IntPtr.Zero || handle == new IntPtr(-1))
-            return null;
-
-        if (GetFileType(handle) != FileTypePipe)
-            return null;
-
-        return StartCore(lifetime, handle);
-    }
-
-    internal static Timer StartCore(IHostApplicationLifetime lifetime, IntPtr pipeHandle,
-        TimeSpan? pollInterval = null)
-    {
-        var interval = pollInterval ?? TimeSpan.FromSeconds(5);
-        return new Timer(_ =>
-        {
-            if (!PeekNamedPipe(pipeHandle, IntPtr.Zero, 0, IntPtr.Zero, out uint _, out uint _))
-            {
-                var error = Marshal.GetLastWin32Error();
-                if (error is ErrorBrokenPipe or ErrorNoData)
-                    lifetime.StopApplication();
-            }
-        }, null, interval, interval);
     }
 }

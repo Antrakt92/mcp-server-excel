@@ -7,11 +7,11 @@ Describe affected behavior and contracts, migration or partial-state/recovery
 consequences, and documentation changes. MCP Server and `excelcli` are equal
 entry points: explain any intentional difference.
 For contract/generator changes, follow
-[Core guidance](https://github.com/sbroenne/mcp-server-excel/blob/main/src/ExcelMcp.Core/AGENTS.md)
+[Core guidance](https://github.com/Antrakt92/mcp-server-excel/blob/main/src/ExcelMcp.Core/AGENTS.md)
 and record the generated surfaces inspected.
 
 ## Evidence
-Follow [AGENTS.md](https://github.com/sbroenne/mcp-server-excel/blob/main/AGENTS.md)
+Follow [AGENTS.md](https://github.com/Antrakt92/mcp-server-excel/blob/main/AGENTS.md)
 and the applicable nested guides. List each exact command and its result
 (passed, failed, or not run); include the changed-area plan and explain gaps.
 For behavior fixes, identify the regression that failed before the fix and what
@@ -27,7 +27,7 @@ Record independent complete-branch review findings and their disposition,
 followed by `ponytail-review` when available. Address and resolve review threads
 or record why no change is appropriate. Never bypass Git hooks.
 
-Link the [changeset](https://github.com/sbroenne/mcp-server-excel/blob/main/.changeset/README.md)
+Link the [changeset](https://github.com/Antrakt92/mcp-server-excel/blob/main/.changeset/README.md)
 for user-visible changes, or explain why this is internal/docs/tests/CI-only
 and uses `skip-changelog`. Versions and changelogs are release-generated.
 

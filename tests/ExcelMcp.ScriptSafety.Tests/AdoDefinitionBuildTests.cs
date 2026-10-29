@@ -9,6 +9,12 @@ namespace Sbroenne.ExcelMcp.ScriptSafety.Tests;
 [Trait("Feature", "PreCommit")]
 public sealed class AdoDefinitionBuildTests
 {
+    private const string ImporterDefaults = """
+        if (-not [string]::IsNullOrWhiteSpace($env:AdoTypeLibraryImporterPath)) {
+            $PSDefaultParameterValues['Import-AdoDefinitions.ps1:ImporterPath'] = $env:AdoTypeLibraryImporterPath
+        }
+        """;
+
     [Theory]
     [InlineData("-ImporterPath '.\\missing-ado-importer.exe'", "TlbImp.exe is missing")]
     [InlineData("-TypeLibraryPath '.\\missing-ado-definitions.tlb'", "Windows ADO 2.8 definitions are missing")]
@@ -16,7 +22,7 @@ public sealed class AdoDefinitionBuildTests
     [InlineData("-ImporterPath (Join-Path $env:CommonProgramFiles 'System\\ado\\msado15.dll')", "Expected Microsoft TlbImp.exe 4.8.9037.0")]
     public async Task Import_RejectsMissingAndUnsignedInputs(string arguments, string expected)
     {
-        var run = await ValidationSelectionTests.RunAsync($$"""
+        var run = await ValidationSelectionTests.RunAsync(ImporterDefaults + Environment.NewLine + $$"""
             try {
                 & .\scripts\Import-AdoDefinitions.ps1 -ValidateOnly {{arguments}}
                 throw 'Invalid import inputs were accepted.'
@@ -36,7 +42,7 @@ public sealed class AdoDefinitionBuildTests
         {
             string first = Path.Combine(directory, "first", "ADODB.dll");
             string second = Path.Combine(directory, "second", "ADODB.dll");
-            var run = await ValidationSelectionTests.RunAsync($$"""
+            var run = await ValidationSelectionTests.RunAsync(ImporterDefaults + Environment.NewLine + $$"""
                 & .\scripts\Import-AdoDefinitions.ps1 -OutputPath '{{first.Replace("'", "''", StringComparison.Ordinal)}}'
                 & .\scripts\Import-AdoDefinitions.ps1 -OutputPath '{{second.Replace("'", "''", StringComparison.Ordinal)}}'
                 """);

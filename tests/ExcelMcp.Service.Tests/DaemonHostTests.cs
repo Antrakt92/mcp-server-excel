@@ -17,7 +17,7 @@ public sealed class DaemonHostTests
 
     public static TheoryData<string> SessionlessWorkCommands => new()
     {
-        "session.open", "session.create", "session.test", "service.shutdown",
+        "session.open", "session.create", "session.test",
         "diag.validate-params", "settings.get-pq-tracing", "settings.set-pq-tracing",
         "settings.get-native-query-approval", "settings.set-native-query-approval",
         "powerquerytrace.list", "powerquerytrace.summarize",
@@ -127,7 +127,7 @@ public sealed class DaemonHostTests
                 Assert.True(await entered.WaitAsync(TimeSpan.FromSeconds(5)),
                     $"Work request {index} did not reach the handler.");
             }
-            foreach (var command in PressureProbeCommands.Take(3))
+            foreach (var command in PressureProbeCommands.Take(3).Append("service.shutdown"))
             {
                 using var client = new ServiceClient(pipeName);
                 Assert.True((await client.SendAsync(new ServiceRequest { Command = command },
@@ -459,7 +459,7 @@ public sealed class DaemonHostTests
     }
 
     [Fact(Timeout = 15000)]
-    public async Task Shutdown_ResponseArrivesBeforeHostDrainsOpenConnection()
+    public async Task Shutdown_ResponseArrivesAndHostExitsWithClientStillConnected()
     {
         var pipeName = $"excelmcp-daemon-host-{Guid.NewGuid():N}";
         using var delays = new ControlledDelay();
@@ -488,9 +488,7 @@ public sealed class DaemonHostTests
                 Assert.Equal(TimeSpan.FromMilliseconds(100), shutdownDelay.Duration);
                 shutdownDelay.Complete();
                 await host.WaitForAcceptLoopStoppedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.False(
-                    runTask.IsCompleted,
-                    "The host must drain the retained client connection after sending the shutdown response.");
+                await runTask.WaitAsync(TimeSpan.FromSeconds(3));
             }
             finally
             {
@@ -498,6 +496,85 @@ public sealed class DaemonHostTests
             }
 
             await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task Shutdown_ClosesRetainedIdleClientAfterGraceWithoutWaitingForPeer()
+    {
+        var pipeName = $"excelmcp-idle-shutdown-{Guid.NewGuid():N}";
+        using var delays = new ControlledDelay();
+        using var host = new DaemonHost(
+            static _ => Task.FromResult(new ServiceResponse { Success = true }),
+            delay: delays.DelayAsync);
+        var runTask = host.RunAsync(pipeName);
+        using var pipe = ServiceSecurity.CreateClient(pipeName);
+        await pipe.ConnectAsync(5000);
+        var proxy = JsonRpc.Attach<IExcelDaemonRpc>(pipe);
+        try
+        {
+            Assert.True((await proxy.ProcessCommandAsync(new ServiceRequest { Command = "service.ping" })).Success);
+            host.RequestShutdown();
+            await host.WaitForAcceptLoopStoppedAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var grace = await delays.TakeAsync();
+            Assert.Equal(DaemonHost.ConnectionDrainGrace, grace.Duration);
+            Assert.False(runTask.IsCompleted);
+            grace.Complete();
+            await runTask.WaitAsync(TimeSpan.FromSeconds(3));
+            await Assert.ThrowsAnyAsync<Exception>(() => proxy.ProcessCommandAsync(
+                new ServiceRequest { Command = "service.ping" }).WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            ((IDisposable)proxy).Dispose();
+            host.RequestShutdown();
+            await runTask.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task Shutdown_StopsTransportButDoesNotCompleteOrCancelOriginalHandler()
+    {
+        var pipeName = $"excelmcp-pending-shutdown-{Guid.NewGuid():N}";
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var abandoned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var work = new TaskCompletionSource<ServiceResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var delays = new ControlledDelay();
+        using var host = new DaemonHost(async _ =>
+        {
+            started.TrySetResult();
+            try { return await work.Task; }
+            finally { finished.TrySetResult(); }
+        }, delay: delays.DelayAsync, requestAbandoned: (_, _) => abandoned.TrySetResult());
+        var runTask = host.RunAsync(pipeName);
+        using var pipe = ServiceSecurity.CreateClient(pipeName);
+        await pipe.ConnectAsync(5000);
+        var proxy = JsonRpc.Attach<IExcelDaemonRpc>(pipe);
+        var pending = proxy.ProcessCommandAsync(new ServiceRequest { Command = "sheet.list", SessionId = "owned" });
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            host.RequestShutdown();
+            await host.WaitForAcceptLoopStoppedAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var grace = await delays.TakeAsync();
+            Assert.Equal(DaemonHost.ConnectionDrainGrace, grace.Duration);
+            grace.Complete();
+            await runTask.WaitAsync(TimeSpan.FromSeconds(3));
+            await abandoned.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(work.Task.IsCompleted);
+            Assert.False(finished.Task.IsCompleted);
+            work.SetResult(new ServiceResponse { Success = true });
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Assert.ThrowsAnyAsync<Exception>(() => pending.WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            work.TrySetResult(new ServiceResponse { Success = true });
+            ((IDisposable)proxy).Dispose();
+            host.RequestShutdown();
+            await runTask.WaitAsync(TimeSpan.FromSeconds(3));
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
         }
     }
 

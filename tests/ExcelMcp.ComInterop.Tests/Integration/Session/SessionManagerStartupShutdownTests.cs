@@ -76,7 +76,7 @@ public sealed class SessionManagerStartupShutdownTests
                 Assert.False(opened);
                 Assert.Null(session);
                 Assert.Equal(0, manager.ActiveSessionCount);
-                Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths"));
+                Assert.Empty(GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths"));
                 if (createNew) Assert.False(File.Exists(path));
                 owned.AssertAllExited();
             }
@@ -127,7 +127,7 @@ public sealed class SessionManagerStartupShutdownTests
         using var owned = new OwnedExcelProcessScope();
         using var startupReached = new ManualResetEventSlim();
         using var releaseStartup = new ManualResetEventSlim();
-        var paths = GetField<ConcurrentDictionary<string, string>>(manager, "_activeFilePaths");
+        var paths = GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths");
         var sessions = GetField<ConcurrentDictionary<string, IExcelBatch>>(manager, "_activeSessions");
         SessionManager.ExcelProcessIdentityTracked += HoldStartup;
         var creation = Task.Run(() => createNew

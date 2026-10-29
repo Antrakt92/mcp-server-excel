@@ -35,83 +35,54 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                // Get actual address from Excel
+                ct.ThrowIfCancellationRequested();
+                var (rowCount, columnCount) = RequireReadRectangle(range);
+                RangeReadWindow.EnsureCellLimit(rowCount, columnCount, RangeReadWindow.MaximumPageCells,
+                    "Use get-format-summary for aggregate number formats or smaller explicit rectangles; no formatting was inspected.");
                 result.RangeAddress = range.Address;
-
-                // Get number formats - Excel COM behavior:
-                // - Single cell: returns string
-                // - Multiple cells, all same format: returns string
-                // - Multiple cells, mixed formats: returns DBNull (must read cell-by-cell)
-                object numberFormats = range.NumberFormat;
-
-                // Get dimensions
-                (int rowCount, int columnCount) = RangeHelpers.GetDimensions(range);
-
                 result.RowCount = rowCount;
                 result.ColumnCount = columnCount;
-
-                // Check if we have mixed formats (DBNull or null)
-                if (numberFormats is null or DBNull)
+                var budget = new RangeReadBudget();
+                budget.ReserveGrid(rowCount, columnCount, false);
+                budget.AddScalar(result.FilePath);
+                budget.AddScalar(result.SheetName);
+                budget.AddScalar(result.RangeAddress);
+                object? numberFormats = range.NumberFormat;
+                Excel.Range? cells = null;
+                try
                 {
-                    // Mixed formats - must read cell-by-cell
-                    Excel.Range? cells = null;
-                    try
+                    if (numberFormats is null or DBNull) cells = range.Cells;
+                    for (int row = 0; row < rowCount; row++)
                     {
-                        cells = range.Cells;
-                        for (int row = 1; row <= rowCount; row++)
+                        ct.ThrowIfCancellationRequested();
+                        var rowList = new List<string>(columnCount);
+                        for (int column = 0; column < columnCount; column++)
                         {
-                            var rowList = new List<string>();
-                            for (int col = 1; col <= columnCount; col++)
+                            ct.ThrowIfCancellationRequested();
+                            string format;
+                            if (cells is not null)
                             {
                                 Excel.Range? cell = null;
                                 try
                                 {
-                                    cell = (Excel.Range)cells[row, col];
-                                    object? numberFormat = cell.NumberFormat;
-                                    string format = numberFormat?.ToString() ?? "General";
-                                    rowList.Add(format);
+                                    cell = cells[row + 1, column + 1];
+                                    format = cell.NumberFormat as string
+                                        ?? throw new InvalidOperationException("Excel returned an indeterminate number format for a single cell.");
                                 }
-                                finally
-                                {
-                                    ComUtilities.Release(ref cell);
-                                }
+                                finally { ComUtilities.Release(ref cell); }
                             }
-                            result.Formats.Add(rowList);
-                        }
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref cells);
-                    }
-                }
-                else if (numberFormats is string formatStr)
-                {
-                    // All cells have same format
-                    for (int row = 0; row < rowCount; row++)
-                    {
-                        var rowList = new List<string>();
-                        for (int col = 0; col < columnCount; col++)
-                        {
-                            rowList.Add(formatStr);
-                        }
-                        result.Formats.Add(rowList);
-                    }
-                }
-                else
-                {
-                    // Should be a 2D array (rare case). COM arrays are 1-based.
-                    object[,] formats = (object[,])numberFormats;
-                    for (int row = 1; row <= rowCount; row++)
-                    {
-                        var rowList = new List<string>();
-                        for (int col = 1; col <= columnCount; col++)
-                        {
-                            var format = formats[row, col]?.ToString() ?? "General";
+                            else
+                            {
+                                format = (numberFormats is string uniform ? uniform : GridEntry(numberFormats, row, column)) as string
+                                    ?? throw new InvalidOperationException("Excel returned an unsupported number-format value.");
+                            }
+                            budget.AddScalar(format);
                             rowList.Add(format);
                         }
                         result.Formats.Add(rowList);
                     }
                 }
+                finally { ComUtilities.Release(ref cells); }
 
                 result.Success = true;
                 return result;

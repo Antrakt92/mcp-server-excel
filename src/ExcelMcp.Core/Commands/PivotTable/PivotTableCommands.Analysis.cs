@@ -19,28 +19,70 @@ public partial class PivotTableCommands
         return batch.Execute((ctx, ct) =>
         {
             Excel.PivotTable? pivot = null;
+            Excel.PivotFields? rowFields = null;
             Excel.Range? tableRange = null;
+            Excel.Range? reportRange = null;
 
             try
             {
                 pivot = FindPivotTable(ctx.Book, pivotTableName);
+                rowFields = (Excel.PivotFields)pivot.RowFields;
                 tableRange = pivot.TableRange2;
+                reportRange = pivot.TableRange1;
 
                 var values = ExcelValueNormalizer.Normalize((object?)tableRange.Value2);
+                var report = ExcelValueNormalizer.Normalize((object?)reportRange.Value2);
+                var headerRow = report.Values.FirstOrDefault() ?? [];
+                bool hasRowFields = rowFields.Count > 0;
+                bool hasGrandTotalRow = hasRowFields && pivot.ColumnGrand && report.RowCount > 1;
+                int firstDataColumn = hasRowFields ? 1 : 0;
+                var columnHeaders = headerRow
+                    .Skip(firstDataColumn)
+                    .Select(value => value?.ToString() ?? string.Empty)
+                    .ToList();
+                int lastDataRow = report.RowCount;
+                if (hasGrandTotalRow)
+                    lastDataRow--;
+
+                var rowHeaders = hasRowFields
+                    ? report.Values
+                        .Skip(1)
+                        .Take(lastDataRow - 1)
+                        .Select(row => row.Count > 0 ? row[0]?.ToString() ?? string.Empty : string.Empty)
+                        .ToList()
+                    : [];
+                var grandTotals = new Dictionary<string, object?>(StringComparer.Ordinal);
+                if (hasGrandTotalRow)
+                {
+                    var totalRow = report.Values[^1];
+                    for (int columnIndex = firstDataColumn;
+                         columnIndex < headerRow.Count && columnIndex < totalRow.Count;
+                         columnIndex++)
+                    {
+                        var header = headerRow[columnIndex]?.ToString();
+                        if (!string.IsNullOrWhiteSpace(header))
+                            grandTotals[header] = totalRow[columnIndex];
+                    }
+                }
 
                 return new PivotTableDataResult
                 {
                     Success = true,
                     PivotTableName = pivotTableName,
                     Values = values.Values,
+                    ColumnHeaders = columnHeaders,
+                    RowHeaders = rowHeaders,
                     DataRowCount = values.RowCount,
                     DataColumnCount = values.ColumnCount,
+                    GrandTotals = grandTotals,
                     FilePath = batch.WorkbookPath
                 };
             }
             finally
             {
+                ComUtilities.Release(ref reportRange);
                 ComUtilities.Release(ref tableRange);
+                ComUtilities.Release(ref rowFields);
                 ComUtilities.Release(ref pivot);
             }
         });
@@ -119,7 +161,7 @@ public partial class PivotTableCommands
                 pivotField = pivotFields.Item(1);
 
                 failurePhase = "read-filter-state";
-                ReadReportFilterSelection(cubeField, pivotField, result, ct);
+                ReadReportFilterSelection(cubeField, pivotField, result, ct, batch as IExcelBatchWindowControl);
                 result.Success = true;
             }
             catch (Exception ex) when (CreatedObjectFailure.CanReport(ex))
@@ -271,7 +313,7 @@ public partial class PivotTableCommands
                 }
 
                 failurePhase = "read-filter-state";
-                ReadReportFilterSelection(cubeField, pivotField, result, ct);
+                ReadReportFilterSelection(cubeField, pivotField, result, ct, batch as IExcelBatchWindowControl);
                 result.Success = true;
             }
             catch (Exception ex) when (CreatedObjectFailure.CanReport(ex))
@@ -287,7 +329,7 @@ public partial class PivotTableCommands
                     failurePhase = "read-filter-state-after-failure";
                     try
                     {
-                        ReadReportFilterSelection(cubeField, pivotField, result, ct);
+                        ReadReportFilterSelection(cubeField, pivotField, result, ct, batch as IExcelBatchWindowControl);
                     }
                     catch (Exception readException) when (CreatedObjectFailure.CanReport(readException))
                     {
@@ -377,7 +419,8 @@ public partial class PivotTableCommands
 
     private static void ReadReportFilterSelection(
         Excel.CubeField cubeField, Excel.PivotField pivotField,
-        PivotReportFilterResult result, CancellationToken cancellationToken)
+        PivotReportFilterResult result, CancellationToken cancellationToken,
+        IExcelBatchWindowControl? windowControl)
     {
         result.FieldArea = PivotFieldArea.Filter;
         result.MultipleSelectionEnabled = cubeField.EnableMultiplePageItems;
@@ -385,7 +428,7 @@ public partial class PivotTableCommands
         {
             string currentPageName = pivotField.CurrentPageName;
             result.ShowAll = PivotTableHelpers.IsAllOlapReportFilterMember(
-                cubeField, currentPageName, cancellationToken);
+                cubeField, currentPageName, cancellationToken, windowControl);
             result.SelectedItems = result.ShowAll ? [] : [currentPageName];
             result.SelectionStateAvailable = true;
             return;

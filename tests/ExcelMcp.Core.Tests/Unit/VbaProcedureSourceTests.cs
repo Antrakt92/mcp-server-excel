@@ -10,6 +10,25 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 [Trait("RequiresExcel", "false")]
 public sealed class VbaProcedureSourceTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ParseSingleProcedure_RejectsUnsupportedPhysicalSourceBeforeMutation(bool nul)
+    {
+        string body = nul ? "Debug.Print \"bad\0value\"" : "'" + new string('x', 1023);
+        Assert.Throws<ArgumentException>(() => VbaProcedureSource.ParseSingleProcedure("Sub F()\n" + body + "\nEnd Sub"));
+    }
+
+    [Theory]
+    [InlineData("10 Rem harmless: End Sub: Public Sub Extra()")]
+    [InlineData("If True Then Rem harmless: End Sub: Public Sub Extra()")]
+    [InlineData("If True Then x = 1 Else Rem harmless: End Sub: Public Sub Extra()")]
+    public void ParseSingleProcedure_NumberedOrConditionalRemIsComment(string comment)
+    {
+        var result = VbaProcedureSource.ParseSingleProcedure("Public Sub KeepMe()\n" + comment + "\nEnd Sub");
+        Assert.Equal("KeepMe", result.Name);
+    }
+
     [Fact]
     public void ParseSingleProcedure_MultilineFunctionSignature_ReturnsNameAndKind()
     {

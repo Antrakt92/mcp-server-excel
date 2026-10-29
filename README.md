@@ -1,134 +1,103 @@
-# ExcelMcp - MCP Server for Microsoft Excel
+# ExcelMCP — Antrakt Fork
 
-[![VS Code Marketplace Installs](https://vsmarketplacebadges.dev/installs-short/sbroenne.excel-mcp.svg?label=VS%20Code%20Installs)](https://marketplace.visualstudio.com/items?itemName=sbroenne.excel-mcp)
-[![Downloads](https://img.shields.io/github/downloads/sbroenne/mcp-server-excel/total?label=GitHub%20Downloads)](https://github.com/sbroenne/mcp-server-excel/releases)
+Automate desktop Microsoft Excel through MCP or the `excelcli` command line, using Excel's native COM interface.
 
-[![CI Gate](https://github.com/sbroenne/mcp-server-excel/actions/workflows/ci.yml/badge.svg)](https://github.com/sbroenne/mcp-server-excel/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/sbroenne/mcp-server-excel)](https://github.com/sbroenne/mcp-server-excel/releases/latest)
+This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **3.0.0 fork release line is based on upstream 2.6.0**. It adds persistent read-only audit sessions, bounded range inspection and guarded VBA workflows while retaining fork transport shutdown, request admission and connection drain. This is a major upgrade from fork 2.5.4 because CLI result fields and accepted options changed; see [migration](#migrate-from-fork-254).
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![.NET](https://img.shields.io/badge/.NET-10-blue.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
-[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://github.com/sbroenne/mcp-server-excel)
-[![Built with Copilot](https://img.shields.io/badge/Built%20with-GitHub%20Copilot-0366d6.svg)](https://copilot.github.com/)
+**Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[**Website**](https://excelmcpserver.dev/) ·
-[**Installation**](https://excelmcpserver.dev/installation/) ·
-[**Features**](https://excelmcpserver.dev/features/) ·
-[**Troubleshooting**](https://excelmcpserver.dev/troubleshooting/) ·
-[**2-minute demo**](https://youtu.be/wbw3-hPcE2o)
+[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.0.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
 
-**Automate real Microsoft Excel with AI.** Excel MCP Server lets GitHub Copilot,
-Claude, ChatGPT, and other agents control Excel through natural-language
-requests—using either MCP or a token-efficient CLI.
+## Choose a package
 
-Unlike file-parser tools, ExcelMcp drives the **actual Excel application** through
-its official COM API. It can refresh Power Query, recalculate formulas, evaluate
-DAX, run VBA and Python `=PY()`, and preserve PivotTables, charts, macros, the
-Data Model, and workbook formatting.
+| Package | Use |
+| --- | --- |
+| [ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
+| [ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
-**63 MCP tools across 33 feature areas, with 425 operations**, cover end-to-end Excel automation.
+Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
-> [!IMPORTANT]
-> Requires **Windows**, **Microsoft Excel 2016 or later**, and an interactive
-> desktop. It is not intended for Linux, macOS, or server-side batch processing.
-
-## 🚀 Get Started
-
-| Use case | Recommended path |
-|---|---|
-| **VS Code** | [Install the extension](https://marketplace.visualstudio.com/items?itemName=sbroenne.excel-mcp) |
-| **Claude Desktop or another MCP client** | [Install the MCP Server](https://excelmcpserver.dev/installation-mcp-server/) |
-| **Coding agents (fewer AI tokens)** | [Install the CLI](https://excelmcpserver.dev/installation-cli/) |
-| **Not sure which to choose?** | [Read the installation overview](https://excelmcpserver.dev/installation/) |
-
-For **GitHub Copilot CLI**, install either plugin from the
-[Awesome Copilot Excel listings](https://github.com/github/awesome-copilot/blob/main/plugins/external.json):
+PowerShell download example:
 
 ```powershell
-copilot plugin install excel-mcp@awesome-copilot
-# Or, for command-line Excel automation:
-copilot plugin install excel-cli@awesome-copilot
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.0'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.0.0-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.0.0-win-x64.zip'
+Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
+Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
+Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
+Get-FileHash .\ExcelMcp-Antrakt-*-3.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 
-Close open Excel workbooks before starting; ExcelMcp requires exclusive access
-while automating them.
+Compare each hash with `SHA256SUMS` before extracting. Keep releases in separate folders when upgrading. See [recovery and verification](docs/fork/RECOVERY.md) for the full procedure.
 
-## What You Can Automate
+## Connect an MCP client
 
-- **[Data & analytics](https://excelmcpserver.dev/features/data-analytics/):**
-  Power Query, DAX, Power Pivot, Excel Tables, PivotTables, and data connections.
-- **[Cells & workbooks](https://excelmcpserver.dev/features/cells-workbooks/):**
-  ranges, formulas, formatting, worksheets, files, calculation, and named ranges.
-- **[Charts & visuals](https://excelmcpserver.dev/features/charts-visuals/):**
-  charts, slicers, conditional formatting, screenshots, drawings, and sparklines.
-- **[Automation & advanced](https://excelmcpserver.dev/features/automation-advanced/):**
-  VBA, Python in Excel, Goal Seek, scenarios, data tables, windows, and XML Maps.
+Extract the MCP ZIP, then configure your client to launch `Sbroenne.ExcelMcp.McpServer.exe`. For clients using an `mcpServers` configuration, the following is an example; replace the executable path with your extraction location:
 
-Explore the [capabilities behind all 425 operations](https://excelmcpserver.dev/features/).
-Current command details come from CLI help or the MCP tool descriptions.
-
-## See It in Action
-
-[![A sales table, regional summary, and chart created in the real Excel application by Excel MCP Server](https://excelmcpserver.dev/assets/images/excel-demo-table-chart.png)](https://excelmcpserver.dev/use-cases/)
-
-Ask in plain language:
-
-- *"Import products.csv with Power Query and load it to the Data Model."*
-- *"Create a PivotTable showing revenue by region, then add a column chart."*
-- *"Use Goal Seek to find the price that produces $100,000 profit."*
-- *"Show me Excel while you work."*
-
-Because Excel performs the work, you can inspect results live and continue editing
-the workbook normally.
-
-[See more examples and use cases](https://excelmcpserver.dev/use-cases/).
-
-## MCP Server or CLI?
-
-Both entry points expose the same Excel commands and behavior, so the choice is
-technical. Coding agents can use either one.
-
-| Interface | Works with | Why |
-|---|---|---|
-| **MCP Server** | Any MCP-compatible client | Tool discovery and persistent sessions |
-| **CLI (`excelcli`)** | Agents that can run terminal commands | Built-in help without loading MCP tool definitions, usually with fewer AI tokens |
-
-The MCP Server calls the ExcelMcp service in-process. The CLI uses a background
-daemon so workbook sessions persist across commands.
-
-```text
-AI assistant or script
-        │
-   MCP Server / CLI
-        │
- Shared Excel commands
-        │
- Real Excel COM API
+```json
+{
+  "mcpServers": {
+    "excel-antrakt": {
+      "command": "C:/Tools/ExcelMCP/MCP/Sbroenne.ExcelMcp.McpServer.exe",
+      "env": { "EXCELMCP_TELEMETRY_MODE": "off" }
+    }
+  }
+}
 ```
 
-[Read the architecture](docs/ARCHITECTURE.md) or browse the
-[MCP Server](https://excelmcpserver.dev/mcp-server/) and
-[CLI](https://excelmcpserver.dev/cli/) guides.
+Restart or reconnect that client connection after changing its executable. Updating files does not replace a server already running in memory. Client configuration formats vary; use the equivalent local stdio command setting in your client.
 
-## ⭐ GitHub Star History
+## Use the CLI
 
-[![GitHub stars over time for ExcelMcp](https://excelmcpserver.dev/assets/images/star-history.svg)](https://github.com/sbroenne/mcp-server-excel/stargazers)
+Extract the CLI ZIP and run:
 
-## 📋 Additional Information
+```powershell
+.\excelcli.exe --help
+```
 
-[Documentation](https://excelmcpserver.dev/) ·
-[Changelog](https://excelmcpserver.dev/changelog/) ·
-[Contributing](https://excelmcpserver.dev/contributing/) ·
-[Security](https://excelmcpserver.dev/security/) ·
-[Privacy](https://excelmcpserver.dev/privacy/)
+MCP and CLI provide the same underlying Excel capabilities through different interfaces. Their command names and parameter spelling differ; use current CLI help or the connected MCP tool descriptions.
 
-**License:** MIT License - see [LICENSE](LICENSE) file
+## Migrate from fork 2.5.4
 
-## Related Projects
+CLI commands and batch entries now use a common JSON envelope. Read workbook results under `data`, failure details under `error`, and operation time under `durationMs`; check top-level `success` and the process exit code. Batch entries retain `index`. Update scripts that used the old result wrapper or command summary.
 
-Other projects by the author:
+Replace CLI `--sheet` with `--sheet-name` and `--range` with `--range-address`. The old aliases are rejected. Optional result-field selection has also been removed; use current action help to update saved requests. MCP clients should rediscover the tool surface after reconnecting; replies continue to provide JSON text and structured content.
 
-- [PowerPoint MCP Server](https://powerpointmcpserver.dev/) — AI-powered PowerPoint automation via MCP, the sister project to this one
-- [pytest-skill-engineering](https://github.com/sbroenne/pytest-skill-engineering) — LLM-powered testing framework for AI agents
-- [Windows MCP Server](https://windowsmcpserver.dev/) — AI-powered Windows automation via MCP
-- [OBS Studio MCP Server](https://github.com/sbroenne/mcp-server-obs) — AI-powered OBS Studio automation
+Normal file opens disable VBA macros. Running a macro does not enable them: the separate `file enable-macros` operation requires explicit approval and permission to reopen a saved owned workbook (CLI: `session enable-macros --approved --allow-reopen`). Audit sessions reject macro execution, workbook edits, calculation and saving. See [agent workflows](docs/fork/AGENT-WORKFLOWS.md) and [upgrade/recovery](docs/fork/RECOVERY.md) before continuing an existing automation.
+
+## What this fork changes
+
+- MCP shutdown observes stdin EOF, terminal stdout failure and owning-client exit without a competing stdin reader.
+- Stdout remains a single JSON-RPC protocol stream.
+- MCP request admission is bounded through the underlying operation and cancellation cleanup.
+- CLI shutdown drains client connections within a bounded grace period; retained idle clients cannot hold the daemon open indefinitely.
+- MCP response conversion shares its normalized JSON parse between result construction and error classification.
+- Persistent audit sessions refuse agent edits, explicit calculation, macros and saving.
+- Bounded range pages and formatting summaries avoid materializing oversized reads.
+- Guarded whole-module VBA replacement detects stale source; typed invocation returns bounded scalar or rectangular results.
+
+Excel remains the calculation and workbook engine. Read [the fork scope](docs/fork/OVERVIEW.md) for version boundaries and validation limits. Release-specific results belong in the release verification receipt (`VERIFICATION-RESULTS.json`); measurements from the older 2.4.1 patch are not performance evidence for this release.
+
+### Workbook safety
+
+Discover and attach to an already-open workbook when supported; do not reopen it just to create another automation session. Operate only on the intended workbook in your own Windows session.
+
+Upstream 2.6.0 ownership rules apply: normal shutdown closes saved workbooks opened by the host, leaves unsaved workbooks open and visible without saving or discarding them, and leaves attached workbooks untouched. Cancellation stops the caller's wait; it does not authorize saving, closing, discarding or rolling back workbook changes. Inspect the current session and Excel window before retrying. Excel AutoSave may independently persist edits.
+
+Do not terminate unrelated Excel or MCP processes during recovery. See [recovery](docs/fork/RECOVERY.md).
+
+### Command coverage
+
+The combined catalogue provides **63 MCP tools across 33 feature areas, with 434 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 434 operations. These counts are checked against the compiled contracts.
+
+## Source and contributions
+
+The fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). Report fork-specific lifecycle or packaging problems in [this fork's issue tracker](https://github.com/Antrakt92/mcp-server-excel/issues), with the release version and a minimal reproduction. Exclude workbook contents, credentials, private paths and unsanitized logs.
+
+Contributions target `main`; start with [the contributor guide](CONTRIBUTING.md). Report suspected vulnerabilities through [the security policy](SECURITY.md), rather than public issues. Build and verification ownership is described in [the fork overview](docs/fork/OVERVIEW.md). The original upstream README is preserved in [README.upstream.md](README.upstream.md); its upstream installers and marketplace links install upstream distributions.
+
+## Credits and license
+
+ExcelMcp was created by **Stefan Broenner** and its upstream contributors. This fork retains the original [MIT license](LICENSE) and copyright notice. Fork maintenance is by **Antrakt92**. This is an independent project and does not claim endorsement by the upstream author, Microsoft or OpenAI. See [FORK-NOTICE.md](FORK-NOTICE.md).

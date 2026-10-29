@@ -212,8 +212,6 @@ public class McpToolGenerator : IIncrementalGenerator
         GenerateToolMethod(sb, info, hasProgress);
 
         sb.AppendLine("}");
-        sb.AppendLine();
-        GenerateOutputSchemaClass(sb, info);
         return sb.ToString();
     }
 
@@ -286,7 +284,7 @@ public class McpToolGenerator : IIncrementalGenerator
         var title = info.McpToolTitle ?? $"Excel {info.CategoryPascal} Operations";
         var destructive = info.McpToolDestructive ? "true" : "false";
         var readOnly = info.McpToolReadOnly ? "true" : "false";
-        sb.AppendLine($"    [McpServerTool(Name = \"{info.McpToolName}\", Title = \"{title}\", Destructive = {destructive}, ReadOnly = {readOnly}, UseStructuredContent = true, OutputSchemaType = typeof({GetOutputSchemaClassName(info)}))]");
+        sb.AppendLine($"    [McpServerTool(Name = \"{info.McpToolName}\", Title = \"{title}\", Destructive = {destructive}, ReadOnly = {readOnly})]");
 
         var category = info.McpToolCategory ?? "data";
         sb.AppendLine($"    [McpMeta(\"category\", \"{category}\")]");
@@ -353,111 +351,9 @@ public class McpToolGenerator : IIncrementalGenerator
         sb.AppendLine("    }");
     }
 
-    private static void GenerateOutputSchemaClass(StringBuilder sb, ServiceInfo info)
-    {
-        sb.AppendLine($"internal sealed class {GetOutputSchemaClassName(info)}");
-        sb.AppendLine("{");
-
-        foreach (var property in GetOutputSchemaProperties(info))
-        {
-            if (property.Name == "SessionId")
-                sb.AppendLine("    [JsonPropertyName(\"workbook_session_id\")]");
-            sb.AppendLine("    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]");
-            sb.AppendLine($"    public {property.TypeName} {property.Name} {{ get; set; }}");
-        }
-
-        sb.AppendLine("}");
-    }
-
-    private static string GetOutputSchemaClassName(ServiceInfo info) =>
-        $"{GetToolIdentifier(info)}ToolOutputSchema";
-
-    private static OutputSchemaProperty[] GetOutputSchemaProperties(ServiceInfo info)
-    {
-        var properties = new Dictionary<string, OutputSchemaProperty>(StringComparer.Ordinal);
-        properties.Add("SessionId", new("SessionId", "string?"));
-
-        foreach (var method in info.Methods)
-        {
-            if (method.ReturnTypeSymbol is not INamedTypeSymbol returnType || !DerivesFromResultBase(returnType))
-            {
-                if (method.ReturnTypeSymbol.SpecialType != SpecialType.System_Void)
-                {
-                    var typeName = GetOptionalSchemaTypeName(method.ReturnTypeSymbol);
-                    if (properties.TryGetValue("Result", out var existing) && existing.TypeName != typeName)
-                    {
-                        properties["Result"] = new("Result", "System.Text.Json.JsonElement?");
-                    }
-                    else
-                    {
-                        properties["Result"] = new("Result", typeName);
-                    }
-                }
-
-                continue;
-            }
-
-            for (var type = returnType; type is not null; type = type.BaseType)
-            {
-                foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
-                {
-                    if (property.IsStatic || property.IsIndexer ||
-                        property.DeclaredAccessibility != Accessibility.Public || property.GetMethod is null)
-                        continue;
-                    if (HasImageResult(info) && property.Name == "ImageBase64")
-                        continue;
-
-                    var typeName = GetOptionalSchemaTypeName(property.Type);
-                    if (properties.TryGetValue(property.Name, out var existing) && existing.TypeName != typeName)
-                    {
-                        properties[property.Name] = new(property.Name, "System.Text.Json.JsonElement?");
-                    }
-                    else
-                    {
-                        properties[property.Name] = new(property.Name, typeName);
-                    }
-                }
-            }
-        }
-
-        return properties.Values
-            .OrderBy(p => p.Name == "Success" ? 0 : 1)
-            .ThenBy(p => p.Name, StringComparer.Ordinal)
-            .ToArray();
-    }
-
-    private static string GetOptionalSchemaTypeName(ITypeSymbol type)
-    {
-        var typeName = TypeNameHelper.GetTypeName(type, type.NullableAnnotation);
-        if (!typeName.EndsWith("?", StringComparison.Ordinal))
-            typeName += "?";
-
-        return typeName;
-    }
-
-    private static bool DerivesFromResultBase(INamedTypeSymbol type)
-    {
-        for (var current = type; current is not null; current = current.BaseType)
-        {
-            if (current.Name == "ResultBase" &&
-                current.ContainingNamespace.ToDisplayString() == "Sbroenne.ExcelMcp.Core.Models")
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static bool HasImageResult(ServiceInfo info) =>
         info.Methods.All(method => method.ReturnTypeSymbol.ToDisplayString() ==
             "Sbroenne.ExcelMcp.Core.Commands.Screenshot.ScreenshotResult");
-
-    private sealed class OutputSchemaProperty(string name, string typeName)
-    {
-        public string Name { get; } = name;
-        public string TypeName { get; } = typeName;
-    }
 
     /// <summary>
     /// Generates the method body that calls ServiceRegistry.RouteAction.

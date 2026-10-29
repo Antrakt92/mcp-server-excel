@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Xunit;
 
@@ -6,198 +6,97 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 
 [Trait("Layer", "McpServer")]
 [Trait("Category", "Unit")]
-[Trait("Feature", "StdinPipeMonitor")]
+[Trait("Feature", "ParentProcessMonitor")]
 [Trait("Speed", "Fast")]
 [Collection("Sequential")]
 [Trait("RequiresExcel", "false")]
-public sealed class StdinPipeMonitorTests
+public sealed class ParentProcessMonitorTests
 {
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CreatePipe(
-        out IntPtr hReadPipe, out IntPtr hWritePipe,
-        IntPtr lpPipeAttributes, uint nSize);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(IntPtr hObject);
+    private static Process Child() => Process.Start(new ProcessStartInfo
+    {
+        FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe",
+        Arguments = "/c ping -n 30 127.0.0.1 >nul",
+        UseShellExecute = false,
+        CreateNoWindow = true
+    }) ?? throw new InvalidOperationException("Child process did not start.");
 
     [Fact]
-    public void Start_WhenStdinIsPipe_ReturnsTimer()
+    public async Task LiveParentIsNotStoppedAndExitSignalsExactlyOnce()
     {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        var lifetime = new FakeHostApplicationLifetime();
+        using var child = Child();
+        var lifetime = new FakeLifetime();
         try
         {
-            using var timer = StdinPipeMonitor.Start(lifetime, readHandle);
-            Assert.NotNull(timer);
+            using var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)child.Id,
+                TimeSpan.FromMilliseconds(10));
+            Assert.NotNull(monitor);
+            await Task.Delay(100);
+            Assert.Equal(0, lifetime.Stops);
+            child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            await lifetime.Stopped.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(100);
+            Assert.Equal(1, lifetime.Stops);
         }
-        finally
-        {
-            CloseHandle(readHandle);
-            CloseHandle(writeHandle);
-        }
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void Start_WithInvalidHandle_ReturnsNull(int handle)
-    {
-        using var timer = StdinPipeMonitor.Start(new FakeHostApplicationLifetime(), new IntPtr(handle));
-        Assert.Null(timer);
+        finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
     }
 
     [Fact]
-    public void Start_WithFileHandle_ReturnsNull()
+    public async Task DisposeDoesNotSignalLaterParentExit()
     {
-        var path = Path.GetTempFileName();
+        using var child = Child();
+        var lifetime = new FakeLifetime();
         try
         {
-            using var file = File.OpenRead(path);
-            using var timer = StdinPipeMonitor.Start(new FakeHostApplicationLifetime(), file.SafeFileHandle.DangerousGetHandle());
-            Assert.Null(timer);
+            var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)child.Id,
+                TimeSpan.FromMilliseconds(10));
+            Assert.NotNull(monitor);
+            monitor.Dispose(); monitor.Dispose();
+            child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(100);
+            Assert.Equal(0, lifetime.Stops);
         }
-        finally
-        {
-            File.Delete(path);
-        }
+        finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
     }
 
     [Fact]
-    public async Task StartCore_WhenPipeAlreadyBroken_CallsStopApplication()
+    public void ReusedPidCannotBeMistakenForParent()
     {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        CloseHandle(writeHandle);
-
-        var lifetime = new FakeHostApplicationLifetime();
-
-        using var timer = StdinPipeMonitor.StartCore(lifetime, readHandle,
-            pollInterval: TimeSpan.FromMilliseconds(50));
-
-        try
-        {
-            await WaitForConditionAsync(
-                () => lifetime.StopCallCount > 0,
-                timeout: TimeSpan.FromSeconds(2));
-
-            Assert.True(lifetime.StopCallCount > 0,
-                "StopApplication should be called when the pipe is already broken at start");
-        }
-        finally
-        {
-            CloseHandle(readHandle);
-        }
+        var lifetime = new FakeLifetime();
+        using var self = Process.GetCurrentProcess();
+        using var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)self.Id,
+            notCreatedAfter: self.StartTime.ToUniversalTime().ToFileTimeUtc() - 1);
+        Assert.Null(monitor);
+        Assert.Equal(1, lifetime.Stops);
     }
 
     [Fact]
-    public void StartCore_WithValidPipeHandle_ReturnsTimer()
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1835",
+        Justification = "Exercises the required legacy Stream.ReadAsync override, not the Memory overload.")]
+    public async Task EofReportsOncePreservesDataAndIgnoresEmptyRead()
     {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        try
-        {
-            var lifetime = new FakeHostApplicationLifetime();
-
-            using var timer = StdinPipeMonitor.StartCore(lifetime, readHandle,
-                pollInterval: TimeSpan.FromMilliseconds(50));
-
-            Assert.NotNull(timer);
-        }
-        finally
-        {
-            CloseHandle(readHandle);
-            CloseHandle(writeHandle);
-        }
+        var stops = 0;
+        using var stream = new TransportLifetimeStream(new MemoryStream([10, 20]), () => stops++);
+        Assert.Equal(0, stream.Read([], 0, 0));
+        Assert.Equal(0, stops);
+        var buffer = new byte[4];
+        Assert.Equal(2, await stream.ReadAsync(buffer.AsMemory()));
+        Assert.Equal(new byte[] { 10, 20 }, buffer[..2]);
+        Assert.Equal(0, stops);
+        Assert.Equal(0, await stream.ReadAsync(buffer, 0, buffer.Length));
+        Assert.Equal(0, stream.Read(buffer));
+        Assert.Equal(1, stops);
     }
 
-    [Fact]
-    public async Task StartCore_WhenWriteEndCloses_CallsStopApplication()
+    private sealed class FakeLifetime : IHostApplicationLifetime
     {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        var lifetime = new FakeHostApplicationLifetime();
-
-        using var timer = StdinPipeMonitor.StartCore(lifetime, readHandle,
-            pollInterval: TimeSpan.FromMilliseconds(50));
-
-        CloseHandle(writeHandle);
-
-        try
-        {
-            await WaitForConditionAsync(
-                () => lifetime.StopCallCount > 0,
-                timeout: TimeSpan.FromSeconds(2));
-
-            Assert.True(lifetime.StopCallCount > 0,
-                "StopApplication should be called when the pipe breaks");
-        }
-        finally
-        {
-            CloseHandle(readHandle);
-        }
-    }
-
-    [Fact]
-    public async Task StartCore_WhenPipeIsHealthy_DoesNotCallStopApplication()
-    {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        var lifetime = new FakeHostApplicationLifetime();
-
-        using var timer = StdinPipeMonitor.StartCore(lifetime, readHandle,
-            pollInterval: TimeSpan.FromMilliseconds(50));
-
-        try
-        {
-            await Task.Delay(300);
-            Assert.Equal(0, lifetime.StopCallCount);
-        }
-        finally
-        {
-            CloseHandle(readHandle);
-            CloseHandle(writeHandle);
-        }
-    }
-
-    [Fact]
-    public async Task StartCore_AfterDispose_DoesNotCallStopOnPipeBreak()
-    {
-        Assert.True(CreatePipe(out var readHandle, out var writeHandle, IntPtr.Zero, 0));
-        var lifetime = new FakeHostApplicationLifetime();
-
-        var timer = StdinPipeMonitor.StartCore(lifetime, readHandle,
-            pollInterval: TimeSpan.FromMilliseconds(50));
-
-        timer.Dispose();
-        await Task.Delay(100);
-
-        CloseHandle(writeHandle);
-
-        try
-        {
-            await Task.Delay(300);
-            Assert.Equal(0, lifetime.StopCallCount);
-        }
-        finally
-        {
-            CloseHandle(readHandle);
-        }
-    }
-
-    private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (!condition() && DateTime.UtcNow < deadline)
-            await Task.Delay(25);
-    }
-
-    private sealed class FakeHostApplicationLifetime : IHostApplicationLifetime
-    {
-        private int _stopCallCount;
-
-        public int StopCallCount => Volatile.Read(ref _stopCallCount);
-
+        private int _stops;
+        public int Stops => Volatile.Read(ref _stops);
+        internal TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public CancellationToken ApplicationStarted => CancellationToken.None;
         public CancellationToken ApplicationStopping => CancellationToken.None;
         public CancellationToken ApplicationStopped => CancellationToken.None;
-
-        public void StopApplication() => Interlocked.Increment(ref _stopCallCount);
+        public void StopApplication() { Interlocked.Increment(ref _stops); Stopped.TrySetResult(); }
     }
 }

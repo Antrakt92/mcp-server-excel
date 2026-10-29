@@ -20,6 +20,7 @@ internal static class VbaProcedureSource
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
 
+        source = VbaModuleSource.Normalize(source);
         string[] physicalLines = source.Split(["\r\n", "\n", "\r"], StringSplitOptions.None);
         string? firstCodeLine = physicalLines.FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
         string? lastCodeLine = physicalLines.LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
@@ -59,6 +60,33 @@ internal static class VbaProcedureSource
         }
 
         return new VbaProcedureDeclaration(name, kind);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Procedure mutation owns observed source state. Preserve all failures including cancellation and independent read-back failure without rollback.")]
+    internal static string Replace(string moduleName, string source, Action delete, Action<string> insert,
+        Func<string> readBody, Func<string> readModule, CancellationToken cancellationToken = default)
+    {
+        string normalized = VbaModuleSource.Normalize(source);
+        ParseSingleProcedure(normalized);
+        cancellationToken.ThrowIfCancellationRequested();
+        string phase = "deleting";
+        try
+        {
+            delete();
+            phase = "inserting";
+            insert(normalized);
+            phase = "verifying";
+            cancellationToken.ThrowIfCancellationRequested();
+            string stored = readBody();
+            if (!VbaModuleSource.EquivalentReadBack(normalized, stored))
+                throw new InvalidOperationException("The procedure source read back from Excel differs from the supplied replacement.");
+            return stored;
+        }
+        catch (Exception failure)
+        {
+            throw VbaModuleSource.DescribeEditFailure(moduleName, phase, failure, readModule);
+        }
     }
 
     public static VbaProcedureDeclaration ParseProcedureHeader(string sourceLine)
@@ -192,30 +220,7 @@ internal static class VbaProcedureSource
         }
     }
 
-    private static string RemoveComment(string line)
-    {
-        bool inString = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            if (line[i] == '"')
-            {
-                if (inString && i + 1 < line.Length && line[i + 1] == '"')
-                {
-                    i++;
-                }
-                else
-                {
-                    inString = !inString;
-                }
-            }
-            else if (line[i] == '\'' && !inString)
-            {
-                return line[..i];
-            }
-        }
-
-        return line;
-    }
+    private static string RemoveComment(string line) => line[..VbaModuleSource.CommentStart(line)];
 
     private static bool HasLineContinuation(string line)
     {
