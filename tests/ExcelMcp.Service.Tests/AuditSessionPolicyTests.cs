@@ -22,6 +22,8 @@ public sealed class AuditSessionPolicyTests
     [Theory]
     [InlineData("range.set-values")]
     [InlineData("vba.run")]
+    [InlineData("vba.invoke")]
+    [InlineData("vba.replace-module")]
     [InlineData("vba.update")]
     [InlineData("workbook.save-as")]
     [InlineData("session.save")]

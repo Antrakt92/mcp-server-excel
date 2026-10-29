@@ -1180,7 +1180,8 @@ public sealed class ExcelMcpService : IDisposable
                     exception.Message,
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
-                InnerError = exception.InnerException?.Message
+                InnerError = DescribeDisconnectedInnerErrors(exception),
+                PartialState = SerializeDisconnectedVbaEditState(exception)
             };
         }
         CleanupDeadSession(sessionId);
@@ -1219,8 +1220,45 @@ public sealed class ExcelMcpService : IDisposable
             ErrorMessage = message,
             ExceptionType = ex.GetType().Name,
             HResult = TryGetFatalComHResult(ex) is { } hresult ? $"0x{hresult:X8}" : null,
-            InnerError = ex.InnerException?.Message
+            InnerError = DescribeDisconnectedInnerErrors(ex),
+            PartialState = SerializeDisconnectedVbaEditState(ex)
         };
+    }
+
+    private static string? SerializeDisconnectedVbaEditState(Exception error) =>
+        FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) : null;
+
+    private static Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException? FindVbaSourceEdit(Exception error)
+    {
+        for (var current = error; current is not null; current = current.InnerException)
+        {
+            if (current is Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException edit)
+                return edit;
+            if (current is AggregateException aggregate)
+                foreach (var cause in aggregate.InnerExceptions)
+                    if (FindVbaSourceEdit(cause) is { } nested)
+                        return nested;
+        }
+        return null;
+    }
+
+    private static string? DescribeDisconnectedInnerErrors(Exception error)
+    {
+        if (FindVbaSourceEdit(error) is null)
+            return error.InnerException?.Message;
+
+        var messages = new List<string>();
+        void Visit(Exception cause)
+        {
+            messages.Add(cause.Message);
+            if (cause is AggregateException aggregate)
+                foreach (var inner in aggregate.InnerExceptions) Visit(inner);
+            else if (cause.InnerException is { } inner) Visit(inner);
+        }
+        if (error is AggregateException aggregate)
+            foreach (var cause in aggregate.InnerExceptions) Visit(cause);
+        else if (error.InnerException is { } cause) Visit(cause);
+        return messages.Count == 0 ? null : string.Join(" -> ", messages);
     }
 
     private static bool IsFatalExcelDisconnect(Exception ex) => TryGetFatalComHResult(ex).HasValue;
@@ -1328,6 +1366,20 @@ public sealed class ExcelMcpService : IDisposable
 
         return ex switch
         {
+            _ when FindVbaSourceEdit(ex) is { } vbaEx => new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = errorCategory,
+                ErrorMessage = $"{exceptionType}: {vbaEx.Message}",
+                ExceptionType = exceptionType,
+                HResult = hresult,
+                InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
+                PartialState = SerializeVbaEditState(vbaEx.State,
+                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    sessionId, retainedFiles)
+            },
             PowerQueryCommandException pqEx => new ServiceResponse
             {
                 Success = false,
@@ -1357,6 +1409,18 @@ public sealed class ExcelMcpService : IDisposable
                     sessionId, retainedFiles)
             }
         };
+    }
+
+    private static string SerializeVbaEditState(
+        Sbroenne.ExcelMcp.Core.Models.VbaSourceEditState edit, ExcelOperationStatus? operation,
+        string? sessionId, IReadOnlyList<string>? retainedFiles)
+    {
+        var state = JsonSerializer.SerializeToNode(edit, ServiceProtocol.JsonOptions)!.AsObject();
+        var execution = SerializePartialState(null, operation, sessionId, retainedFiles);
+        if (execution is not null)
+            foreach (var property in System.Text.Json.Nodes.JsonNode.Parse(execution)!.AsObject())
+                state[property.Key] = property.Value?.DeepClone();
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
     private static string? SerializePartialState(

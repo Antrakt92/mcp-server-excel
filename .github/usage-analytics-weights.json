@@ -565,8 +565,10 @@
       "actions": {
         "delete": "medium",
         "import": "medium",
+        "invoke": "heavy",
         "list": "light",
         "read": "light",
+        "replace-module": "medium",
         "replace-procedure": "medium",
         "references": "light",
         "run": "heavy",

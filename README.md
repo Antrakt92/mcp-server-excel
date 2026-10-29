@@ -77,7 +77,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The inherited catalogue provides **63 MCP tools across 33 feature areas, with 429 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 429 operations. These upstream counts are checked against the compiled contracts.
+The inherited catalogue provides **63 MCP tools across 33 feature areas, with 431 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 431 operations. These upstream counts are checked against the compiled contracts.
 
 ## Source and contributions
 

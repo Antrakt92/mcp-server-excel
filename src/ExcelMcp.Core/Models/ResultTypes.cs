@@ -1002,6 +1002,9 @@ public class VbaSearchMatch
 /// </summary>
 public class VbaViewResult : ResultBase
 {
+    /// <summary>Fingerprint of the complete source, for guarded whole-module replacement.</summary>
+    public string SourceHash { get; set; } = string.Empty;
+
     /// <summary>
     /// Module name
     /// </summary>

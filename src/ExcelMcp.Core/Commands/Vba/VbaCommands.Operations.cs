@@ -36,18 +36,10 @@ public partial class VbaCommands
 
         Func<OperationResult> execute = () => batch.Execute((ctx, ct) =>
         {
-            var owner = batch is AttachedWorkbookBatch attached ? attached.Owner : batch as ExcelBatch;
-            if (owner?.RequiresVbaApproval(ctx.Book) == true)
-                throw new InvalidOperationException(
-                    batch is AttachedWorkbookBatch
-                    ? "VBA macros were disabled when this workbook opened. Use Excel to review macro permissions " +
-                    "and run the procedure. This workbook was already open in Excel, so this session cannot reopen it " +
-                    "to enable macros. No procedure was run."
-                    : "VBA macros were disabled when this workbook opened. Obtain approval for file enable-macros " +
-                    "with approved:true and allow_reopen:true (CLI: session enable-macros --approved --allow-reopen) " +
-                    "before running a procedure. The saved workbook must be reopened; unsaved changes are not discarded.");
+            EnsureMacroApproval(batch, ctx.Book);
             var originalCulture = CultureInfo.CurrentCulture;
             var originalUiCulture = CultureInfo.CurrentUICulture;
+            object? returned = null;
             try
             {
                 var excelCulture = CultureInfo.GetCultureInfo("en-US");
@@ -62,7 +54,7 @@ public partial class VbaCommands
                     args[i] = parameters[i];
                 }
 
-                ctx.App.Run(qualifiedName,
+                returned = ctx.App.Run(qualifiedName,
                     args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9],
                     args[10], args[11], args[12], args[13], args[14], args[15], args[16], args[17], args[18], args[19],
                     args[20], args[21], args[22], args[23], args[24], args[25], args[26], args[27], args[28], args[29]);
@@ -73,6 +65,7 @@ public partial class VbaCommands
             {
                 CultureInfo.CurrentCulture = originalCulture;
                 CultureInfo.CurrentUICulture = originalUiCulture;
+                VbaInvocationValues.ReleaseReturnedObjects(returned);
             }
         }, timeoutCts?.Token ?? default);
 

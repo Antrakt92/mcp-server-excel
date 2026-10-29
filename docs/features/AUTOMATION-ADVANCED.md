@@ -10,11 +10,13 @@ summaries below focus on capabilities and their important requirements.
 
 ---
 
-## VBA Macros (11 operations)
+## VBA Macros (13 operations)
 
 - **Inspect code:** List procedures with their kinds and line numbers, read a selected procedure or up to 500 lines, or view the full module.
 - **Maintain code:** Import standard modules, update whole modules, replace one procedure only when its source has not changed, or remove components.
 - **Run procedures:** Execute existing VBA procedures with supported parameters.
+- **Typed invocation:** Invoke with typed scalar arguments and read scalar or rectangular-array function results.
+- **Guarded module replacement:** Replace source only when its current fingerprint matches; failures retain observed partial state.
 - **Find source:** Search literal text across modules with limited matches, line numbers, and short excerpts.
 - **Diagnose project access:** Inspect actual access, password protection, and execution mode without changing settings.
 - **Inspect dependencies:** List library references and flag broken ones without automatic repair.
