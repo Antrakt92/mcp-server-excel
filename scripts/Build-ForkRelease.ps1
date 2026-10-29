@@ -109,7 +109,7 @@ Invoke-PackageStage 'ForkRelease' {
         $executable = Join-Path $published $component.Executable
         Assert-PackageRuntimeArchitecture $executable 'x64'
         $metadata = [Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
-        if ($metadata.FileVersion -cne $assemblyVersion -or $metadata.ProductVersion.Split('+')[0] -cne $Version) {
+        if ($metadata.FileVersion -cne $assemblyVersion -or $metadata.ProductVersion -cne "$Version+$commit") {
             throw "The $($component.Name) executable has incorrect release version metadata."
         }
         $package = Join-Path $stage ("package-" + $component.Name)

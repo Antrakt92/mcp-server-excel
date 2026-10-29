@@ -151,4 +151,56 @@ public sealed class ForkReleaseBuildTests
         }
     }
 
+    [Fact(Timeout = 30000)]
+    public async Task VersionMetadata_RequiresExactSourceCommit()
+    {
+        var sandbox = CreateSandbox("fork-version-metadata");
+        try
+        {
+            var runner = Path.Combine(sandbox, "metadata.ps1");
+            var builder = Builder.Replace("'", "''", StringComparison.Ordinal);
+            File.WriteAllText(runner, $$"""
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                $tokens = $null; $errors = $null
+                $ast = [Management.Automation.Language.Parser]::ParseFile('{{builder}}', [ref]$tokens, [ref]$errors)
+                if ($errors.Count) { throw 'Builder parse failed.' }
+                $guards = @($ast.FindAll({ param($node)
+                    $node -is [Management.Automation.Language.IfStatementAst] -and
+                    $node.Clauses[0].Item1.Extent.Text.Contains('$metadata.FileVersion')
+                }, $true))
+                if ($guards.Count -ne 1) { throw 'Expected exactly one executable metadata guard.' }
+                $guard = [scriptblock]::Create($guards[0].Extent.Text)
+                $Version = '3.0.1'
+                $assemblyVersion = "$Version.0"
+                $commit = '0123456789012345678901234567890123456789'
+                $component = @{ Name = 'Synthetic' }
+                $cases = @(
+                    @{ Name='matching'; File=$assemblyVersion; Product="$Version+$commit"; Reject=$false },
+                    @{ Name='wrong-commit'; File=$assemblyVersion; Product="$Version+ffffffffffffffffffffffffffffffffffffffff"; Reject=$true },
+                    @{ Name='missing-stamp'; File=$assemblyVersion; Product=$Version; Reject=$true },
+                    @{ Name='extra-suffix'; File=$assemblyVersion; Product="$Version+$commit.extra"; Reject=$true },
+                    @{ Name='wrong-file-version'; File='3.0.0.0'; Product="$Version+$commit"; Reject=$true },
+                    @{ Name='wrong-product-version'; File=$assemblyVersion; Product="3.0.0+$commit"; Reject=$true },
+                    @{ Name='empty-product-version'; File=$assemblyVersion; Product=''; Reject=$true }
+                )
+                foreach ($case in $cases) {
+                    $metadata = [pscustomobject]@{ FileVersion=$case.File; ProductVersion=$case.Product }
+                    $rejected = $false
+                    try { & $guard }
+                    catch {
+                        if ($_.Exception.Message -notlike '*incorrect release version metadata.*') { throw }
+                        $rejected = $true
+                    }
+                    if ($rejected -ne $case.Reject) { throw "Unexpected metadata admission for $($case.Name)." }
+                }
+                Write-Output "PASS exact source commit metadata cases=$($cases.Count)"
+                """);
+            var result = await RunPowerShellFileAsync(runner, [], timeoutMs: 20000);
+            Assert.True(result.ExitCode == 0, result.CombinedOutput);
+            Assert.Contains("PASS exact source commit metadata cases=7", result.CombinedOutput, StringComparison.Ordinal);
+        }
+        finally { DeleteDirectoryIfExists(sandbox); }
+    }
+
 }
