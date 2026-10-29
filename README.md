@@ -1,14 +1,15 @@
 # ExcelMCP — Antrakt Fork
 
-Automate desktop Microsoft Excel through MCP or the `excelcli` command line, using Excel's native COM interface.
+[![Latest release](https://img.shields.io/github/v/release/Antrakt92/mcp-server-excel)](https://github.com/Antrakt92/mcp-server-excel/releases/latest)
+[![MIT license](https://img.shields.io/github/license/Antrakt92/mcp-server-excel)](LICENSE)
 
-This is an independently maintained fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel). The **3.0.0 fork release line is based on upstream 2.6.0**. It adds persistent read-only audit sessions, bounded range inspection and guarded VBA workflows while retaining fork transport shutdown, request admission and connection drain. This is a major upgrade from fork 2.5.4 because CLI result fields and accepted options changed; see [migration](#migrate-from-fork-254).
+Control desktop Microsoft Excel from an AI agent through MCP, or use the `excelcli` command line.
 
-Fork **3.0.1** integrates upstream 2.6.1 maintenance and its subsequent chart-label removal fix, along with fork named-range, dependency and guidance repairs. Published fork 3.0.0 archives and their verification receipts retain their original upstream 2.6.0 base.
+This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel) adds read-only audit sessions, bounded range reads and VBA edits with source checks. Workbook operations use Excel's native COM interface.
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Download releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [Fork overview](docs/fork/OVERVIEW.md) · [Release verification](docs/fork/VERIFICATION-3.0.1.md) · [Recovery](docs/fork/RECOVERY.md) · [Upstream documentation](README.upstream.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT license](LICENSE)
+[Download](https://github.com/Antrakt92/mcp-server-excel/releases/latest) · [MCP setup](#connect-an-mcp-client) · [CLI](#use-the-cli) · [Agent workflows](docs/fork/AGENT-WORKFLOWS.md) · [Features](FEATURES.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
 
 ## Choose a package
 
@@ -19,7 +20,8 @@ Fork **3.0.1** integrates upstream 2.6.1 maintenance and its subsequent chart-la
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
-PowerShell download example:
+<details>
+<summary>Download with PowerShell</summary>
 
 ```powershell
 $release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.0.1'
@@ -31,6 +33,8 @@ Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RE
 Get-FileHash .\ExcelMcp-Antrakt-*-3.0.1-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
+
+</details>
 
 Compare each hash with `SHA256SUMS` before extracting. Keep releases in separate folders when upgrading. See [recovery and verification](docs/fork/RECOVERY.md) for the full procedure.
 
@@ -63,6 +67,8 @@ MCP and CLI provide the same underlying Excel capabilities through different int
 
 ## Migrate from fork 2.5.4
 
+Fork 3.0.0 was based on upstream 2.6.0 and introduced the CLI changes below. Fork 3.0.1 includes upstream 2.6.1 maintenance and the later chart-label fix; no migration is needed from 3.0.0. Published 3.0.0 archives and verification receipts keep their original 2.6.0 source base.
+
 CLI commands and batch entries now use a common JSON envelope. Read workbook results under `data`, failure details under `error`, and operation time under `durationMs`; check top-level `success` and the process exit code. Batch entries retain `index`. Update scripts that used the old result wrapper or command summary.
 
 Replace CLI `--sheet` with `--sheet-name` and `--range` with `--range-address`. The old aliases are rejected. Optional result-field selection has also been removed; use current action help to update saved requests. MCP clients should rediscover the tool surface after reconnecting; replies continue to provide JSON text and structured content.
@@ -86,7 +92,7 @@ Excel remains the calculation and workbook engine. Read [the fork scope](docs/fo
 
 Discover and attach to an already-open workbook when supported; do not reopen it just to create another automation session. Operate only on the intended workbook in your own Windows session.
 
-Upstream 2.6.0 ownership rules apply: normal shutdown closes saved workbooks opened by the host, leaves unsaved workbooks open and visible without saving or discarding them, and leaves attached workbooks untouched. Cancellation stops the caller's wait; it does not authorize saving, closing, discarding or rolling back workbook changes. Inspect the current session and Excel window before retrying. Excel AutoSave may independently persist edits.
+Normal shutdown closes saved workbooks opened by the host, leaves unsaved workbooks open and visible without saving or discarding them, and leaves attached workbooks untouched. Cancellation stops the caller's wait; it does not authorize saving, closing, discarding or rolling back workbook changes. Inspect the current session and Excel window before retrying. Excel AutoSave may independently persist edits.
 
 Do not terminate unrelated Excel or MCP processes during recovery. See [recovery](docs/fork/RECOVERY.md).
 
