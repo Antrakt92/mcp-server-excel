@@ -4,6 +4,16 @@ Make targeted edits to the intended cells, preserving unrelated data and layout.
 Use CLI help or MCP tool descriptions for current command syntax and inputs.
 This guide explains choices that affect the workbook, not the command catalogue.
 
+## Formula preflight
+
+`validate-formulas` checks the actual target rectangle and payload dimensions,
+quoted text, parentheses, and local worksheet references without applying the
+formulas or requesting calculation. Inspect `validationScope` and
+`unverifiedChecks`: a valid result is limited to those checks. It does not compile
+the formula or resolve function/UDF availability, external references, defined
+names, circular references, or overwrite/write eligibility. The later write still
+uses its own destination and overwrite checks.
+
 ## Finding matching cells
 
 CLI `range get-special-cells` and MCP `range_read` action `get-special-cells`

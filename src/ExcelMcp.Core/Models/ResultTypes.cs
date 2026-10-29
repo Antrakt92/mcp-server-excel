@@ -1368,6 +1368,16 @@ public class RangeCellError
 /// </summary>
 public class RangeFormulaValidationResult : ResultBase
 {
+    /// <summary>Exact checks performed; IsValid means no issue was found within this scope.</summary>
+    public string ValidationScope { get; set; } = "lexical-and-local-sheet-references";
+
+    /// <summary>Checks this read-only preflight does not perform.</summary>
+    public IReadOnlyList<string> UnverifiedChecks { get; set; } =
+    [
+        "excel-compilation", "full-formula-grammar", "function-and-udf-availability",
+        "external-references", "defined-names", "circular-references", "overwrite-and-write-eligibility"
+    ];
+
     /// <summary>
     /// Sheet name
     /// </summary>

@@ -203,9 +203,12 @@ public interface IRangeCommands
         [FromString] FormulaReferenceStyle referenceStyle = FormulaReferenceStyle.A1);
 
     /// <summary>
-    /// Validates formulas for syntax errors, undefined functions, and other issues without applying them.
-    /// Detects common problems like undefined functions (e.g., GETVM3 without XA2. namespace),
-    /// invalid references, syntax errors, and circular references.
+    /// Resolves the target and checks rectangle/payload geometry, then performs read-only
+    /// lexical checks for quoted text and balanced parentheses, plus local
+    /// worksheet-name checks including quoted names and 3D endpoints. No formulas are applied,
+    /// evaluated, or calculated. A valid result is not Excel compilation or full grammar validation;
+    /// function/UDF availability, external references, defined names, and circular references remain unverified.
+    /// validationScope and unverifiedChecks explicitly report this boundary.
     /// Accepts the same cells as set-formulas; text, numbers, true/false, and empty cells count as valid constants.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
