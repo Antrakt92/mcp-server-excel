@@ -14,7 +14,7 @@ public partial class RangeCommands
     // === NATIVE EXCEL COM OPERATIONS (AI/LLM ESSENTIAL) ===
 
     /// <summary>
-    /// Gets the used range (all non-empty cells) from worksheet
+    /// Gets Excel's native UsedRange, including formatting-only cells. These are not semantic content or print bounds.
     /// Excel COM: Worksheet.UsedRange
     /// </summary>
     public RangeValueResult GetUsedRange(IExcelBatch batch, string sheetName)

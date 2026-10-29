@@ -316,7 +316,7 @@ public interface IRangeCommands
     // === DISCOVERY OPERATIONS ===
 
     /// <summary>
-    /// Gets the used range (all non-empty cells) from worksheet.
+    /// Gets Excel's native UsedRange, including formatting-only cells. These are not semantic content or print bounds.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet</param>
