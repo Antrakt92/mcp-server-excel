@@ -163,3 +163,36 @@ updates:
     labels: ["dependencies", "automated", "skip-changelog"]
     commit-message:
       prefix: "chore(sdk)"
+
+  # Upstream npm wrappers retain their own lockfiles.
+  - package-ecosystem: "npm"
+    directory: "/npm-packages/excelcli"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "npm", "automated", "skip-changelog"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      excelcli-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/npm-packages/mcp-server-excel"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "npm", "automated", "skip-changelog"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      mcp-wrapper-dependencies:
+        patterns: ["*"]
