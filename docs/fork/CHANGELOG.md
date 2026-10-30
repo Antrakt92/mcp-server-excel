@@ -14,76 +14,107 @@ retains the original project's version numbers and contributor credits.
 
 ## 3.1.0 — 2026-10-30
 
-Adds chart text formatting and integrates upstream 2.6.2–2.6.4. The MCP and CLI
-catalogue now contains 436 operations, up from 434 in fork 3.0.1.
+Adds chart text formatting, reduces MCP response-processing work and simplifies
+PivotCache sharing. Based on upstream 2.6.4, with 436 operations instead of 434.
 
-### Added
+### MCP responses: 1.60–2.16× faster conversion
 
-- **Chart text formatting and readback:** inspect or change font name, size,
-  bold, italic and color for existing chart areas, titles, axes, axis titles,
-  legends and data labels. Works with ordinary charts and PivotCharts through
-  `chart_config_read` (`get-text-format`) and `chart_config` (`set-text-format`)
-  in MCP, or `chartconfig` in CLI. These operations do not create missing
-  chart elements.
-- **Close-stage timings:** successful close responses include `closeTimingsMs`
-  to distinguish work done while closing the workbook and releasing its owner.
+Generated MCP calls now pass the normalized Service result straight to reply
+conversion. The old path serialized that result and then parsed and normalized
+it again. Removing that extra pass preserves returned data, errors, warnings,
+partial state and telemetry.
 
-### Improved
+In seven local non-image fixtures, the typed route was **1.60–2.16× faster** and
+allocated **about 43–55% fewer managed bytes** per conversion. Selected results:
 
-- **PivotCache sharing:** let Excel reassign an existing cache directly instead
-  of scanning cached items first. Native errors and resulting-state diagnostics
-  remain available. Regression coverage includes 200,000 distinct cached items.
-- **Workbook closing:** remove unnecessary close-path work and extra status/stop
-  round trips. Confirmed COM release ends process ownership without waiting for
-  the Excel PID to disappear; failed or uncertain release retains ownership.
-- **MCP response conversion:** carry the normalized Service result into generated
-  replies instead of parsing and serializing it again. Errors, warnings, partial
-  state, telemetry and matching text/structured content are preserved. Screenshot
-  conversion keeps its existing path. This reduces response-conversion work;
-  it does not change Excel calculation or refresh performance.
+| Response | String route | Typed route | Speedup | Fewer allocated bytes |
+| --- | --- | --- | --- | --- |
+| Small grid, about 1 KB | 11.48 µs | 7.08 µs | 1.62× | 43.1% |
+| Grid, about 100 KB | 344.28 µs | 215.72 µs | 1.60× | 42.6% |
+| Grid, about 224 KB | 437.01 µs | 255.21 µs | 1.71× | 42.6% |
+| Failure with partial state | 20.61 µs | 9.53 µs | 2.16× | 54.7% |
 
-### Fixed
+These are median per-response timings from five alternating rounds on
+Windows/.NET 10.0.14, with 200 warmups and 400 iterations per round
+(100 for the larger grids). Both routes used the same candidate assembly and
+shared execution helper; output and telemetry parity were checked. The other
+fixtures covered scalar, null and nested-failure results.
 
-- Preserve a completed workbook result if recording its completion fails. The
-  response explains that the operation completed and must not be repeated.
-- Reject portable builds whose complete `version+commit` stamp differs from the
-  selected source, including a missing or wrong commit stamp.
-- Refuse a version already tagged at different source before SDK/build work.
-  Reproducing the exact tagged source remains supported.
-- Keep package README and manifest metadata on the same upstream 2.6.4 base.
+The measurement covers in-process response conversion, excluding transport,
+telemetry delivery and Excel work. It is not a speedup for Excel calculations,
+refreshes or complete requests. Screenshot conversion uses its existing path;
+the unchanged screenshot control had identical allocated-byte counts.
 
-### Documentation and checks
+### PivotCache: direct reassignment instead of item-by-item checks
 
-- Reworked package selection and MCP/CLI setup, corrected contributor, security
-  and recovery links, and added a dated fork history with dependency details.
-- Added coverage for chart text, PivotChart persistence, PivotCache behavior,
-  close ownership/timings and the new actions' read-only audit policy.
-- Added MCP conversion parity, cancellation and exception tests, plus release
-  guards for conflicting tags and incorrect executable source stamps.
-- Package-specific results and verification limits are recorded in
-  [the 3.1.0 verification guide](VERIFICATION-3.1.0.md) and the release's
-  `VERIFICATION-RESULTS.json` asset.
+`share-cache` now asks Excel to assign the selected cache directly. The previous
+implementation scanned cached items before the assignment, adding COM calls as
+the cache grew. Excel now decides which assignments are valid, with native errors
+and resulting-state diagnostics preserved.
 
-### Dependencies
+In one native Excel test with **200,000 distinct cached items**, the cache-sharing
+call took **0.10 seconds**. The target cache contained 200,003 items after a
+refresh; the moved report was checked against that target. Creating the tables,
+building/refreshing caches, Excel startup and transport are outside that timing.
+No old-path timing was collected, so this is a recorded result, not a
+before/after speedup ratio.
 
-No dependency or SDK versions changed from fork 3.0.1. Root and extension
-source-channel version metadata moved from upstream 2.6.1 to 2.6.4; that is not
-a dependency upgrade. The SDK remains 10.0.403 and the MCP SDK remains 2.3.0.
+A moved report uses the selected cache's data. Excel may also change its report
+settings during reassignment; preserving the old configuration is not guaranteed.
 
-### Upgrading and behavior notes
+### Chart text formatting
 
-No CLI/MCP schema migration is required from 3.0.1. Rediscover tools or command
-help after switching binaries to use the two new chart operations.
+- Read or change font name, size, bold, italic and color on existing chart areas,
+  titles, axes, axis titles, legends and data labels.
+- Works with ordinary charts and PivotCharts. MCP uses `chart_config_read`
+  with `get-text-format` and `chart_config` with `set-text-format`; CLI uses
+  `chartconfig get-text-format` and `chartconfig set-text-format`.
+- Missing titles, axes or labels are not created automatically. A partially
+  completed formatting operation does not promise rollback.
 
-`share-cache` now lets Excel decide which assignments are valid. Moving a report
-to a selected cache can change its data and settings; the former preflight
-compatibility checks no longer promise to preserve report configuration.
-Chart-format changes do not promise rollback after partial failure. A successful
-close confirms ownership release, not immediate physical process exit.
+### Closing workbooks and reporting failures
 
-Download the MCP or CLI ZIP with its manifest, verification receipt and checksum
-file from this release. Switching binaries or publishing a release does not
-update an already running client; follow [the switch procedure](RECOVERY.md#switch-versions).
+- Removed unnecessary close-path work and extra status/stop round trips.
+  Successful close responses include `closeTimingsMs` so callers can see which
+  stages took time.
+- Confirmed COM release ends ownership without waiting for the Excel PID to
+  disappear. Failed or uncertain release keeps ownership recorded.
+- If recording completion fails after a workbook operation has already finished,
+  keep its result and explain that the operation must not be repeated.
+
+### Build guards and documentation
+
+- Require the executable's complete `version+commit` stamp to match the selected
+  source, including checks for missing or incorrect commit stamps.
+- Reject a portable build when its version is already tagged at different source,
+  before SDK/build work. Exact tagged-source reproduction remains supported.
+- Keep the package README and manifest on the same upstream 2.6.4 base.
+- Updated package selection, MCP/CLI setup, contributor and recovery guidance,
+  security links, and dated release history.
+
+### Dependencies and upgrading
+
+No dependency or SDK versions changed from fork 3.0.1. The SDK remains 10.0.403
+and the MCP SDK remains 2.3.0. Root and extension source-version metadata changed
+from upstream 2.6.1 to 2.6.4; no dependency upgrade is implied.
+
+No CLI/MCP schema migration is required from 3.0.1. Switch to the new executable
+and reconnect the client to discover the two new chart operations. Download the
+ZIP with its manifest, verification receipt and checksum file from this release;
+see [the switch procedure](RECOVERY.md#switch-versions).
+
+### Verification
+
+The release checks passed: 12 builder regressions, three packaged MCP protocol
+cases, synthetic XLSM workflows through MCP and CLI, and a three-round CLI batch
+benchmark. Owned host/Excel processes exited and temporary fixtures were removed.
+
+The earlier 3,438 source tests and 97 native Service tests were reused after
+checking unchanged runtime/build/dependency/test inputs; they are not presented
+as a fresh full-suite run at the release commit. See
+[the verification guide](VERIFICATION-3.1.0.md) and `VERIFICATION-RESULTS.json`
+for provenance, package hashes and limits. Synthetic files do not establish
+customer-workbook calculation or print equivalence.
 
 ## 3.0.1 — 2026-10-29
 
