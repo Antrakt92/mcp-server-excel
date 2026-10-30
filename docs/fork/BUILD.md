@@ -49,10 +49,13 @@ this variable, direct script tests use the standard Developer Pack location.
 
 To reproduce an existing release, start from its exact tagged source and use its
 version. A version tag pointing at different source is refused before the build.
-The current source integrates upstream 2.6.4; it does not replace existing packages.
+Fork 3.1.0 integrates upstream 2.6.4 and exposes 436 operations. Build it from its
+release source with `-Version 3.1.0`, then follow
+[3.1.0 verification](VERIFICATION-3.1.0.md) against the extracted packages.
+Building packages does not switch an installed or running version.
 
 Fork 3.0.1 includes upstream 2.6.1 and the subsequent chart-label maintenance fix
-(`efd33740`). See [the release verification route](VERIFICATION-3.0.1.md).
+(`efd33740`). Its [verification route](VERIFICATION-3.0.1.md) remains historical.
 Existing fork 3.0.0 release
 archives and their verification receipts retain their original upstream 2.6.0
 base; source synchronization does not rebuild or replace published assets.
