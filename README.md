@@ -21,6 +21,10 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
 
+Current `main` includes upstream 2.6.4 and the fork additions. The downloads below
+remain the verified 3.0.1 release; changes listed under [Unreleased](docs/fork/CHANGELOG.md#unreleased)
+are available from source and are not included in those archives.
+
 ## Choose a package
 
 | Package | Use |

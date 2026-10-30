@@ -7,6 +7,11 @@ Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance 
 See the [fork changelog](CHANGELOG.md) for dated release notes, dependency versions,
 migration details and changes made after the latest published packages.
 
+Current `main` integrates upstream 2.6.4, including chart text formatting, native
+PivotCache sharing and close-stage timings. Published fork 3.0.1 packages retain
+their original source and verification receipts; source synchronization does not
+replace them or update an already running MCP/CLI process.
+
 ## Scope
 
 The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It uses native Excel for workbook operations. Current fork additions include persistent audit sessions, bounded range reads and formatting summaries, guarded whole-module replacement and typed VBA invocation. [Agent workflows](AGENT-WORKFLOWS.md) describes their inputs and limits.

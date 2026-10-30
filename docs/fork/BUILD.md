@@ -1,9 +1,11 @@
 # Build portable fork packages
 
-From a clean checkout, use Windows, PowerShell 7.4 or later, and the SDK pinned in `global.json`:
+From a clean checkout, use Windows, PowerShell 7.4 or later, and the SDK pinned in `global.json`.
+For a new release, select an unused fork version from the full change range first:
 
 ```powershell
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.0.1 -OutputDirectory artifacts/fork/3.0.1
+$forkVersion = '<reviewed-unused-version>'
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version $forkVersion -OutputDirectory "artifacts/fork/$forkVersion"
 ```
 
 The command builds both self-contained Windows x64 executables and packages each with the original license, fork notice and a standalone README. It writes `SHA256SUMS` and `RELEASE-MANIFEST.json`. It never publishes a release, invokes hosted CI, launches the packaged applications or runs desktop Excel tests. Normal .NET dependency restore may access the configured package feeds; `-NoRestore` is available when the required runtime-specific assets are already restored.
@@ -27,8 +29,8 @@ The builder checks native PE architecture and version metadata. These are packag
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
-The canonical upstream npm/registry/extension metadata is at 2.6.1. The
-portable fork builder explicitly applies 3.0.1 to all compiled assemblies and
+The canonical upstream npm/registry/extension metadata is at 2.6.4. The
+portable fork builder explicitly applies the supplied fork version to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 
 Native ADO interop generation also requires Microsoft's TlbImp 4.8.9037.0 from
@@ -44,6 +46,10 @@ When using an isolated importer, set the process environment variable
 parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
+
+To reproduce an existing release, start from its exact tagged source and use its
+version. A version tag pointing at different source is refused before the build.
+The current source integrates upstream 2.6.4; it does not replace existing packages.
 
 Fork 3.0.1 includes upstream 2.6.1 and the subsequent chart-label maintenance fix
 (`efd33740`). See [the release verification route](VERIFICATION-3.0.1.md).
