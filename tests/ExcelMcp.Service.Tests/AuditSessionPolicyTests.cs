@@ -15,6 +15,7 @@ public sealed class AuditSessionPolicyTests
     [InlineData("range.get-used-range-info")]
     [InlineData("range.get-values-page")]
     [InlineData("rangeformat.get-format-summary")]
+    [InlineData("chartconfig.get-text-format")]
     [InlineData("vba.view")]
     [InlineData("workbook.get-info")]
     [InlineData("calculationmode.get-settings")]
@@ -24,6 +25,8 @@ public sealed class AuditSessionPolicyTests
 
     [Theory]
     [InlineData("range.set-values")]
+    [InlineData("chartconfig.set-text-format")]
+    [InlineData("pivottable.share-cache")]
     [InlineData("vba.run")]
     [InlineData("vba.invoke")]
     [InlineData("vba.replace-module")]

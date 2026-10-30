@@ -21,6 +21,10 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.0.1.md)
 
+Current `main` includes upstream 2.6.4 and the fork additions. The downloads below
+remain the verified 3.0.1 release; changes listed under [Unreleased](docs/fork/CHANGELOG.md#unreleased)
+are available from source and are not included in those archives.
+
 ## Choose a package
 
 | Package | Use |
@@ -108,7 +112,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The combined catalogue provides **63 MCP tools across 33 feature areas, with 434 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 434 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **63 MCP tools across 33 feature areas, with 436 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 436 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 

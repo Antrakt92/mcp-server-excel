@@ -11,6 +11,38 @@ retains the original project's version numbers and contributor credits.
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
+## Unreleased
+
+### Upstream integration — 2026-10-30
+
+- Integrated upstream 2.6.2–2.6.4 while retaining fork request admission,
+  read-only audits, bounded reads, guarded VBA and physical workbook reservations.
+- Added chart text font formatting and readback for chart areas, titles, axes,
+  legends and data labels. Current source exposes 436 operations; released 3.0.1
+  packages retain their original 434-operation surface.
+- Let Excel perform existing PivotCache reassignment without the former per-item
+  compatibility scans; preserve native failure and resulting-state diagnostics.
+- Removed extra close-path work and status/stop round trips. Close responses
+  include stage timings; confirmed COM release ends ownership without waiting
+  for physical process disappearance. Failed or uncertain release retains it.
+- Added explicit read-only policy regressions for chart text inspection, chart
+  text mutation and PivotCache sharing.
+
+### Fork audit repairs
+
+- Reuse the normalized Service result for generated MCP replies instead of
+  parsing and serializing it again. Error classification, diagnostics, telemetry
+  and text/structured content remain equivalent; screenshot conversion keeps
+  its existing path.
+- Refuse a portable package build when its version is already tagged at a
+  different source commit. Exact tagged-source reproduction remains supported;
+  conflicting lightweight and annotated tags are rejected before SDK discovery.
+- Keep the generated package README and manifest on the same upstream 2.6.4
+  source base. Previously they still identified 2.6.1 after source synchronization.
+
+These source changes do not publish a new portable release or replace the
+existing 3.0.1 archives.
+
 ## After 3.0.1 — 2026-10-29
 
 These changes are in `main`, after the source used for the 3.0.1 packages.

@@ -12,6 +12,113 @@ public sealed class ForkReleaseBuildTests
 {
     private static string Builder => Path.Combine(RepoRoot, "scripts", "Build-ForkRelease.ps1");
 
+    [Theory(Timeout = 45000)]
+    [InlineData("conflicting-lightweight", true)]
+    [InlineData("conflicting-annotated", true)]
+    [InlineData("conflicting-clean", true)]
+    [InlineData("matching-lightweight", false)]
+    [InlineData("matching-annotated", false)]
+    [InlineData("absent", false)]
+    public async Task VersionTagAdmission_RejectsDifferentSourceBeforeDirtyCheckAndAllowsExactHead(
+        string tagCase, bool conflict)
+    {
+        var sandbox = CreateSandbox("fork-version-tag");
+        try
+        {
+            var runner = Path.Combine(sandbox, "admission.ps1");
+            var builder = Builder.Replace("'", "''", StringComparison.Ordinal);
+            var helpers = Path.Combine(RepoRoot, "scripts", "PackageHelpers.ps1")
+                .Replace("'", "''", StringComparison.Ordinal);
+            File.WriteAllText(runner, $$"""
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                . '{{helpers}}'
+                $fixture = Join-Path $PSScriptRoot 'repo'
+                $scripts = Join-Path $fixture 'scripts'
+                [IO.Directory]::CreateDirectory($scripts) | Out-Null
+                Copy-Item -LiteralPath '{{builder}}' -Destination (Join-Path $scripts 'Build-ForkRelease.ps1')
+                Copy-Item -LiteralPath '{{helpers}}' -Destination (Join-Path $scripts 'PackageHelpers.ps1')
+                function Git {
+                    param([string[]]$Arguments)
+                    (Invoke-PackageCommand $fixture 'git' $Arguments -TimeoutSeconds 10).Trim()
+                }
+                $null = Git -Arguments @('init', '--quiet')
+                $null = Git -Arguments @('config', 'core.hooksPath', (Join-Path $PSScriptRoot 'no-hooks'))
+                $null = Git -Arguments @('config', 'user.name', 'Fork Release Fixture')
+                $null = Git -Arguments @('config', 'user.email', 'fork-fixture@example.invalid')
+                $null = Git -Arguments @('config', 'commit.gpgsign', 'false')
+                $null = Git -Arguments @('config', 'tag.gpgsign', 'false')
+                $payload = Join-Path $fixture 'payload.txt'
+                [IO.File]::WriteAllText($payload, 'committed source')
+                $null = Git -Arguments @('add', '.')
+                $null = Git -Arguments @('commit', '--quiet', '-m', 'initial fixture source')
+                $tagCase = '{{tagCase}}'
+                if ($tagCase -ne 'absent') {
+                    if ($tagCase.EndsWith('annotated')) {
+                        $null = Git -Arguments @('tag', '-a', 'v3.0.1', '-m', 'fixture release')
+                    } else {
+                        $null = Git -Arguments @('tag', 'v3.0.1')
+                    }
+                }
+                if ($tagCase.StartsWith('conflicting')) {
+                    $null = Git -Arguments @('commit', '--quiet', '--allow-empty', '-m', 'later source')
+                    if ($tagCase -ne 'conflicting-clean') {
+                        [IO.File]::WriteAllText($payload, 'uncommitted sentinel')
+                    }
+                }
+                $headBefore = Git -Arguments @('rev-parse', 'HEAD')
+                $refsBefore = Git -Arguments @('show-ref')
+                $statusBefore = Git -Arguments @('status', '--porcelain=v1', '--untracked-files=normal')
+                $payloadBefore = [IO.File]::ReadAllText($payload)
+                $outsideSentinel = Join-Path $PSScriptRoot 'sentinel.txt'
+                [IO.File]::WriteAllText($outsideSentinel, 'preserve prior evidence')
+                $output = Join-Path $PSScriptRoot 'release'
+                $missingSdk = Join-Path $PSScriptRoot 'must-not-run-dotnet.exe'
+                $failure = $null
+                try {
+                    & (Join-Path $scripts 'Build-ForkRelease.ps1') -Version '3.0.1' `
+                        -OutputDirectory $output -DotNetExecutable $missingSdk
+                } catch {
+                    $failure = $_.Exception.Message
+                }
+                if ($null -eq $failure) { throw 'Builder unexpectedly accepted the missing SDK.' }
+                if ([IO.Path]::Exists($output)) { throw 'Admission failure created release output.' }
+                if ([IO.File]::ReadAllText($outsideSentinel) -cne 'preserve prior evidence' -or
+                    [IO.File]::ReadAllText($payload) -cne $payloadBefore) { throw 'Admission changed sentinel evidence.' }
+                if ((Git -Arguments @('rev-parse', 'HEAD')) -cne $headBefore -or
+                    (Git -Arguments @('show-ref')) -cne $refsBefore -or
+                    (Git -Arguments @('status', '--porcelain=v1', '--untracked-files=normal')) -cne $statusBefore) {
+                    throw 'Admission changed source, refs, or checkout state.'
+                }
+                Write-Output "ADMISSION-ERROR: $failure"
+                Write-Output 'PASS source, refs, sentinels, and absent release output preserved'
+                """);
+            var result = await RunPowerShellFileAsync(runner, [], timeoutMs: 30000);
+            Assert.True(result.ExitCode == 0, result.CombinedOutput);
+            Assert.Contains("PASS source, refs, sentinels, and absent release output preserved",
+                result.CombinedOutput, StringComparison.Ordinal);
+            if (conflict)
+            {
+                Assert.Contains("Version 3.0.1 is already tagged at", result.CombinedOutput, StringComparison.Ordinal);
+                Assert.DoesNotContain("Release source is dirty", result.CombinedOutput, StringComparison.Ordinal);
+                Assert.DoesNotContain("must-not-run-dotnet.exe", result.CombinedOutput, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("must-not-run-dotnet.exe", result.CombinedOutput, StringComparison.Ordinal);
+                Assert.DoesNotContain("already tagged at", result.CombinedOutput, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            foreach (var file in Directory.EnumerateFiles(sandbox, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            DeleteDirectoryIfExists(sandbox);
+        }
+    }
+
     [Theory(Timeout = 30000)]
     [InlineData("invalid", "valid package version")]
     [InlineData("2.5.4-preview", "stable three-part numeric version")]
