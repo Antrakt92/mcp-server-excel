@@ -6,12 +6,14 @@ Builds local portable Antrakt fork MCP and CLI release packages; never publishes
 Requires Windows, the pinned SDK and a clean Git checkout by default. Produces
 ZIPs, SHA256SUMS and RELEASE-MANIFEST.json in a new output directory. This command
 builds packages only; it does not run Excel or claim runtime/test acceptance.
+.PARAMETER Version
+Pass an unused fork version, or reproduce the exact HEAD already tagged with that version.
 .PARAMETER AllowDirtySource
 For development packages only. Records dirty source explicitly in the manifest.
 .PARAMETER NoRestore
 Passes --no-restore to dotnet publish when the win-x64 assets are already restored.
 .EXAMPLE
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -OutputDirectory artifacts/fork/3.0.1
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.0.1 -OutputDirectory artifacts/fork/3.0.1
 #>
 [CmdletBinding()]
 param(
@@ -40,6 +42,14 @@ function Read-ForkGit {
     (Invoke-PackageCommand $root 'git' $GitArguments -TimeoutSeconds 30).Trim()
 }
 $commit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
+$tag = "v$Version"
+$existingTag = Read-ForkGit -GitArguments @('tag', '--list', $tag)
+if ($existingTag) {
+    $tagCommit = Read-ForkGit -GitArguments @('rev-parse', '--verify', "refs/tags/$tag^{commit}")
+    if ($tagCommit -cne $commit) {
+        throw "Version $Version is already tagged at $tagCommit; HEAD is $commit. Choose an unused version."
+    }
+}
 $tree = Read-ForkGit -GitArguments @('rev-parse', 'HEAD^{tree}')
 $sourceStatus = Read-ForkGit -GitArguments @('status', '--porcelain=v1', '--untracked-files=normal')
 $dirty = -not [string]::IsNullOrWhiteSpace($sourceStatus)
@@ -52,6 +62,7 @@ $expectedSdk = (Read-PackageJson (Join-Path $root 'global.json')).sdk.version
 if ($sdk -cne $expectedSdk) { throw "Use the pinned SDK $expectedSdk; selected SDK is $sdk." }
 if ($root.IndexOfAny([char[]]@(',', ';')) -ge 0) { throw 'The source path contains characters that cannot be mapped safely by this release builder.' }
 $repository = 'https://github.com/Antrakt92/mcp-server-excel'
+$upstreamVersion = '2.6.4'
 
 function Assert-ForkSourceUnchanged {
     $currentCommit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
@@ -123,7 +134,7 @@ Invoke-PackageStage 'ForkRelease' {
         } else { 'Run excelcli.exe --help for current CLI commands and service controls.' }
         $readme = @"
 ExcelMCP - Antrakt Fork $Version ($($component.Name), Windows x64)
-Based on upstream ExcelMcp 2.6.1 by Stefan Broenner and contributors.
+Based on upstream ExcelMcp $upstreamVersion by Stefan Broenner and contributors.
 Independent fork: $repository
 MIT license; see LICENSE and FORK-NOTICE.md. No vendor endorsement is claimed.
 
@@ -134,7 +145,7 @@ Set EXCELMCP_TELEMETRY_MODE=off to explicitly disable telemetry.
 
 Verify this ZIP against SHA256SUMS from the same release. See RELEASE-MANIFEST.json
 for source provenance and verification status. Build completion is not runtime acceptance.
-Normal shutdown preserves unsaved and attached workbook state under upstream 2.6.1
+Normal shutdown preserves unsaved and attached workbook state under upstream $upstreamVersion
 rules. Cancellation does not authorize saving, closing, discarding or rollback.
 Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
 "@
@@ -155,7 +166,7 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
         schemaVersion = 1
         name = 'ExcelMCP - Antrakt Fork'
         version = $Version
-        upstreamVersion = '2.6.1'
+        upstreamVersion = $upstreamVersion
         upstreamRepository = 'https://github.com/sbroenne/mcp-server-excel'
         repository = $repository
         sourceCommit = $commit
