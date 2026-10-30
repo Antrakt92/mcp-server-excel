@@ -11,6 +11,30 @@ This changelog covers all components:
 
 Entries are short and end-user-facing. Format follows [Keep a Changelog](https://keepachangelog.com/); this project uses [Semantic Versioning](https://semver.org/). Starting with this file, entries are compiled automatically from [changesets](.changeset/README.md) at release time — see [Release Strategy](docs/RELEASE-STRATEGY.md#changelog-generation) for how to add one.
 
+## [2.6.4] - 2026-10-30
+
+### Patch Changes
+
+- [#1277](https://github.com/sbroenne/mcp-server-excel/pull/1277) [`c036473`](https://github.com/sbroenne/mcp-server-excel/commit/c036473dd727c38636acb5aa24653de1f420a970) Thanks [@sbroenne](https://github.com/sbroenne)! - **PivotTable cache sharing** ([#1276](https://github.com/sbroenne/mcp-server-excel/issues/1276)): `share-cache` now lets Excel decide whether
+  two reports can share a cache instead of rejecting them through custom
+  compatibility checks.
+
+## [2.6.3] - 2026-10-30
+
+### Minor Changes
+
+- [#1275](https://github.com/sbroenne/mcp-server-excel/pull/1275) [`cd029fe`](https://github.com/sbroenne/mcp-server-excel/commit/cd029fef20a3495e6aa65ebe323dc1a9d1063895) Thanks [@sbroenne](https://github.com/sbroenne)! - Set and inspect chart text fonts, sizes, colours, bold and italic through the CLI and MCP server. Supports existing titles, axis labels and titles, data labels, legends and whole-chart text settings on ordinary charts and PivotCharts, including Data Model PivotCharts.
+
+## [2.6.2] - 2026-10-30
+
+### Patch Changes
+
+- [#1274](https://github.com/sbroenne/mcp-server-excel/pull/1274) [`a180012`](https://github.com/sbroenne/mcp-server-excel/commit/a1800122bade23523a813090b772f1203f3230ff) Thanks [@sbroenne](https://github.com/sbroenne)! - CLI and MCP workbook close responses automatically return a compact `closeTimingsMs` breakdown to the calling agent, without environment settings or timing files.
+
+  Closing no longer forces general memory cleanup or waits for the Excel process to disappear after any requested save, confirmed workbook close, any appropriate Quit, and release of the Excel objects we used. An empty background copy of ExcelMcp finishes through the same internal reply without extra status or stop requests, while saving rules, protection of other workbooks, and recovery after failures remain unchanged.
+
+- [#1268](https://github.com/sbroenne/mcp-server-excel/pull/1268) [`efd3374`](https://github.com/sbroenne/mcp-server-excel/commit/efd337402b3934387ffa536aca6930e913913840) Thanks [@sbroenne](https://github.com/sbroenne)! - Removing all chart data labels no longer fails after Excel removes the labels or when a selected series has none. This works for one series or all series through both CLI and MCP.
+
 ## [2.6.1] - 2026-10-29
 
 ### Patch Changes
