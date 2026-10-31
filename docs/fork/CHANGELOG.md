@@ -51,6 +51,9 @@ Failed opens and unrelated commands do not trigger the recovery request.
   The fork keeps the single-document conversion already shipped in 3.1.0.
 - Includes upstream's explicit CLI worker build dependency for Service tests,
   which the fork already carried, and clarified website/release metadata guidance.
+- The internal snapshot-ordering test now uses a synthetic worker client instead
+  of injecting a fabricated release into a live worker process. This avoids
+  racing its actual shutdown during local validation.
 - Test-case reconciliation now treats supplementary Unicode characters and their
   VSTest TRX surrogate escapes consistently, while keeping literal escapes,
   duplicate counts and missing cases distinct.

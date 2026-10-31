@@ -78,21 +78,18 @@ public sealed class ExcelControllerTests
     [Theory(Timeout = 30000)]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Controller_CompletionPublishesNewerReleaseBeforeAcknowledgingIt(bool recordingFails)
+    public Task Controller_CompletionPublishesNewerReleaseBeforeAcknowledgingIt(bool recordingFails)
     {
-        ExcelWorkerClient? started = null;
-        using var controller = new ExcelController(launcher: Launcher, initializeWorker: async worker =>
-        {
-            await worker.InitializeAsync();
-            started = worker;
-        });
-        Assert.True((await controller.ProcessAsync(new ServiceRequest
-        {
-            Command = "diag.echo",
-            Args = """{"message":"initialize-completion-record"}"""
-        })).Success);
-        var worker = Assert.IsType<ExcelWorkerClient>(started);
-        var older = worker.Snapshot! with { Revision = long.MaxValue - 2 };
+        using var controller = new ExcelController(launcher: Launcher);
+        var current = WorkerProcess.Current;
+        var generation = Guid.NewGuid().ToString("N");
+        // Fabricated completion state must not retire a live worker process.
+        var registration = new WorkerRegistration($"excelmcp-worker-{generation}", current, current,
+            generation, WorkerRegistry.Build, null);
+        var worker = new ExcelWorkerClient(registration, current, generation);
+        var older = new WorkerSnapshot(registration, [],
+            new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[],"count":0}""" },
+            null, null, new Dictionary<string, IReadOnlyList<string>>(), Revision: long.MaxValue - 2);
         var identity = new ExcelProcessIdentity(WorkerProcess.Current.ProcessId, WorkerProcess.Current.StartedAtUtcFileTime);
         var newer = older with
         {
@@ -102,6 +99,10 @@ public sealed class ExcelControllerTests
         };
         worker.RecordSnapshot(older);
         worker.RecordSnapshot(newer);
+        var workers = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, ExcelWorkerClient>>(
+            typeof(ExcelController).GetField("_workers",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(controller));
+        Assert.True(workers.TryAdd(registration.PipeName, worker));
         var observed = new List<ExcelProcessIdentity>();
         var failure = new IOException("Test-only release publication failure.");
         void Record(ExcelProcessIdentity released)
@@ -126,7 +127,9 @@ public sealed class ExcelControllerTests
         finally
         {
             controller.ExcelProcessReleased -= Record;
+            workers.TryRemove(registration.PipeName, out _);
         }
+        return Task.CompletedTask;
     }
 
     [Fact(Timeout = 30000)]
