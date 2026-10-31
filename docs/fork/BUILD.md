@@ -29,7 +29,7 @@ The builder checks native PE architecture and version metadata. These are packag
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
-The canonical upstream npm/registry/extension metadata is at 2.6.4. The
+The canonical upstream npm/registry/extension metadata is at 2.6.6. The
 portable fork builder explicitly applies the supplied fork version to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 
@@ -46,6 +46,11 @@ When using an isolated importer, set the process environment variable
 parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
+
+Fork 3.2.0 integrates upstream 2.6.6 and exposes 437 operations. Build clean,
+committed release source with `-Version 3.2.0`, then follow
+[3.2.0 verification](VERIFICATION-3.2.0.md) against the extracted packages.
+Building packages does not switch an installed or running version.
 
 To reproduce an existing release, start from its exact tagged source and use its
 version. A version tag pointing at different source is refused before the build.

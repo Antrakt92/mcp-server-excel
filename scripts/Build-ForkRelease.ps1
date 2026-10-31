@@ -13,11 +13,11 @@ For development packages only. Records dirty source explicitly in the manifest.
 .PARAMETER NoRestore
 Passes --no-restore to dotnet publish when the win-x64 assets are already restored.
 .EXAMPLE
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.1.0 -OutputDirectory artifacts/fork/3.1.0
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.2.0 -OutputDirectory artifacts/fork/3.2.0
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '3.1.0',
+    [string]$Version = '3.2.0',
     [string]$OutputDirectory,
     [string]$DotNetExecutable = 'dotnet',
     [switch]$AllowDirtySource,
@@ -62,7 +62,7 @@ $expectedSdk = (Read-PackageJson (Join-Path $root 'global.json')).sdk.version
 if ($sdk -cne $expectedSdk) { throw "Use the pinned SDK $expectedSdk; selected SDK is $sdk." }
 if ($root.IndexOfAny([char[]]@(',', ';')) -ge 0) { throw 'The source path contains characters that cannot be mapped safely by this release builder.' }
 $repository = 'https://github.com/Antrakt92/mcp-server-excel'
-$upstreamVersion = '2.6.4'
+$upstreamVersion = '2.6.6'
 
 function Assert-ForkSourceUnchanged {
     $currentCommit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')

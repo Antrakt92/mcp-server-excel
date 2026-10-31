@@ -13,9 +13,11 @@ PivotCache sharing and close-stage timings. It exposes 436 operations through
 source and verification receipts. Downloading a release does not switch an
 already running MCP/CLI process.
 
-The current source also integrates upstream 2.6.6 and its worksheet
-scroll/selection controls (437 operations). These additions are unreleased in the
-fork; the 3.1.0 download and its verification receipts remain unchanged.
+Fork 3.2.0 integrates upstream 2.6.6 and exposes 437 operations. It adds worksheet
+scroll/selection controls and recovery when caller cancellation races with a
+completed open/create reply. Recovery asks Excel to show that session without
+saving, closing or repeating workbook work. See the [3.2.0 notes](CHANGELOG.md#320--2026-10-31).
+Earlier 3.1.0 packages and their verification receipts remain unchanged.
 
 ## Scope
 
@@ -31,7 +33,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.1.0 verification](VERIFICATION-3.1.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.2.0 verification](VERIFICATION-3.2.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 
