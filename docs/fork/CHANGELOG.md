@@ -12,6 +12,22 @@ retains the original project's version numbers and contributor credits.
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
+## Unreleased
+
+### Upstream synchronization - 2026-10-31
+
+- Integrates upstream 2.6.5 and subsequent worksheet-view controls. `window set-view`
+  sets scroll position, selection and active cell; `get-view` reports the actual
+  Excel state. The source tree exposes 437 operations; published 3.1.0 packages
+  retain their original 436-operation surface.
+- Includes upstream acceptance of our generated MCP response optimization
+  (#1278), while preserving the fork's later single-document conversion work.
+- Fixes the response/cancellation race identified in upstream review #1280.
+  A completed open/create session is shown before cancellation is reported;
+  recovery does not save, close or repeat workbook operations.
+- Incorporates the CLI build prerequisite for Service tests and clarification
+  of website versus released-package metadata. Dependency versions are unchanged.
+
 ## 3.1.0 — 2026-10-30
 
 Adds chart text formatting, reduces MCP response-processing work and simplifies

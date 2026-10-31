@@ -96,7 +96,6 @@ public static class ExcelToolsBase
         Func<Task<ResultJson>> operation,
         CancellationToken cancellationToken,
         Action<string, string, long, ToolInvocationResult> trackInvocation) =>
-        // Generated forwarding has already interpreted the Service result and its contract.
         ExecuteToolActionCoreAsync(toolName, actionName, operation, outcome => outcome,
             cancellationToken, trackInvocation);
 

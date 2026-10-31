@@ -13,6 +13,10 @@ PivotCache sharing and close-stage timings. It exposes 436 operations through
 source and verification receipts. Downloading a release does not switch an
 already running MCP/CLI process.
 
+The current source also integrates upstream 2.6.5 and subsequent worksheet
+scroll/selection controls (437 operations). These additions are unreleased in the
+fork; the 3.1.0 download and its verification receipts remain unchanged.
+
 ## Scope
 
 The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It uses native Excel for workbook operations. Current fork additions include persistent audit sessions, bounded range reads and formatting summaries, guarded whole-module replacement and typed VBA invocation. [Agent workflows](AGENT-WORKFLOWS.md) describes their inputs and limits.
