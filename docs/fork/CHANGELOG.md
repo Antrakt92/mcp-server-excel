@@ -7,26 +7,71 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.2.0) | 2026-10-31 | Worksheet scroll/selection controls and completed-session cancellation recovery |
 | [3.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.1.0) | 2026-10-30 | Chart text formatting, native PivotCache sharing, close timings and MCP response optimization |
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
-## Unreleased
+## 3.2.0 — 2026-10-31
 
-### Upstream synchronization - 2026-10-31
+Set a worksheet's scroll position and selection through MCP or CLI, and recover
+access to a workbook when cancellation races with a completed open/create reply.
+Based on upstream 2.6.6, with 437 operations instead of 436.
 
-- Integrates upstream 2.6.5 and 2.6.6, including worksheet-view controls. `window set-view`
-  sets scroll position, selection and active cell; `get-view` reports the actual
-  Excel state. The source tree exposes 437 operations; published 3.1.0 packages
-  retain their original 436-operation surface.
-- Includes upstream acceptance of our generated MCP response optimization
-  (#1278), while preserving the fork's later single-document conversion work.
-- Fixes the response/cancellation race identified in upstream review #1280.
-  A completed open/create session is shown before cancellation is reported;
-  recovery does not save, close or repeat workbook operations.
-- Incorporates the CLI build prerequisite for Service tests and clarification
-  of website versus released-package metadata. Dependency versions are unchanged.
+### Worksheet views
+
+- `window set-view` sets the top-left cell and optionally selects a range on the
+  named worksheet. For example, use `--sheet-name Dashboard --top-left-cell E20
+  --select H30:I32` in the CLI. The MCP action is `window` / `set-view`, with
+  `sheet_name`, `top_left_cell` and optional `select`.
+- `window get-view` reports Excel's actual scroll origin, selection kind,
+  selected range and active cell. The returned fields include `topLeftCell`,
+  `selectionKind`, `selectedRangeAddress` and `activeCellAddress`. Non-range
+  selections keep the two address fields present with null values.
+- Set the view before saving to control where a workbook opens. Existing pane,
+  zoom and display settings remain available; returned positions reflect Excel's
+  native behavior, including frozen panes, hidden rows and merged cells.
+
+### Cancellation after a completed reply
+
+A workbook could finish opening or being created just as the caller cancelled.
+The client then discarded the reply containing its session ID, leaving the book
+open but hidden. It now requests `window.show` for that exact completed session
+before reporting cancellation, with a separate five-second recovery budget.
+
+This does not save, close, undo or repeat workbook work. A failed reveal is
+reported in diagnostics while the original caller cancellation is preserved.
+Failed opens and unrelated commands do not trigger the recovery request.
+
+### Upstream and maintenance
+
+- Integrates upstream 2.6.5 and 2.6.6. Upstream accepted our generated MCP response
+  optimization in [#1278](https://github.com/sbroenne/mcp-server-excel/pull/1278).
+  The fork keeps the single-document conversion already shipped in 3.1.0.
+- Includes upstream's explicit CLI worker build dependency for Service tests,
+  which the fork already carried, and clarified website/release metadata guidance.
+- The internal snapshot-ordering test now uses a synthetic worker client instead
+  of injecting a fabricated release into a live worker process. This avoids
+  racing its actual shutdown during local validation.
+- Test-case reconciliation now treats supplementary Unicode characters and their
+  VSTest TRX surrogate escapes consistently, while keeping literal escapes,
+  duplicate counts and missing cases distinct.
+- The pinned .NET SDK remains 10.0.403. Runtime and development dependency
+  versions are unchanged from 3.1.0; the upstream product metadata advances from
+  2.6.4 to 2.6.6.
+
+### Upgrade and verification
+
+Use the 3.2.0 MCP/CLI packages from this fork, verify their checksums, and reconnect
+MCP clients or restart the relevant CLI service. Existing commands remain
+compatible; no breaking migration is needed.
+
+See [3.2.0 verification](VERIFICATION-3.2.0.md). The release's
+`VERIFICATION-RESULTS.json` binds actual source, protocol, native Excel and CLI
+checks to the shipped executable hashes. Synthetic fixtures do not establish
+customer calculation or print equivalence. Portable Windows x64 packages remain
+unsigned.
 
 ## 3.1.0 — 2026-10-30
 

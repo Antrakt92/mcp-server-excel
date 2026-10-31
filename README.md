@@ -19,18 +19,19 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.1.0.md)
+[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.2.0.md)
 
-Fork **3.1.0** includes upstream **2.6.4**, with chart text formatting, native
-PivotCache sharing, close-stage timings and the fork's workbook safeguards.
+Fork **3.2.0** includes upstream **2.6.6**, with worksheet scroll/selection
+controls and a fix for cancellation after a workbook finishes opening. It exposes
+437 operations and retains the fork's audit, bounded-read and VBA safeguards.
 Earlier releases keep their original packages and verification receipts.
 
 ## Choose a package
 
 | Package | Use |
 | --- | --- |
-| [ExcelMcp-Antrakt-MCP-3.1.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.1.0/ExcelMcp-Antrakt-MCP-3.1.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
-| [ExcelMcp-Antrakt-CLI-3.1.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.1.0/ExcelMcp-Antrakt-CLI-3.1.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
+| [ExcelMcp-Antrakt-MCP-3.2.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.2.0/ExcelMcp-Antrakt-MCP-3.2.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
+| [ExcelMcp-Antrakt-CLI-3.2.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.2.0/ExcelMcp-Antrakt-CLI-3.2.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
@@ -38,13 +39,13 @@ Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.js
 <summary>Download with PowerShell</summary>
 
 ```powershell
-$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.1.0'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.1.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.1.0-win-x64.zip'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.1.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.1.0-win-x64.zip'
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.2.0'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.2.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.2.0-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.2.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.2.0-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
 Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
-Get-FileHash .\ExcelMcp-Antrakt-*-3.1.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\ExcelMcp-Antrakt-*-3.2.0-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 

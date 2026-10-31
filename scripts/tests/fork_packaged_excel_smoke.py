@@ -420,6 +420,13 @@ def cleanup_sessions(host, path, report):
         time.sleep(0.2)
 
 
+def verify_view(value):
+    expected = {"sheetName": "Sheet1", "topLeftCell": "$E$20", "selectionKind": "range",
+                "selectedRangeAddress": "$H$30:$I$32", "activeCellAddress": "$H$30"}
+    require(isinstance(value, dict) and all(value.get(key) == item for key, item in expected.items()),
+            "Packaged worksheet view did not match the requested native scroll and selection.")
+
+
 def mcp_case(host, path, identities):
     created = host.call("file", {"action": "create", "file_path": str(path)})
     identifier = created[host.id_key]
@@ -437,6 +444,10 @@ def mcp_case(host, path, identities):
                                "arguments": [{"type": "string", "value": "synthetic"}, {"type": "number", "value": 7}]})
     require(invoked.get("returnKind") == "string" and invoked.get("value") == "guarded:synthetic:7", "Packaged typed VBA result changed.")
     host.report["guarded_vba_and_typed_invoke"] = True
+    view = {"workbook_session_id": identifier, "sheet_name": "Sheet1"}
+    verify_view(host.call("window", dict(view, action="set-view", top_left_cell="E20", select="H30:I32")))
+    verify_view(host.call("window", dict(view, action="get-view")))
+    host.report["worksheet_view_passed"] = True
     host.call("file", {"action": "save", "workbook_session_id": identifier})
     host.close(identifier)
     before = identities.file_identity(path)["sha256"]
@@ -464,6 +475,9 @@ def cli_case(host, path, identities):
     identifier = host.direct(["session", "create", str(path)], "session.create")["sessionId"]
     host.native.capture(required=True)
     host.call("range.set-values", {"sheetName": "Sheet1", "rangeAddress": "A1:C3", "values": DATA}, identifier)
+    verify_view(host.call("window.set-view", {"sheetName": "Sheet1", "topLeftCell": "E20", "select": "H30:I32"}, identifier))
+    verify_view(host.call("window.get-view", {"sheetName": "Sheet1"}, identifier))
+    host.report["worksheet_view_passed"] = True
     host.call("session.save", identifier=identifier)
     host.close(identifier)
     before = identities.file_identity(path)["sha256"]
@@ -503,6 +517,15 @@ def cleanup_fixtures(root, report, remove=shutil.rmtree):
 
 
 class ParserTests(unittest.TestCase):
+    def test_view_requires_observed_scroll_selection_and_active_cell(self):
+        value = {"sheetName": "Sheet1", "topLeftCell": "$E$20", "selectionKind": "range",
+                 "selectedRangeAddress": "$H$30:$I$32", "activeCellAddress": "$H$30"}
+        verify_view(value)
+        for key in value:
+            for replacement in (None, "stale"):
+                with self.subTest(field=key, replacement=replacement), self.assertRaises(SmokeError):
+                    verify_view(dict(value, **{key: replacement}))
+
     def test_mcp_result_requires_matching_structured_and_text_outcomes(self):
         value = {"success": True, "values": [[False, 0]]}
         result = {"content": [{"type": "text", "text": json.dumps(value)}], "structuredContent": value}
