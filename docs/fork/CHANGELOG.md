@@ -22,6 +22,9 @@ retains the original project's version numbers and contributor credits.
   retain their original 436-operation surface.
 - Includes upstream acceptance of our generated MCP response optimization
   (#1278), while preserving the fork's later single-document conversion work.
+- Fixes the response/cancellation race identified in upstream review #1280.
+  A completed open/create session is shown before cancellation is reported;
+  recovery does not save, close or repeat workbook operations.
 - Incorporates the CLI build prerequisite for Service tests and clarification
   of website versus released-package metadata. Dependency versions are unchanged.
 
