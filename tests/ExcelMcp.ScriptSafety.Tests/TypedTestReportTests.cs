@@ -80,6 +80,34 @@ public sealed class TypedTestReportTests
         if (!succeeds) { Assert.Contains("Test case reconciliation failed", run.Output, StringComparison.Ordinal); }
     }
 
+    [Theory]
+    [InlineData("case(\U0001F600)", @"case(\ud83d\ude00)", true)]
+    [InlineData("case(\u00e9\U0001F600)", "case(\u00e9\\ud83d\\ude00)", true)]
+    [InlineData("case(\U0001F600)", @"case(\ud83d\ude01)", false)]
+    [InlineData(@"case(\\ud83d\\ude00)", @"case(\ud83d\ude00)", false)]
+    [InlineData("case(\U0001F600)", "case(\U0001F600)", true)]
+    [InlineData("case(plain)", "case(plain)", true)]
+    public async Task Reports_ReconcileSupplementaryUnicodeWithoutChangingLiteralEscapes(
+        string expected, string reported, bool succeeds)
+    {
+        var run = await CheckAsync($$"""
+            <TestRun><Results><UnitTestResult testName="{{reported}}" outcome="Passed"/></Results><ResultSummary outcome="Completed"><Counters total="1" passed="1" executed="1" failed="0" notExecuted="0"/></ResultSummary></TestRun>
+            """, $"-ExpectedCases @('{expected}')");
+        Assert.Equal(succeeds, run.ExitCode == 0);
+        if (!succeeds) { Assert.Contains("Test case reconciliation failed", run.Output, StringComparison.Ordinal); }
+    }
+
+    [Fact]
+    public async Task Reports_RejectDistinctNamesWithAmbiguousCanonicalKeys()
+    {
+        var expected = "case(\U0001F600)";
+        var run = await CheckAsync("""
+            <TestRun><Results><UnitTestResult testName="case(\ud83d\ude00)" outcome="Passed"/><UnitTestResult testName="case(\ud83d\ude00)" outcome="Passed"/></Results><ResultSummary outcome="Completed"><Counters total="2" passed="2" executed="2" failed="0" notExecuted="0"/></ResultSummary></TestRun>
+            """, $"-ExpectedCases @('{expected}','case(\\ud83d\\ude00)')");
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Contains("Test case reconciliation failed", run.Output, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Discovery_RejectsMissingOrEmptyListings()
     {

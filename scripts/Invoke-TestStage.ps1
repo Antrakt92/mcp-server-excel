@@ -1,6 +1,21 @@
 #Requires -Version 7.4
 . (Join-Path $PSScriptRoot 'Invoke-NativeCommand.ps1')
 
+function ConvertTo-TrxTestCaseName([string]$Name) {
+    $normalized = [Text.StringBuilder]::new()
+    for ($index = 0; $index -lt $Name.Length; $index++) {
+        # TRX escapes supplementary characters; discovery prints their UTF-16 pair.
+        if ([char]::IsHighSurrogate($Name[$index]) -and $index + 1 -lt $Name.Length -and
+            [char]::IsLowSurrogate($Name[$index + 1])) {
+            $null = $normalized.Append(('\u{0:x4}\u{1:x4}' -f [int]$Name[$index], [int]$Name[$index + 1]))
+            $index++
+        } else {
+            $null = $normalized.Append($Name[$index])
+        }
+    }
+    return $normalized.ToString()
+}
+
 function Assert-TestReport {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [string[]]$ExpectedCases)
@@ -27,12 +42,18 @@ function Assert-TestReport {
     if ($PSBoundParameters.ContainsKey('ExpectedCases')) {
         if (-not $ExpectedCases.Count) { throw "Test case reconciliation failed: discovery was empty. See $Path." }
         $expected = [Collections.Generic.Dictionary[string, int]]::new([StringComparer]::Ordinal)
-        foreach ($name in $ExpectedCases) {
+        $originalNames = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+        foreach ($expectedCase in $ExpectedCases) {
+            $name = ConvertTo-TrxTestCaseName $expectedCase
+            if ($originalNames.ContainsKey($name) -and $originalNames[$name] -cne $expectedCase) {
+                throw "Test case reconciliation failed: distinct discovered names have an ambiguous TRX representation. See $Path."
+            }
+            $originalNames[$name] = $expectedCase
             if (-not $expected.ContainsKey($name)) { $expected[$name] = 0 }
             $expected[$name]++
         }
         foreach ($result in $results) {
-            $name = $result.GetAttribute('testName')
+            $name = ConvertTo-TrxTestCaseName $result.GetAttribute('testName')
             if (-not $expected.ContainsKey($name) -or $expected[$name] -eq 0) {
                 throw "Test case reconciliation failed: unexpected or duplicate '$name'. See $Path."
             }

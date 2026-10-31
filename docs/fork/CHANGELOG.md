@@ -51,6 +51,9 @@ Failed opens and unrelated commands do not trigger the recovery request.
   The fork keeps the single-document conversion already shipped in 3.1.0.
 - Includes upstream's explicit CLI worker build dependency for Service tests,
   which the fork already carried, and clarified website/release metadata guidance.
+- Test-case reconciliation now treats supplementary Unicode characters and their
+  VSTest TRX surrogate escapes consistently, while keeping literal escapes,
+  duplicate counts and missing cases distinct.
 - The pinned .NET SDK remains 10.0.403. Runtime and development dependency
   versions are unchanged from 3.1.0; the upstream product metadata advances from
   2.6.4 to 2.6.6.

@@ -49,6 +49,9 @@ requires a reviewed comparison of runtime, generated contracts, dependencies, SD
 and relevant test/build inputs. Do not carry forward 3.1.0's full-suite totals as
 fresh evidence for 3.2.0.
 
+The test-report harness also has a focused 33-case regression suite. It checks
+Unicode name reconciliation without relaxing case multiplicities or outcome gates.
+
 ## Check the final executables
 
 Use Windows x64, installed desktop Excel, PowerShell 7.4 or later and the SDK pinned
