@@ -16,7 +16,7 @@ retains the original project's version numbers and contributor credits.
 
 ### Upstream synchronization - 2026-10-31
 
-- Integrates upstream 2.6.5 and subsequent worksheet-view controls. `window set-view`
+- Integrates upstream 2.6.5 and 2.6.6, including worksheet-view controls. `window set-view`
   sets scroll position, selection and active cell; `get-view` reports the actual
   Excel state. The source tree exposes 437 operations; published 3.1.0 packages
   retain their original 436-operation surface.

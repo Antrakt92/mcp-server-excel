@@ -13,7 +13,7 @@ PivotCache sharing and close-stage timings. It exposes 436 operations through
 source and verification receipts. Downloading a release does not switch an
 already running MCP/CLI process.
 
-The current source also integrates upstream 2.6.5 and subsequent worksheet
+The current source also integrates upstream 2.6.6 and its worksheet
 scroll/selection controls (437 operations). These additions are unreleased in the
 fork; the 3.1.0 download and its verification receipts remain unchanged.
 
