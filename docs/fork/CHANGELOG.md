@@ -7,12 +7,37 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.3.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.1) | 2026-11-01 | CLI typed JSON arguments and range/table sort settings |
 | [3.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.0) | 2026-11-01 | Chart title placement, axis line formatting and named-range overwrite protection |
 | [3.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.2.0) | 2026-10-31 | Worksheet scroll/selection controls and completed-session cancellation recovery |
 | [3.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.1.0) | 2026-10-30 | Chart text formatting, native PivotCache sharing, close timings and MCP response optimization |
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.3.1 — 2026-11-01
+
+CLI commands now retain camelCase fields in structured JSON options. For example,
+`--arguments '[{"type":"number","value":2.5}]'` previously reached the Service
+with an empty argument type. The same parser could lose sort column selections
+and turn `ascending:false` into its default value.
+
+- Typed VBA arguments preserve number, Boolean, string, null and missing values.
+- Range and table sorting preserve the specified columns, their order and
+  descending settings. Existing PascalCase field names remain supported.
+- Batch JSON and MCP dispatch are unchanged. No migration is required.
+- Contributor guidance now clarifies Excel process ownership and matching source,
+  test and worker builds during native verification.
+
+The upstream base remains 2.6.7, with 438 operations, 63 MCP tools and 33 feature
+areas. Dependency versions are unchanged. Three CodeQL alerts in the inherited
+issue-triage workflow were reviewed as intentional data flows and dismissed as
+false positives; this release does not claim a security code fix for them.
+
+See the [3.3.1 verification route](VERIFICATION-3.3.1.md) and the release's
+`VERIFICATION-RESULTS.json` for fresh checks of the packaged executables. Earlier
+timings and investigation of historical native failures remain separate evidence;
+this patch makes no performance or crash-resolution claim.
 
 ## 3.3.0 — 2026-11-01
 
