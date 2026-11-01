@@ -21,9 +21,9 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.2.0.md)
 
-Fork **3.2.0** includes upstream **2.6.6**, with worksheet scroll/selection
-controls and a fix for cancellation after a workbook finishes opening. It exposes
-437 operations and retains the fork's audit, bounded-read and VBA safeguards.
+The latest portable release, **3.2.0**, includes upstream **2.6.6**, with worksheet scroll/selection
+controls and a fix for cancellation after a workbook finishes opening. The current source includes upstream **2.6.7** and exposes
+438 operations. It retains the fork's audit, bounded-read and VBA safeguards.
 Earlier releases keep their original packages and verification receipts.
 
 ## Choose a package
@@ -113,7 +113,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The combined catalogue provides **63 MCP tools across 33 feature areas, with 437 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 437 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **63 MCP tools across 33 feature areas, with 438 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 438 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 
