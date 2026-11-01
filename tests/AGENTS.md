@@ -79,10 +79,12 @@ Commands and prerequisites: [tests/README.md](README.md#quick-start).
   process; do not add code that stops it. Never close every listed session to
   establish a "clean" starting state. The compiler bans machine-wide process
   search and the product's process-stop functions in test code; do not bypass it.
-- The coding agent itself, outside test code, may close or stop any Excel copy
-  on the machine, for example one left by a test run or stuck behind a dialog.
-  Report each one it closed by process number and start time. Closing an Excel
-  copy loses its unsaved edits, and a left-over copy still fails the test run.
+- Agent cleanup outside test code follows the root
+  [process ownership rule](../AGENTS.md#build-and-validation): only positively
+  identified current-task-owned Excel processes, with captured PID/start-time
+  identity and retained process handles. Preserve unrelated or uncertain owners.
+  Report each process closed by PID and start time; failed cleanup still fails
+  the test run.
   Fixture COM
   access follows [COM safety](../src/ExcelMcp.ComInterop/AGENTS.md).
 
