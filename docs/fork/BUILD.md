@@ -29,7 +29,7 @@ The builder checks native PE architecture and version metadata. These are packag
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
-The canonical upstream npm/registry/extension metadata is at 2.6.6. The
+The canonical upstream npm/registry/extension metadata is at 2.6.7. The
 portable fork builder explicitly applies the supplied fork version to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 
@@ -64,3 +64,18 @@ Fork 3.0.1 includes upstream 2.6.1 and the subsequent chart-label maintenance fi
 Existing fork 3.0.0 release
 archives and their verification receipts retain their original upstream 2.6.0
 base; source synchronization does not rebuild or replace published assets.
+
+## Deferred tooling updates
+
+Reviewed on 2026-11-01. These candidates are separate from the compatible
+dependency updates in this branch.
+
+| Tool | Current choice | Remaining check |
+| --- | --- | --- |
+| Introduction video HyperFrames CLI | 0.8.214 | 0.8.226 introduces Undici 7.25.0, affected by [GHSA-vmh5-mc38-953g](https://github.com/advisories/GHSA-vmh5-mc38-953g). Recheck the resolved tool graph before accepting a later version. The project lockfile does not cover `npx` downloads. |
+| World Bank video HyperFrames CLI | 0.8.184 | Restore the five original footage clips, then run the video's build, check and render gates before upgrading. A clean checkout deliberately omits those clips. |
+| Agentic workflow compiler | 0.89.21 | The 1.0.1 compiler adds `actions: read` to the generated completion job. Review the permission and diagnostics behavior before adopting that migration; regenerate from the Markdown source rather than patching generated YAML. |
+
+The introduction video's 0.8.214 check and one-second 4K compatibility render
+passed with an advisory-free tool graph. This does not establish full-film frame
+parity or validate the World Bank video.
