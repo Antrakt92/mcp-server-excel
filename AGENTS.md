@@ -172,9 +172,11 @@ dotnet build Sbroenne.ExcelMcp.sln -c Release --no-restore
 Build with zero warnings. Use targeted tests; see the
 [testing strategy](tests/AGENTS.md). Run every Excel-dependent test command
 sequentially; never overlap Excel test fixtures, test hosts, or E2E runs.
-You may close or stop any Excel copy on the machine, for example one left by a
-test run; test code still must not. Report each copy you closed by process
-number and start time.
+Agent cleanup may close or stop only a positively identified Excel process owned
+by the current task, using its captured PID/start-time identity and retained
+process handle. Preserve unrelated or uncertain owners and their unsaved work;
+test code still must not stop processes. Report each process closed by PID and
+start time. Failed cleanup still fails the test run.
 The commit hook builds selected inputs and runs selected `Fast` unit tests from
 CLI, MCP Server, Core, and Service (`Commit` group), excluding
 `AdapterTestKind=System` and `Speed=Slow`. ComInterop-specific, process, tooling,
@@ -190,6 +192,9 @@ require all feature tests, complete acceptance, or all ComInterop diagnostics.
 Expand coverage when the change affects a shared contract or lifetime,
 focused tests reveal wider failures, or a specific risk is not covered.
 Run the full suite only when that wider scope is justified or explicitly requested.
+
+Before executing development binaries, follow the
+[development build identity checkpoint](docs/fork/AGENT-WORKFLOWS.md#development-build-identity).
 
 Changes that may depend on language or regional settings, including formula
 parsing, numbers, dates, formatting, and localized text, must be tested with

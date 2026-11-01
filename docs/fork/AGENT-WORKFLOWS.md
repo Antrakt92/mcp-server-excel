@@ -3,6 +3,21 @@
 These workflows describe the development branch. Discover the running tool
 schema or CLI help before using an option with an older installed release.
 
+## Development build identity
+
+Before source validation, identify the checkout, branch/base and uncommitted
+changes. Build the affected product and test projects together from that checkout
+and execute its outputs; verification through an installed CLI wrapper or MCP
+connection is separate evidence. Confirm the actual launcher and worker paths
+before attributing results to the candidate.
+
+After source or commit changes, rebuild the matching product/test closure before
+interpreting worker identity failures. A pre-commit build can embed the previous
+Git revision, and a worker rebuilt during testing can have a different Service
+module version ID (MVID). Preserve build identity checks; do not copy individual
+DLLs or weaken validation to hide a mismatch. Do not overlap builds or native
+test runs against the same output tree.
+
 ## Persistent inspection
 
 For an extended inspection, open with MCP `file` action `open` and
@@ -77,9 +92,18 @@ in tiles of at most 1,000 cells. Reads preserve cached results without requestin
 calculation. Excel errors retain canonical representation and actual cell
 addresses; ordinary numeric constants matching COM error codes remain numbers.
 
+When developing error handling, preserve both numeric constants and formula
+results that match COM error codes. Confirm native cell error identity before
+assigning an error name, diagnostics or a blocked-spill state; numeric equality
+alone is insufficient. Cover affected scalar/grid reads, formula traces and spill
+inspection with focused real-Excel regressions containing both numeric collisions
+and actual errors. This is a development invariant, not proof that an untested
+caller already satisfies it.
+
 Use `range_format_read` action `get-format-summary` for aggregate stored,
 displayed or both views, including mixed fields. It is not a per-cell histogram;
 detailed `get-format` permits at most 10,000 cells.
+
 ## Formula preflight and workbook identity
 
 `range` action `validate-formula` reports `validationScope` and
