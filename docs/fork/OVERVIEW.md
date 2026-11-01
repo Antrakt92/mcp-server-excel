@@ -26,6 +26,11 @@ creation aliases, and updates extension packaging dependencies. See the
 
 ## Scope
 
+Fork 3.3.1 fixes structured CLI JSON arguments: camelCase fields retain VBA
+argument types and range/table sort settings, while PascalCase remains supported.
+The upstream base, dependencies and operation counts are unchanged. See the
+[3.3.1 notes](CHANGELOG.md#331--2026-11-01).
+
 The fork hardens the MCP process boundary: stdin EOF, terminal stdout failure, owning-client lifetime, a single JSON-RPC stdout stream, and bounded outstanding request admission through cancellation cleanup. It uses native Excel for workbook operations. Current fork additions include persistent audit sessions, bounded range reads and formatting summaries, guarded whole-module replacement and typed VBA invocation. [Agent workflows](AGENT-WORKFLOWS.md) describes their inputs and limits.
 
 CLI connection drain is bounded after shutdown: clients receive the existing response grace, then retained transport pipes are closed after two seconds. This closes connections, not workbook operations. Generated MCP replies reuse the normalized Service result, preserving public content, error classification and telemetry. Screenshot conversion keeps its existing path.
@@ -38,7 +43,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.3.0 verification](VERIFICATION-3.3.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.3.1 verification](VERIFICATION-3.3.1.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 
