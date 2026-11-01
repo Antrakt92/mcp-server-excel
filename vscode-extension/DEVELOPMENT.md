@@ -42,6 +42,14 @@ and Azure Identity's code, client-secret and interactive request adaptation.
 These tests do not establish live tenant authentication; the package command
 separately exercises vsce and verifies the resulting VSIX contents.
 
+VSCE's minimatch dependency is pinned to 11.0.3 within the VSCE dependency tree
+to address [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
+This also affects packaging tools only. Remove the override when VSCE declares
+a patched minimatch version. `tests/packaging-files.test.ts` exercises VSCE's
+actual file listing with the extension's ignore rules, including exclusions and
+explicit negation patterns. It also checks preprocessing limits in the minimatch
+instance resolved from VSCE, using bounded synthetic patterns.
+
 After a Release solution build, `npm run package` uses
 `scripts/Build-ReleasePackages.ps1 -Components Extension`. It publishes the MCP
 runtimes for x64 and ARM64, generates complete skills, installs locked extension
