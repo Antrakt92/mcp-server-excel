@@ -7,11 +7,95 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.0) | 2026-11-01 | Chart title placement, axis line formatting and named-range overwrite protection |
 | [3.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.2.0) | 2026-10-31 | Worksheet scroll/selection controls and completed-session cancellation recovery |
 | [3.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.1.0) | 2026-10-30 | Chart text formatting, native PivotCache sharing, close timings and MCP response optimization |
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.3.0 — 2026-11-01
+
+Position chart titles, format axis lines and create named ranges without changing
+an existing definition by mistake. Based on upstream 2.6.7, with 438 operations
+through 63 MCP tools across 33 feature areas.
+
+### Chart titles and axis lines
+
+- `chart_config` / `chartconfig` `set-title` accepts `left`, `top` and
+  `alignment`. Coordinates are points from the chart's own edges; alignment
+  controls text inside the title box. Omitted settings are preserved. An empty
+  title hides it and cannot be combined with layout settings.
+- The new `set-axis-format` action sets an existing axis line's colour, weight
+  and visibility. It supports primary and secondary category/value axes. Changing
+  colour or weight alone keeps the current visibility; tick labels and gridlines
+  are preserved.
+- `set-area-format` also accepts `line_visible` / `--line-visible` for the chart
+  or plot-area border. Use `false` to hide the border without changing its fill.
+- These controls work with ordinary charts and PivotCharts. See the
+  [chart guide](../reference/chart.md#title-placement-and-chart-lines) for inputs
+  and the distinction between title placement and alignment.
+
+### Named-range creation
+
+Creating an existing name could silently replace its definition with `=0` before
+Excel rejected a formula. The guard now recognises Excel's aliases: surrounding
+ASCII spaces, quoted worksheet scopes, active-sheet local names and equivalent
+Unicode spellings such as `Straße` / `STRASSE`. Hidden names are included. A
+rejected duplicate preserves its formula and visibility, including after reopen.
+
+New names are created with their final name, then assigned through Excel's
+English R1C1 formula interface. This avoids temporary-name residue and localised
+formula assignment. Testing on an actual German Excel configuration remains a
+separate check; changing only the caller culture does not establish that coverage.
+If formula assignment fails after a new name was
+created, that new name remains for inspection; the error reports the partial
+state. Existing names are not changed or deleted to recover from the failure.
+
+### Dependencies and tooling
+
+| Dependency | Previous | New | Scope |
+| --- | --- | --- | --- |
+| `minimatch` under VSCE | 10.2.6 | 11.0.3 | Extension packaging; scoped override for [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249) |
+| `@isaacs/nonrecursive-glob-match` | Not present | 1.0.3 | Transitive dependency of the patched glob matcher |
+| `@types/vscode` | 1.140.0 | 1.144.0 | Extension development types; minimum VS Code version unchanged |
+| `@changesets/format` | 0.1.2 | 0.1.3 | Release-note tooling |
+| Introduction video HyperFrames CLI | 0.8.184 | 0.8.214 | Video tooling; separately audited `npx` dependency graph |
+
+The minimatch advisory concerns optimisation level 2. VSCE's current matching
+path uses the default level 1; the update removes the affected component without
+claiming a demonstrated exploit through that packaging command. Regression tests
+cover preprocessing limits, exclusions and ignore-file negation. The extension's
+packaged file list is unchanged.
+
+Two unused NuGet pins referenced versions that were never published:
+`System.Net.Http` 4.3.5 and `System.Text.RegularExpressions` 4.3.2. They are removed;
+neither package was in the resolved dependency graph. Resolved .NET dependencies
+and the pinned .NET SDK 10.0.403 are unchanged.
+
+The root and extension npm audits and all-project NuGet audit reported no
+vulnerabilities on 2026-11-01. HyperFrames 0.8.226 was rejected because its resolved
+graph contains vulnerable Undici 7.25.0. Other deferred tooling updates and their
+remaining checks are recorded in [BUILD.md](BUILD.md#deferred-tooling-updates).
+
+### Upstream, upgrade and verification
+
+Includes upstream's chart controls and the named-range regional-formula and
+error-reporting fixes. Upstream accepted our ServiceClient cancellation/timeout
+changes in [#1280](https://github.com/sbroenne/mcp-server-excel/pull/1280); the fork
+already carried that behavior. Our named-range follow-up remains under review
+in [#1279](https://github.com/sbroenne/mcp-server-excel/pull/1279).
+
+Use the 3.3.0 portable MCP/CLI packages, verify their checksums and reconnect MCP
+clients or restart the relevant CLI service. No breaking migration is required.
+Upstream npm, extension and registry metadata is 2.6.7; this fork release publishes
+the portable Windows x64 packages only.
+
+See [3.3.0 verification](VERIFICATION-3.3.0.md) and the release's
+`VERIFICATION-RESULTS.json` for exact source, protocol and native checks against
+the shipped binaries. This release makes no new performance claim. Synthetic
+fixtures do not establish customer calculation or print equivalence; portable
+packages remain unsigned.
 
 ## 3.2.0 — 2026-10-31
 

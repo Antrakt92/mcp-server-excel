@@ -13,8 +13,10 @@ import ctypes
 from ctypes import wintypes
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -71,6 +73,182 @@ def owned_fixture_sessions(entries, path, id_key):
 
 
 DATA = [["Item", "Count", "Approved"], ["synthetic", 7, True], ["other", 11, False]]
+GUARD_NAME = "PackagedGuard"
+CHART_NAME = "PackagedChart"
+CHART_TITLE = "Packaged native controls"
+PROBE_CODE = '''Public Function PackagedValue(ByVal token As Variant, ByVal amount As Variant) As String
+PackagedValue = CStr(token) & ":" & CStr(amount)
+End Function
+
+Public Function PackagedPrepareGuard() As Boolean
+On Error GoTo Failed
+ThisWorkbook.Names("PackagedGuard").Visible = False
+PackagedPrepareGuard = True
+Exit Function
+Failed:
+PackagedPrepareGuard = False
+End Function
+
+Public Function PackagedNameState() As String
+On Error GoTo Failed
+With ThisWorkbook.Names("PackagedGuard")
+PackagedNameState = CStr(.RefersTo) & "|" & CStr(Abs(CLng(.Visible)))
+End With
+Exit Function
+Failed:
+PackagedNameState = "probe failed"
+End Function
+
+Public Function PackagedChartState() As String
+On Error GoTo Failed
+Dim nativeChart As Chart
+Dim nativeTitle As ChartTitle
+Dim nativeLine As Object
+Set nativeChart = ThisWorkbook.Worksheets("Sheet1").ChartObjects("PackagedChart").Chart
+Set nativeTitle = nativeChart.ChartTitle
+Set nativeLine = nativeChart.Axes(2, 1).Format.Line
+PackagedChartState = nativeTitle.Text & "|" & CStr(nativeTitle.Left) & "|" & CStr(nativeTitle.Top) & _
+ "|" & CStr(nativeTitle.Format.TextFrame2.TextRange.ParagraphFormat.Alignment) & _
+ "|" & CStr(nativeLine.ForeColor.RGB) & "|" & CStr(nativeLine.Weight) & "|" & CStr(nativeLine.Visible)
+Exit Function
+Failed:
+PackagedChartState = "probe failed"
+End Function'''
+
+
+def packaged_call(host, command, arguments, identifier, expected_error=False):
+    """Keep the recorded CLI and MCP spelling at their actual public boundaries."""
+    if host.id_key != McpHost.id_key:
+        return host.call(command, arguments, identifier, expected_error)
+    tools = {"vba.import": "vba", "vba.view": "vba_read", "vba.replace-module": "vba", "vba.invoke": "vba",
+             "namedrange.create": "namedrange", "chart.create-from-range": "chart", "chart.read": "chart_read",
+             "chartconfig.set-title": "chart_config", "chartconfig.set-axis-format": "chart_config",
+             "chartconfig.set-plot-options": "chart_config"}
+    keys = {"moduleName": "module_name", "vbaCode": "vba_code", "expectedSourceHash": "expected_source_hash",
+            "procedureName": "procedure_name", "arguments": "arguments", "name": "name", "reference": "reference",
+            "sheetName": "sheet_name", "sourceRangeAddress": "source_range_address", "chartType": "chart_type",
+            "chartName": "chart_name", "left": "left", "top": "top", "width": "width", "height": "height",
+            "title": "title", "alignment": "alignment", "axis": "axis", "lineColor": "line_color",
+            "lineWeight": "line_weight", "lineVisible": "line_visible", "plotBy": "plot_by"}
+    require(command in tools and arguments.keys() <= keys.keys(), "Packaged smoke uses an unknown public input spelling.")
+    payload = {keys[key]: value for key, value in arguments.items()}
+    payload.update(action=command.split(".", 1)[1], workbook_session_id=identifier)
+    return host.call(tools[command], payload, expected_error)
+
+
+def invoke_probe(host, identifier, procedure):
+    return packaged_call(host, "vba.invoke", {"procedureName": "PackagedSmoke." + procedure, "arguments": []}, identifier)
+
+
+def verify_named_range_state(value):
+    require(isinstance(value, dict) and value.get("returnKind") == "string" and value.get("value") == "=7|0",
+            "The original hidden named range reference or visibility changed.")
+
+
+def probe_number(value):
+    require(isinstance(value, str) and re.fullmatch(r"-?[0-9]+(?:[.,][0-9]+)?", value) is not None,
+            "The native chart probe returned an invalid number.")
+    number = float(value.replace(",", "."))
+    require(math.isfinite(number), "The native chart probe returned a non-finite number.")
+    return number
+
+
+def verify_chart_state(value):
+    require(isinstance(value, dict) and value.get("returnKind") == "string" and isinstance(value.get("value"), str),
+            "The native chart inspection did not return a string result.")
+    parts = value["value"].split("|")
+    require(len(parts) == 7 and parts[0] == CHART_TITLE, "The native chart title or probe shape changed.")
+    require(math.isclose(probe_number(parts[1]), 16, abs_tol=0.1, rel_tol=0)
+            and math.isclose(probe_number(parts[2]), 12, abs_tol=0.1, rel_tol=0), "The chart title position changed.")
+    require(parts[3] == "1", "The chart title paragraph alignment changed.")
+    require(parts[4] == str(0xAC6824), "The native axis line colour changed.")
+    require(math.isclose(probe_number(parts[5]), 2.5, abs_tol=0.01, rel_tol=0) and parts[6] == "0",
+            "The native axis line weight or visibility changed.")
+
+
+def verify_chart_read(value):
+    require(isinstance(value, dict) and value.get("name") == CHART_NAME and value.get("sheetName") == "Sheet1"
+            and value.get("title") == CHART_TITLE, "Public chart inspection returned a different chart or title.")
+    series = value.get("series")
+    require(isinstance(series, list) and len(series) == 1 and isinstance(series[0], dict), "The chart series shape changed.")
+    points = series[0].get("values")
+    require(isinstance(points, list) and len(points) == 2
+            and all(type(point) in (int, float) and point == target for point, target in zip(points, (7, 11)))
+            and series[0].get("categories") == ["synthetic", "other"], "The chart no longer plots the original data.")
+
+
+def verify_duplicate_error(value):
+    require(isinstance(value, dict), "The named-range rejection did not return an error object.")
+    message = value.get("errorMessage")
+    if message is None and isinstance(value.get("error"), dict):
+        message = value["error"].get("message")
+    require(isinstance(message, str) and "already exists" in message.lower(),
+            "The duplicate named-range request failed for a different reason.")
+
+
+def prepare_packaged_controls(host, identifier):
+    packaged_call(host, "vba.import", {"moduleName": "PackagedSmoke", "vbaCode": PROBE_CODE}, identifier)
+    source = packaged_call(host, "vba.view", {"moduleName": "PackagedSmoke"}, identifier)
+    replacement = PROBE_CODE.replace("CStr(token)", '"guarded:" & CStr(token)')
+    packaged_call(host, "vba.replace-module", {"moduleName": "PackagedSmoke", "expectedSourceHash": source["sourceHash"],
+                                             "vbaCode": replacement}, identifier)
+    invoked = packaged_call(host, "vba.invoke", {"procedureName": "PackagedSmoke.PackagedValue",
+                                                "arguments": [{"type": "string", "value": "synthetic"},
+                                                              {"type": "number", "value": 7}]}, identifier)
+    require(invoked.get("returnKind") == "string" and invoked.get("value") == "guarded:synthetic:7", "Packaged typed VBA result changed.")
+    host.report["guarded_vba_and_typed_invoke"] = True
+    packaged_call(host, "namedrange.create", {"name": GUARD_NAME, "reference": "=7"}, identifier)
+    prepared = invoke_probe(host, identifier, "PackagedPrepareGuard")
+    require(prepared.get("returnKind") == "boolean" and prepared.get("value") is True, "The hidden-name fixture was not prepared.")
+    verify_named_range_state(invoke_probe(host, identifier, "PackagedNameState"))
+    for reference in ("=1.25", "=SUM(MissingPackagedTable[Value])"):
+        refused = packaged_call(host, "namedrange.create", {"name": GUARD_NAME + " ", "reference": reference}, identifier, True)
+        verify_duplicate_error(refused)
+        verify_named_range_state(invoke_probe(host, identifier, "PackagedNameState"))
+    packaged_call(host, "chart.create-from-range", {"sheetName": "Sheet1", "sourceRangeAddress": "A1:B3",
+                                                   "chartType": "ColumnClustered", "chartName": CHART_NAME}, identifier)
+    # Excel chooses rows for this small source; fix orientation before its
+    # automatic title changes can overwrite the explicit title controls.
+    packaged_call(host, "chartconfig.set-plot-options", {"chartName": CHART_NAME, "plotBy": "Columns"}, identifier)
+    packaged_call(host, "chartconfig.set-title", {"chartName": CHART_NAME, "title": CHART_TITLE,
+                                                 "left": 16, "top": 12, "alignment": "Left"}, identifier)
+    packaged_call(host, "chartconfig.set-axis-format", {"chartName": CHART_NAME, "axis": "Value", "lineColor": "#2468AC",
+                                                       "lineWeight": 2.5, "lineVisible": False}, identifier)
+    verify_packaged_controls(host, identifier)
+
+
+def verify_packaged_controls(host, identifier):
+    verify_named_range_state(invoke_probe(host, identifier, "PackagedNameState"))
+    verify_chart_read(packaged_call(host, "chart.read", {"chartName": CHART_NAME}, identifier))
+    verify_chart_state(invoke_probe(host, identifier, "PackagedChartState"))
+
+
+def verify_saved_controls(host, path, identities, saved_hash):
+    if host.id_key == McpHost.id_key:
+        opened = host.call("file", {"action": "open", "file_path": str(path)})
+    else:
+        opened = host.direct(["session", "open", str(path)], "session.open")
+    identifier = opened[host.id_key]
+    host.native.capture(required=True)
+    # Normal opens disable persisted VBA. Approve only this known synthetic
+    # fixture through the public reopen action; never change Office policy.
+    if host.id_key == McpHost.id_key:
+        approved = host.call("file", {"action": "enable-macros", "workbook_session_id": identifier,
+                                      "approved": True, "allow_reopen": True})
+    else:
+        approved = host.call("session.enable-macros", {"approved": True, "allowReopen": True}, identifier)
+    security = approved.get("security")
+    require(isinstance(security, dict) and security.get("action") == "enable-macros"
+            and security.get("changed") is True and security.get("reopened") is True
+            and security.get("trustMayBeRemembered") is False, "Synthetic fixture macro reopening was not confirmed.")
+    selected = owned_fixture_sessions(host.sessions(), path, host.id_key)
+    require(len(selected) == 1 and selected[0][1] is True, "The reopened synthetic fixture was not uniquely retained.")
+    identifier = selected[0][0]
+    host.native.capture(required=True)
+    verify_packaged_controls(host, identifier)
+    host.close(identifier)
+    require(identities.file_identity(path)["sha256"] == saved_hash, "Native read probes altered the saved workbook.")
+    host.report.update(named_range_protection_passed=True, chart_controls_passed=True, fixture_macro_reopen_approved=True)
 
 
 def verify_page(page):
@@ -271,11 +449,13 @@ class McpHost:
         self.report["tool_count"] = self.protocol.initialize(self.process, out)
         self.protocol.send(self.process, 3, "tools/list", {})
         self.schemas = {tool["name"]: tool["inputSchema"] for tool in self.response(3)["tools"]}
-        required = {"file": {"read_only", "workbook_session_id", "file_path"},
+        required = {"file": {"read_only", "workbook_session_id", "file_path", "approved", "allow_reopen"},
                     "file_read": {"action"}, "range": {"values", "range_address"},
                     "range_read": {"page_rows", "page_columns"}, "range_format_read": {"view"},
                     "workbook_read": {"action"}, "vba": {"arguments", "expected_source_hash"},
-                    "vba_read": {"module_name"}}
+                    "vba_read": {"module_name"}, "namedrange": {"name", "reference"},
+                    "chart": {"source_range_address", "chart_type", "chart_name"}, "chart_read": {"chart_name"},
+                    "chart_config": {"chart_name", "left", "top", "alignment", "axis", "line_color", "line_weight", "line_visible", "plot_by"}}
         for name, fields in required.items():
             require(name in self.schemas and fields <= self.schemas[name].get("properties", {}).keys(), "Packaged MCP schema lacks a required smoke capability.")
         require(self.sessions() == [], "Fresh smoke MCP host already owns workbook sessions.")
@@ -433,17 +613,7 @@ def mcp_case(host, path, identities):
     host.native.capture(required=True)
     host.call("range", {"action": "set-values", "workbook_session_id": identifier,
                         "sheet_name": "Sheet1", "range_address": "A1:C3", "values": DATA})
-    code = 'Public Function PackagedValue(ByVal token As Variant, ByVal amount As Variant) As String\nPackagedValue = CStr(token) & ":" & CStr(amount)\nEnd Function'
-    host.call("vba", {"action": "import", "workbook_session_id": identifier, "module_name": "PackagedSmoke", "vba_code": code})
-    source = host.call("vba_read", {"action": "view", "workbook_session_id": identifier, "module_name": "PackagedSmoke"})
-    replacement = code.replace("CStr(token)", '"guarded:" & CStr(token)')
-    host.call("vba", {"action": "replace-module", "workbook_session_id": identifier,
-                      "module_name": "PackagedSmoke", "expected_source_hash": source["sourceHash"], "vba_code": replacement})
-    invoked = host.call("vba", {"action": "invoke", "workbook_session_id": identifier,
-                               "procedure_name": "PackagedSmoke.PackagedValue",
-                               "arguments": [{"type": "string", "value": "synthetic"}, {"type": "number", "value": 7}]})
-    require(invoked.get("returnKind") == "string" and invoked.get("value") == "guarded:synthetic:7", "Packaged typed VBA result changed.")
-    host.report["guarded_vba_and_typed_invoke"] = True
+    prepare_packaged_controls(host, identifier)
     view = {"workbook_session_id": identifier, "sheet_name": "Sheet1"}
     verify_view(host.call("window", dict(view, action="set-view", top_left_cell="E20", select="H30:I32")))
     verify_view(host.call("window", dict(view, action="get-view")))
@@ -451,6 +621,7 @@ def mcp_case(host, path, identities):
     host.call("file", {"action": "save", "workbook_session_id": identifier})
     host.close(identifier)
     before = identities.file_identity(path)["sha256"]
+    verify_saved_controls(host, path, identities, before)
     audit = host.call("file", {"action": "open", "file_path": str(path), "read_only": True})
     identifier = audit[host.id_key]
     host.native.capture(required=True)
@@ -475,12 +646,14 @@ def cli_case(host, path, identities):
     identifier = host.direct(["session", "create", str(path)], "session.create")["sessionId"]
     host.native.capture(required=True)
     host.call("range.set-values", {"sheetName": "Sheet1", "rangeAddress": "A1:C3", "values": DATA}, identifier)
+    prepare_packaged_controls(host, identifier)
     verify_view(host.call("window.set-view", {"sheetName": "Sheet1", "topLeftCell": "E20", "select": "H30:I32"}, identifier))
     verify_view(host.call("window.get-view", {"sheetName": "Sheet1"}, identifier))
     host.report["worksheet_view_passed"] = True
     host.call("session.save", identifier=identifier)
     host.close(identifier)
     before = identities.file_identity(path)["sha256"]
+    verify_saved_controls(host, path, identities, before)
     audit = host.direct(["session", "open", str(path), "--read-only"], "session.open")
     identifier = audit["sessionId"]
     host.native.capture(required=True)
@@ -517,6 +690,177 @@ def cleanup_fixtures(root, report, remove=shutil.rmtree):
 
 
 class ParserTests(unittest.TestCase):
+    def test_named_range_probe_rejects_replaced_reference_or_visibility(self):
+        verify_named_range_state({"returnKind": "string", "value": "=7|0"})
+        for value in ("=0|0", "=1.25|0", "=7|1", "=7|False", "probe failed", None):
+            with self.subTest(value=value), self.assertRaises(SmokeError):
+                verify_named_range_state({"returnKind": "string", "value": value})
+        with self.assertRaises(SmokeError):
+            verify_named_range_state({"returnKind": "boolean", "value": "=7|0"})
+
+    def test_chart_probe_requires_all_observed_controls_and_accepts_decimal_comma(self):
+        fields = [CHART_TITLE, "16", "12", "1", str(0xAC6824), "2.5", "0"]
+        verify_chart_state({"returnKind": "string", "value": "|".join(fields)})
+        verify_chart_state({"returnKind": "string", "value": "|".join(fields).replace("2.5", "2,5")})
+        for index, replacement in enumerate(("stale", "0", "0", "2", "0", "1", "-1")):
+            altered = list(fields)
+            altered[index] = replacement
+            with self.subTest(field=index), self.assertRaises(SmokeError):
+                verify_chart_state({"returnKind": "string", "value": "|".join(altered)})
+        for number in ("NaN", "Infinity", "", " 16", "16x", "1,2.3"):
+            with self.subTest(number=number), self.assertRaises(SmokeError):
+                probe_number(number)
+        with self.assertRaises(SmokeError):
+            verify_chart_state({"returnKind": "string", "value": "|".join(fields[:-1])})
+
+    def test_public_chart_read_requires_original_series_values_and_categories(self):
+        value = {"name": CHART_NAME, "sheetName": "Sheet1", "title": CHART_TITLE,
+                 "series": [{"values": [7, 11], "categories": ["synthetic", "other"]}]}
+        verify_chart_read(value)
+        for key in ("name", "sheetName", "title"):
+            with self.subTest(field=key), self.assertRaises(SmokeError):
+                verify_chart_read(dict(value, **{key: "stale"}))
+        for points in (["7", 11], [True, 11], [7], [7, 12]):
+            with self.subTest(points=points), self.assertRaises(SmokeError):
+                verify_chart_read(dict(value, series=[{"values": points, "categories": ["synthetic", "other"]}]))
+        with self.assertRaises(SmokeError):
+            verify_chart_read(dict(value, series=[{"values": [7, 11], "categories": ["other", "synthetic"]}]))
+
+    def test_recorded_public_inputs_preserve_false_and_expected_error(self):
+        class RecordingHost:
+            def __init__(self, id_key):
+                self.id_key, self.calls = id_key, []
+
+            def call(self, *args):
+                self.calls.append(args)
+                return {}
+
+        arguments = {"chartName": CHART_NAME, "axis": "Value", "lineColor": "#2468AC", "lineWeight": 2.5, "lineVisible": False}
+        mcp, cli = RecordingHost(McpHost.id_key), RecordingHost(CliHost.id_key)
+        packaged_call(mcp, "chartconfig.set-axis-format", arguments, "owned")
+        packaged_call(cli, "chartconfig.set-axis-format", arguments, "owned")
+        self.assertEqual(("chart_config", {"action": "set-axis-format", "workbook_session_id": "owned", "chart_name": CHART_NAME,
+                         "axis": "Value", "line_color": "#2468AC", "line_weight": 2.5, "line_visible": False}, False), mcp.calls[0])
+        self.assertEqual(("chartconfig.set-axis-format", arguments, "owned", False), cli.calls[0])
+        packaged_call(mcp, "namedrange.create", {"name": GUARD_NAME + " ", "reference": "=1.25"}, "owned", True)
+        self.assertEqual("namedrange", mcp.calls[1][0])
+        self.assertTrue(mcp.calls[1][2])
+        for arguments in ({"chart_name": CHART_NAME}, {"chartName": CHART_NAME, "unsupported": True}):
+            with self.assertRaises(SmokeError):
+                packaged_call(mcp, "chart.read", arguments, "owned")
+
+    def test_duplicate_error_requires_native_duplicate_reason(self):
+        verify_duplicate_error({"errorMessage": "Named range already exists"})
+        verify_duplicate_error({"error": {"message": "Named range already exists"}})
+        for value in ({"errorMessage": "Unknown action"}, {"error": {"message": "Permission denied"}}, {}):
+            with self.subTest(value=value), self.assertRaises(SmokeError):
+                verify_duplicate_error(value)
+
+    def test_control_preparation_sets_column_orientation_before_title_and_axis(self):
+        class RecordingHost:
+            def __init__(self, id_key):
+                self.id_key, self.report, self.calls = id_key, {}, []
+
+            def call(self, name, args, identifier=None, expected_error=False):
+                self.calls.append((name, dict(args), identifier, expected_error))
+                action = args.get("action", name.split(".")[-1])
+                if action == "view":
+                    return {"sourceHash": "original"}
+                if action == "create" and args.get("name") == GUARD_NAME + " ":
+                    return {"errorMessage": "Named range already exists"}
+                if action == "invoke":
+                    procedure = args.get("procedure_name", args.get("procedureName"))
+                    if procedure.endswith("PackagedPrepareGuard"):
+                        return {"returnKind": "boolean", "value": True}
+                    value = ("guarded:synthetic:7" if procedure.endswith("PackagedValue") else
+                             "=7|0" if procedure.endswith("PackagedNameState") else
+                             f"{CHART_TITLE}|16|12|1|{0xAC6824}|2.5|0")
+                    return {"returnKind": "string", "value": value}
+                if action == "read":
+                    return {"name": CHART_NAME, "sheetName": "Sheet1", "title": CHART_TITLE,
+                            "series": [{"values": [7, 11], "categories": ["synthetic", "other"]}]}
+                return {}
+
+        for id_key in (McpHost.id_key, CliHost.id_key):
+            with self.subTest(entry_point=id_key):
+                host = RecordingHost(id_key)
+                prepare_packaged_controls(host, "owned")
+                chart_calls = [call for call in host.calls if call[0] in
+                               ("chart", "chart.create-from-range", "chart_config") or call[0].startswith("chartconfig.")]
+                actions = [args.get("action", name.split(".")[-1]) for name, args, _, _ in chart_calls]
+                self.assertEqual(["create-from-range", "set-plot-options", "set-title", "set-axis-format"], actions)
+                if id_key == McpHost.id_key:
+                    self.assertEqual(("chart_config", {"action": "set-plot-options", "workbook_session_id": "owned",
+                                      "chart_name": CHART_NAME, "plot_by": "Columns"}, False, False), chart_calls[1])
+                else:
+                    self.assertEqual(("chartconfig.set-plot-options", {"chartName": CHART_NAME, "plotBy": "Columns"},
+                                      "owned", False), chart_calls[1])
+
+    def test_saved_control_flags_require_native_roundtrip_and_unchanged_file(self):
+        class Native:
+            def __init__(self):
+                self.captures = 0
+
+            def capture(self, required):
+                require(required is True, "Native capture was optional.")
+                self.captures += 1
+
+        class Host:
+            def __init__(self, wrong, id_key):
+                self.report, self.native, self.wrong, self.closed = {}, Native(), wrong, []
+                self.id_key = id_key
+
+            def direct(self, arguments, command):
+                require(command == "session.open", "Unexpected recording command.")
+                return {self.id_key: "opened"}
+
+            def sessions(self):
+                return [{self.id_key: "reopened", "filePath": "synthetic.xlsm", "isAttached": False, "canClose": True}]
+
+            def call(self, name, args, identifier=None, expected_error=False):
+                if name == "file" and args["action"] == "open":
+                    return {self.id_key: "opened"}
+                if name in ("file", "session.enable-macros"):
+                    require(args.get("approved") is True and args.get("allow_reopen", args.get("allowReopen")) is True,
+                            "Fixture approval was missing.")
+                    require(args.get("workbook_session_id", identifier) == "opened", "Wrong fixture was approved.")
+                    return {"security": {"action": "enable-macros", "changed": self.wrong != "security",
+                                          "reopened": True, "trustMayBeRemembered": False}}
+                if name in ("chart_read", "chart.read"):
+                    return {"name": CHART_NAME, "sheetName": "Sheet1", "title": CHART_TITLE,
+                            "series": [{"values": [7, 11], "categories": ["synthetic", "other"]}]}
+                require(name in ("vba", "vba.invoke"), "Unexpected recording call.")
+                require(args.get("workbook_session_id", identifier) == "reopened", "The replaced fixture identifier was ignored.")
+                procedure = args.get("procedure_name", args.get("procedureName"))
+                value = "=7|0" if procedure.endswith("PackagedNameState") else f"{CHART_TITLE}|16|12|1|{0xAC6824}|2.5|0"
+                return {"returnKind": "string", "value": "stale" if self.wrong == "native" else value}
+
+            def close(self, identifier):
+                self.closed.append(identifier)
+
+        class Identities:
+            def __init__(self, wrong):
+                self.wrong = wrong
+
+            def file_identity(self, path):
+                return {"sha256": "changed" if self.wrong == "file" else "saved"}
+
+        for id_key in (McpHost.id_key, CliHost.id_key):
+            for wrong in (None, "native", "file", "security"):
+                with self.subTest(entry_point=id_key, wrong=wrong):
+                    host = Host(wrong, id_key)
+                    if wrong:
+                        with self.assertRaises(SmokeError):
+                            verify_saved_controls(host, Path("synthetic.xlsm"), Identities(wrong), "saved")
+                        self.assertNotIn("named_range_protection_passed", host.report)
+                        self.assertNotIn("chart_controls_passed", host.report)
+                    else:
+                        verify_saved_controls(host, Path("synthetic.xlsm"), Identities(wrong), "saved")
+                        self.assertEqual({"named_range_protection_passed": True, "chart_controls_passed": True,
+                                          "fixture_macro_reopen_approved": True}, host.report)
+                        self.assertEqual(["reopened"], host.closed)
+                        self.assertEqual(2, host.native.captures)
+
     def test_view_requires_observed_scroll_selection_and_active_cell(self):
         value = {"sheetName": "Sheet1", "topLeftCell": "$E$20", "selectionKind": "range",
                  "selectedRangeAddress": "$H$30:$I$32", "activeCellAddress": "$H$30"}
