@@ -29,7 +29,7 @@ The builder checks native PE architecture and version metadata. These are packag
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
-The canonical upstream npm/registry/extension metadata is at 2.6.8. The
+The canonical upstream npm/registry/extension metadata is at 2.6.9. The
 portable fork builder explicitly applies the supplied fork version to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 

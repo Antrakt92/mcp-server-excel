@@ -17,6 +17,14 @@ retains the original project's version numbers and contributor credits.
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
+## Unreleased
+
+- Integrate upstream 2.6.9 and its MCP `batch` tool. Agents can run a known sequence in one call with per-command results, an optional default workbook session and `stop_on_error`. Timeouts, cancellation and unknown completion stop later commands; earlier workbook edits are not rolled back.
+- Keep the fork's audit sessions, bounded range pages and session identifier aliases available through batch. The development catalogue now has 64 MCP tools and 439 operations.
+- Include the accepted upstream versions of our named-range creation and CLI sort-option JSON fixes. These fixes were already present in the fork; the sync preserves their upstream history.
+
+These changes are in source `main`; the published portable packages remain 3.4.1.
+
 ## 3.4.1 — 2026-11-02
 
 A formula returning `-2146826243` could be reported as a blocked `#SPILL!`

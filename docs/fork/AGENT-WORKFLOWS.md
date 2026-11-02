@@ -38,6 +38,20 @@ survives native Save As and path reconciliation. Normal shutdown preserves
 unsaved interactive edits through the ordinary handover policy; it does not
 save or discard them automatically.
 
+## MCP batch on development main
+
+The `batch` tool, action `run`, accepts entries with `command`, optional
+`sessionId`, and `args` in Service camelCase. For example, `session.open` uses
+`args.readOnly:true`, while `range.get-values-page` uses `args.pageRows`.
+These are different from individual MCP tool inputs such as `read_only`.
+A successful open/create/attach can supply the default session for later entries;
+only that session identifier is carried forward, not other result values.
+
+Use `stop_on_error:true` when later steps depend on earlier ones. Timeout,
+cancellation and unknown completion always stop the sequence. Completed edits
+remain applied; inspect partial results and session state before another request.
+The portable 3.4.1 release does not include this new tool.
+
 ## Interrupted work
 
 Cancellation and timeout stop the caller's wait. Inspect the selected session's
