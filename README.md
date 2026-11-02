@@ -28,7 +28,7 @@ CLI JSON fixes, chart controls, named-range protection, audit and VBA safeguards
 Native help and optional reference documentation remain available without bundled skills.
 Earlier releases keep their original packages and verification receipts.
 
-Development `main` includes upstream 2.6.9, MCP `batch`, and the later custom slicer-style commands: 64 MCP tools across 33 feature areas, with 442 operations. These changes are not part of the portable 3.4.1 packages linked below.
+Development `main` includes upstream 2.6.10, MCP `batch`, and custom slicer-style commands: 64 MCP tools across 33 feature areas, with 442 operations. These changes are not part of the portable 3.4.1 packages linked below.
 
 ## Choose a package
 

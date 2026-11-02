@@ -21,7 +21,7 @@ retains the original project's version numbers and contributor credits.
 
 - Create workbook-owned slicer styles from an existing style, adjust button/header formatting and apply the style without changing the slicer layout or filters. This includes upstream #1298.
 
-- Integrate upstream 2.6.9 and its MCP `batch` tool. Agents can run a known sequence in one call with per-command results, an optional default workbook session and `stop_on_error`. Timeouts, cancellation and unknown completion stop later commands; earlier workbook edits are not rolled back.
+- Integrate upstream through 2.6.10 and its MCP `batch` tool. Agents can run a known sequence in one call with per-command results, an optional default workbook session and `stop_on_error`. Timeouts, cancellation and unknown completion stop later commands; earlier workbook edits are not rolled back.
 - Keep the fork's audit sessions, bounded range pages and session identifier aliases available through batch. The development catalogue now has 64 MCP tools and 442 operations.
 - Include the accepted upstream versions of our named-range creation and CLI sort-option JSON fixes. These fixes were already present in the fork; the sync preserves their upstream history.
 
