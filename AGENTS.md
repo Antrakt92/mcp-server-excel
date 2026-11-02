@@ -143,6 +143,11 @@ assumption that passing compilation proves runtime correctness.
 
 ## Errors
 
+- For intermittent Excel/COM incidents, follow the
+  [evidence and comparison procedure](docs/agents/development.md#intermittent-excel-and-com-failures).
+  A passing rerun does not establish a cause or fix; keep pending execution,
+  macro errors, transport failures, native exit and cleanup evidence distinct.
+
 - Handle failures only where the layer owns recovery or failure transport.
   Preserve the original exception and operation context. Optional reads must not
   treat arbitrary COM failures as absent data. A deliberate best-effort boundary
