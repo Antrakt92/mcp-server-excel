@@ -518,38 +518,46 @@ public sealed class ReleaseMetadataScriptTests
     }
 
     [Theory]
-    [InlineData("none", false)]
-    [InlineData("GenerateOnly", false)]
-    [InlineData("PopulateReferences", false)]
-    [InlineData("GenerateOnly", true)]
-    [InlineData("PopulateReferences", true)]
+    [InlineData("none", false, false)]
+    [InlineData("generate-only", false, false)]
+    [InlineData("populate-references", false, false)]
+    [InlineData("generate-only", true, false)]
+    [InlineData("populate-references", true, false)]
+    [InlineData("none", false, true)]
     [Trait("Category", "Integration")]
     [Trait("Feature", "ReleaseMetadata")]
-    public async Task PluginRepair_RebuildsExactSourceWithOptionalLegacyGenerator(string generatorMode, bool generationFails)
+    public async Task PluginRepair_RebuildsExactSourceWithOptionalLegacyGenerator(
+        string generatorKind, bool generatorFails, bool buildFails)
     {
         var sandbox = CreateSandbox();
         try
         {
             WriteFile(sandbox, Path.Combine("automation", "scripts", "Install-AdoBuildTools.ps1"),
-                "$global:pluginRepairCalls.Add('install-ado')");
+                "Add-Content (Join-Path $PSScriptRoot '..\\..\\calls.txt') 'ado'");
             WriteFile(sandbox, Path.Combine("source", "scripts", "Build-Plugins.ps1"), """
                 param([string]$Version, [string]$OutputDir)
-                $global:pluginRepairCalls.Add("plugins:$Version`:$OutputDir")
+                if ($Version -ne '1.2.3' -or $OutputDir -ne '..\built-plugins') {
+                    throw 'Wrong plugin build arguments.'
+                }
+                Add-Content ..\calls.txt "plugins:$Version"
+                New-Item -ItemType Directory -Path $OutputDir | Out-Null
+                Set-Content (Join-Path $OutputDir 'release.txt') "plugins:$Version"
                 """);
-            if (generatorMode != "none")
+            if (generatorKind != "none")
             {
-                var parameters = generatorMode == "GenerateOnly"
-                    ? "param([switch]$GenerateOnly, [string]$Version)"
-                    : "param([switch]$PopulateReferences)";
-                var validation = generatorMode == "GenerateOnly"
+                var parameters = generatorKind == "generate-only"
+                    ? "[switch]$GenerateOnly, [string]$Version"
+                    : "[switch]$PopulateReferences";
+                var assertion = generatorKind == "generate-only"
                     ? "if (-not $GenerateOnly -or $Version -ne '1.2.3') { throw 'Wrong generator arguments.' }"
                     : "if (-not $PopulateReferences) { throw 'Wrong generator arguments.' }";
-                WriteFile(sandbox, Path.Combine("source", "scripts", "Build-AgentSkills.ps1"),
-                    parameters + "\n" + validation + "\n" +
-                    $"$global:pluginRepairCalls.Add('generate:{generatorMode}')\n" +
-                    (generationFails ? "throw 'fixture generation failed'" : ""));
+                WriteFile(sandbox, Path.Combine("source", "scripts", "Build-AgentSkills.ps1"), $$"""
+                    param({{parameters}})
+                    {{assertion}}
+                    Add-Content ..\calls.txt 'generator:{{generatorKind}}'
+                    {{(generatorFails ? "throw 'Fixture generator failed.'" : "")}}
+                    """);
             }
-
             var workflow = File.ReadAllText(Path.Combine(RepoRoot, ".github", "workflows", "publish-plugins.yml"));
             var step = ExtractPowerShellStep(workflow, "Recover or rebuild only the requested release");
             var runner = Path.Combine(sandbox, "run.ps1");
@@ -557,36 +565,41 @@ public sealed class ReleaseMetadataScriptTests
                 $env:VERSION='1.2.3'
                 $env:TAG='v1.2.3'
                 $env:GITHUB_REPOSITORY='fixture/source'
-                $global:pluginRepairCalls = [Collections.Generic.List[string]]::new()
                 function gh {
+                    $global:LASTEXITCODE=0
                     if (($args -join ' ') -ne 'release view v1.2.3 --repo fixture/source --json assets') {
                         throw "Unexpected remote command: $args"
                     }
-                    $global:LASTEXITCODE = 0
                     '{"assets":[]}'
                 }
                 function dotnet {
-                    if (($args -join ' ') -ne 'build Sbroenne.ExcelMcp.sln -c Release -p:Version=1.2.3') {
-                        throw "Unexpected build command: $args"
+                    if (($args -join ' ') -ne 'build Sbroenne.ExcelMcp.sln -c Release -p:Version=1.2.3' -or
+                        (Split-Path -Leaf $PWD) -ne 'source') {
+                        throw 'Wrong source build arguments or directory.'
                     }
-                    $global:pluginRepairCalls.Add('build')
-                    $global:LASTEXITCODE = 0
+                    Add-Content ..\calls.txt 'build:1.2.3'
+                    {{(buildFails ? "throw 'Fixture build failed.'" : "$global:LASTEXITCODE=0")}}
                 }
-                try {
-                    {{step}}
-                } finally {
-                    ConvertTo-Json -InputObject @($global:pluginRepairCalls.ToArray()) |
-                        Set-Content -LiteralPath (Join-Path $PSScriptRoot 'calls.json')
-                }
+                {{step}}
                 """);
+
             var result = await RunPowerShellScriptAsync(runner, [], sandbox);
-            Assert.True((result.ExitCode == 0) != generationFails, result.CombinedOutput);
-            var expected = new List<string> { "install-ado", "build" };
-            if (generatorMode != "none") { expected.Add($"generate:{generatorMode}"); }
-            if (!generationFails) { expected.Add("plugins:1.2.3:..\\built-plugins"); }
-            var calls = JsonSerializer.Deserialize<string[]>(File.ReadAllText(Path.Combine(sandbox, "calls.json")));
-            Assert.Equal(expected, calls);
-            if (generationFails) { Assert.Contains("fixture generation failed", result.Stderr, StringComparison.Ordinal); }
+            Assert.True((result.ExitCode == 0) == (!generatorFails && !buildFails), result.CombinedOutput);
+            var expectedCalls = new List<string> { "ado", "build:1.2.3" };
+            if (!buildFails && generatorKind != "none") { expectedCalls.Add($"generator:{generatorKind}"); }
+            if (!buildFails && !generatorFails) { expectedCalls.Add("plugins:1.2.3"); }
+            Assert.Equal(expectedCalls, File.ReadAllLines(Path.Combine(sandbox, "calls.txt")));
+            var output = Path.Combine(sandbox, "built-plugins", "release.txt");
+            if (buildFails || generatorFails)
+            {
+                Assert.False(File.Exists(output));
+                Assert.Contains(buildFails ? "Fixture build failed." : "Fixture generator failed.",
+                    result.Stderr, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Equal("plugins:1.2.3", File.ReadAllText(output).Trim());
+            }
         }
         finally { Directory.Delete(sandbox, recursive: true); }
     }
