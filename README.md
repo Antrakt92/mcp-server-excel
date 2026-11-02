@@ -28,6 +28,8 @@ CLI JSON fixes, chart controls, named-range protection, audit and VBA safeguards
 Native help and optional reference documentation remain available without bundled skills.
 Earlier releases keep their original packages and verification receipts.
 
+Development `main` also includes upstream 2.6.9 and the new MCP `batch` tool: 64 MCP tools across 33 feature areas, with 439 operations. These changes are not part of the portable 3.4.1 packages linked below.
+
 ## Choose a package
 
 | Package | Use |
@@ -115,7 +117,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The combined catalogue provides **63 MCP tools across 33 feature areas, with 438 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 438 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **64 MCP tools across 33 feature areas, with 439 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 439 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 
