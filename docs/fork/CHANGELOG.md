@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.4.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.1) | 2026-11-02 | Correct numeric formula classification in spill inspection |
 | [3.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.0) | 2026-11-02 | Compact CLI discovery, upstream 2.6.8 and simpler agent packages |
 | [3.3.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.1) | 2026-11-01 | CLI typed JSON arguments and range/table sort settings |
 | [3.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.0) | 2026-11-01 | Chart title placement, axis line formatting and named-range overwrite protection |
@@ -15,6 +16,29 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.4.1 — 2026-11-02
+
+A formula returning `-2146826243` could be reported as a blocked `#SPILL!`
+because its numeric value matches Excel's COM error code. Spill inspection now
+checks the cell's native error state before classifying it. Actual spill errors
+keep their existing diagnostics; cell values and formulas are not changed.
+
+This integrates accepted upstream [PR #1285](https://github.com/sbroenne/mcp-server-excel/pull/1285)
+through `edb5eada`. The fork already made this distinction for value/formula
+reads and trace previews. Those paths retain their bounded reads and budgets;
+they now share the same native error helper with spill inspection.
+
+The baseline native group passed 17 cases and failed the numeric-spill case.
+After the repair all 18 cases passed, along with 95 existing value, formula,
+trace and spill checks. Discovery and execution matched; none were skipped.
+These integration results are separate from the final release checks recorded
+in `VERIFICATION-RESULTS.json`.
+
+Dependencies, 438 operations, 63 MCP tools and 33 feature areas are unchanged.
+All 3.4.0 discovery and packaging changes remain included. No migration is
+required. Historical COM/RPC failures remain unresolved and no new performance
+claim is made. See [3.4.1 verification](VERIFICATION-3.4.1.md).
 
 ## 3.4.0 — 2026-11-02
 

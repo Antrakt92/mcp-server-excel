@@ -47,9 +47,9 @@ parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
 
-Fork 3.4.0 retains upstream 2.6.8 and exposes 438 operations. Build clean,
-committed release source with `-Version 3.4.0`, then follow
-[3.4.0 verification](VERIFICATION-3.4.0.md) against the extracted packages.
+Fork 3.4.1 retains upstream 2.6.8 and exposes 438 operations. Build clean,
+committed release source with `-Version 3.4.1`, then follow
+[3.4.1 verification](VERIFICATION-3.4.1.md) against the extracted packages.
 Building packages does not switch an installed or running version.
 
 Fork 3.3.0 retains its original [verification route](VERIFICATION-3.3.0.md).
