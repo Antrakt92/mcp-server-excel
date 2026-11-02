@@ -26,6 +26,12 @@ creation aliases, and updates extension packaging dependencies. See the
 
 ## Scope
 
+Fork 3.4.1 integrates the accepted upstream numeric-error fix through `edb5eada`.
+Value/formula reads and trace previews were already protected in the fork;
+the new repair prevents a numeric formula from being reported as a blocked spill.
+There are no new dependencies, public contracts or migration steps. See the
+[3.4.1 notes](CHANGELOG.md#341--2026-11-02).
+
 Fork 3.4.0 integrates upstream 2.6.8 and its subsequent dependency maintenance.
 It restores compact `list-actions` discovery, including session commands, and
 removes bundled agent skills while keeping native help and reference pages.
@@ -49,7 +55,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.4.0 verification](VERIFICATION-3.4.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.4.1 verification](VERIFICATION-3.4.1.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 

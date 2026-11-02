@@ -110,26 +110,6 @@ public partial class RangeCommands
     private static object? GridEntry(object? grid, int row, int column) => grid is Array array
         ? array.GetValue(row + array.GetLowerBound(0), column + array.GetLowerBound(1)) : grid;
 
-    private static bool IsNativeError(ExcelContext ctx, Excel.Range range, int row, int column)
-    {
-        Excel.Range? cells = null;
-        Excel.Range? cell = null;
-        Excel.WorksheetFunction? functions = null;
-        try
-        {
-            cells = range.Cells;
-            cell = cells[row, column];
-            functions = ctx.App.WorksheetFunction;
-            return functions.IsError(cell);
-        }
-        finally
-        {
-            ComUtilities.Release(ref functions);
-            ComUtilities.Release(ref cell);
-            ComUtilities.Release(ref cells);
-        }
-    }
-
     /// <inheritdoc />
     public RangeBoundsResult GetUsedRangeInfo(IExcelBatch batch, string sheetName)
     {
