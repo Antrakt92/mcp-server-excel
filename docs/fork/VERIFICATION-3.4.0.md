@@ -1,7 +1,7 @@
 # Fork 3.4.0 verification
 
 This minor release restores compact CLI discovery and integrates upstream
-2.6.8 with maintenance through `06ddd6b5`. The fork retains 438 operations,
+2.6.8 with maintenance through `426bae6f`. The fork retains 438 operations,
 63 MCP tools and 33 feature areas. This guide defines the gates;
 `VERIFICATION-RESULTS.json` records what actually ran.
 
