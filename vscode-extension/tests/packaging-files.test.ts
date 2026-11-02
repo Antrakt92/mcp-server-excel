@@ -17,6 +17,8 @@ const excluded = [
 	'tests/extension.test.ts', 'node_modules/minimatch/index.js',
 	'.vscode/settings.json', 'tsconfig.json', 'vitest.config.mts', 'old.vsix',
 	'skills/excel-mcp-report-formatting/SKILL.md',
+	'skills/excel-mcp-report-formatting/VERSION',
+	'skills/excel-mcp-report-formatting/references/formatting.md',
 	'skills/excel-cli/SKILL.md', 'skills/excel-cli/references/range.md'
 ];
 
@@ -51,6 +53,7 @@ describe('VSCE packaging file filters', () => {
 		const files = await inspectFixture('\n!out/retained.js.map\n', ['out/retained.js.map']);
 		expect(files).toHaveLength(included.length + 1);
 		expect(files).toEqual(expect.arrayContaining([...included, 'out/retained.js.map']));
+		expect(files.some(file => file.startsWith('skills/'))).toBe(false);
 	});
 });
 
