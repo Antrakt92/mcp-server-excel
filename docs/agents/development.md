@@ -199,6 +199,38 @@ Product formatting skills are prepared from their canonical sources; see
 [agent skills](../AGENT-SKILLS.md). Installed and packaged copies
 are outputs, not contributor instruction sources.
 
+## Intermittent Excel and COM failures
+
+Keep a confirmed workbook defect separate from an unexplained automation
+incident. A passing rerun does not identify the earlier failure's cause or
+establish reliability. Preserve failed outcomes alongside successful comparisons.
+
+Start with existing diagnostics. At the next actual failure, retain the entry
+point, procedure and argument types, request order, UTC and elapsed timings,
+source/executable identity, exception chain and HRESULT, pending operation state,
+and owned process identity. Record observed native exit and cleanup separately.
+Keep workbook contents, credentials and private paths out of public reports.
+Audit-only work does not authorize adding instrumentation or replaying mutations.
+
+Establish the observed boundary before choosing a repair: dispatch, VBA,
+pending/cancelled execution, COM transport, process exit or cleanup. A timeout or
+missing reply does not establish that the operation made no changes. Do not
+automatically save, reopen, recover or retry to clear the error.
+
+When a trigger or a new evidence-backed factor is available, declare a bounded
+comparison and change one factor at a time. First-open macro execution and
+approved same-process reopen differ; external COM-object arguments and internal
+zero-argument calls also differ. Record those conditions rather than combining
+their results. Do not repeat unchanged green controls or treat an unproven
+delay, retry, cache reset or Office-policy change as a fix. A distinct affected
+scenario can still justify a targeted check.
+
+Repair the demonstrated responsible layer with a failing regression and relevant
+acceptance checks. Shared product changes need MCP/CLI parity. Workbook-only
+repairs do not by themselves require an ExcelMCP release. A policy-denied scratch
+cleanup is an operational remainder, not evidence of a product defect; preserve
+the denial instead of retrying deletion through another route.
+
 ## App configuration and trust
 
 `.github/github-app.yml` supplies only instruction pointers and manual
