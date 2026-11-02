@@ -10,8 +10,8 @@ tools may still own atomic no-session behavior, cancellation, or extra metadata.
 
 Run `scripts\Invoke-ExcelFreeTests.ps1 -Local -Contracts` after that build.
 Resolve EXL030 count diagnostics using its exact expected values and rebuild.
-Retain compiled MCP surface/help-banner and prepared-skill identity tests;
-count diagnostics do not prove registration, routing, defaults, or skill preparation.
+Retain compiled MCP surface/help-banner and generated-contract tests;
+count diagnostics do not prove registration, routing, defaults, or package contents.
 
 Adding, renaming, or removing an MCP tool action, CLI command, or CLI category
 also requires updating `.github/usage-analytics-weights.json`: give every action

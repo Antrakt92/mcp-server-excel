@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.0) | 2026-11-02 | Compact CLI discovery, upstream 2.6.8 and simpler agent packages |
 | [3.3.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.1) | 2026-11-01 | CLI typed JSON arguments and range/table sort settings |
 | [3.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.0) | 2026-11-01 | Chart title placement, axis line formatting and named-range overwrite protection |
 | [3.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.2.0) | 2026-10-31 | Worksheet scroll/selection controls and completed-session cancellation recovery |
@@ -14,6 +15,46 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.4.0 — 2026-11-02
+
+Agents can discover exact command names with `excelcli list-actions` without
+starting Excel. The compact JSON includes session actions as well as workbook
+commands. This release integrates upstream 2.6.8 and subsequent maintenance
+through `06ddd6b5`, preserving the fork's 438 operations and existing fixes.
+
+- CLI/plugin/extension packages no longer bundle discovery or report-formatting
+  skills. Native `--help`, MCP schemas, launchers and optional reference pages
+  remain available. Personal skills installed separately are unaffected.
+- The fork retains camelCase CLI list arguments, named-range overwrite
+  protection, bounded reads, guarded VBA edits and process-ownership checks.
+- Diagnostic guidance now distinguishes pending work, macro errors, COM
+  transport failures, native process exit and cleanup. A passing rerun does not
+  establish the cause of an intermittent failure.
+- Source-tag plugin rebuilding supports both older tags with skill generation
+  and newer tags without it.
+
+### Dependencies and tooling
+
+| Component | Previous fork | This release | Scope |
+| --- | --- | --- | --- |
+| Upstream base | 2.6.7 | 2.6.8 plus maintenance | CLI discovery, packaging and guidance |
+| pytest | 9.1.1 | 9.2.0 | Optional agent-evaluation tooling |
+| `github/gh-aw/actions/setup` | `32ecafbc` | `0627fdbe` (v1.0.1) | Inherited issue-triage workflow |
+
+The fork already used .NET SDK 10.0.403, mkdocs-material 9.8.0 and
+pytest-asyncio 1.4.1; they are retained, not new upgrades. NuGet runtime packages
+and the npm dependency graph are unchanged. Upstream npm/extension metadata is
+2.6.8; the portable fork packages are versioned 3.4.0.
+
+No workbook or CLI JSON migration is required. Use native discovery/help in
+place of the removed bundled skills. Historical COM/RPC failures remain under
+investigation; this release does not claim to fix them. The three recent
+workbook-specific repairs are separate local deliveries.
+
+See [3.4.0 verification](VERIFICATION-3.4.0.md) and the release's
+`VERIFICATION-RESULTS.json` for actual checks and executable identities. No new
+performance claim is made.
 
 ## 3.3.1 — 2026-11-01
 
