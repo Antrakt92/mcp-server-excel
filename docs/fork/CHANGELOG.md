@@ -21,7 +21,7 @@ retains the original project's version numbers and contributor credits.
 Agents can discover exact command names with `excelcli list-actions` without
 starting Excel. The compact JSON includes session actions as well as workbook
 commands. This release integrates upstream 2.6.8 and subsequent maintenance
-through `06ddd6b5`, preserving the fork's 438 operations and existing fixes.
+through `426bae6f`, preserving the fork's 438 operations and existing fixes.
 
 - CLI/plugin/extension packages no longer bundle discovery or report-formatting
   skills. Native `--help`, MCP schemas, launchers and optional reference pages
@@ -40,6 +40,8 @@ through `06ddd6b5`, preserving the fork's 438 operations and existing fixes.
 | --- | --- | --- | --- |
 | Upstream base | 2.6.7 | 2.6.8 plus maintenance | CLI discovery, packaging and guidance |
 | pytest | 9.1.1 | 9.2.0 | Optional agent-evaluation tooling |
+| pytest-skill-engineering | 1.0.3 | 1.0.6 | Optional agent-evaluation tooling |
+| github-copilot-sdk | 1.0.24 | 1.0.28 | Transitive evaluation dependency |
 | `github/gh-aw/actions/setup` | `32ecafbc` | `0627fdbe` (v1.0.1) | Inherited issue-triage workflow |
 
 The fork already used .NET SDK 10.0.403, mkdocs-material 9.8.0 and
