@@ -62,7 +62,7 @@ $expectedSdk = (Read-PackageJson (Join-Path $root 'global.json')).sdk.version
 if ($sdk -cne $expectedSdk) { throw "Use the pinned SDK $expectedSdk; selected SDK is $sdk." }
 if ($root.IndexOfAny([char[]]@(',', ';')) -ge 0) { throw 'The source path contains characters that cannot be mapped safely by this release builder.' }
 $repository = 'https://github.com/Antrakt92/mcp-server-excel'
-$upstreamVersion = '2.6.10'
+$upstreamVersion = '2.6.11'
 
 function Assert-ForkSourceUnchanged {
     $currentCommit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')

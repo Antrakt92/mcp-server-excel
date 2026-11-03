@@ -1,7 +1,7 @@
 # Fork 3.6.0 verification
 
 This feature release adds native VBA project password configuration to MCP and
-CLI. The upstream baseline remains 2.6.10; no dependencies change.
+CLI. The upstream baseline remains 2.6.11; no dependencies change.
 
 ## Source checks
 

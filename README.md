@@ -21,7 +21,7 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.6.0.md)
 
-The latest portable release, **3.6.0**, includes upstream **2.6.10** and exposes
+The latest portable release, **3.6.0**, includes upstream **2.6.11** and exposes
 443 operations through 64 MCP tools across 33 feature areas. Run a sequence of
 MCP commands with `batch` and configure a VBA project's viewing lock with
 `vba.protect-project`. Passwords use printable ASCII; saving and reopening
