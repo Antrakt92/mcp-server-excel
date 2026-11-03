@@ -19,6 +19,8 @@ retains the original project's version numbers and contributor credits.
 
 ## Unreleased
 
+- Honour CLI cancellation while waiting for another caller to release the startup lock, including service start/stop coordination. A cancelled wait does not start a daemon or run the protected action.
+
 - Create workbook-owned slicer styles from an existing style, adjust button/header formatting and apply the style without changing the slicer layout or filters. This includes upstream #1298.
 
 - Integrate upstream through 2.6.10 and its MCP `batch` tool. Agents can run a known sequence in one call with per-command results, an optional default workbook session and `stop_on_error`. Timeouts, cancellation and unknown completion stop later commands; earlier workbook edits are not rolled back.
