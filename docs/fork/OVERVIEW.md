@@ -1,6 +1,6 @@
 # Fork overview
 
-ExcelMCP â€” Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 3.0.0 release line starts from upstream [v2.6.0](https://github.com/sbroenne/mcp-server-excel/tree/v2.6.0). Fork 2.5.4 was based on upstream 2.5.3. The major version reflects incompatible CLI JSON output and removed options inherited in this upgrade; see [migration](../../README.md#migrate-from-fork-254).
+ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://github.com/Antrakt92/mcp-server-excel). The 3.0.0 release line starts from upstream [v2.6.0](https://github.com/sbroenne/mcp-server-excel/tree/v2.6.0). Fork 2.5.4 was based on upstream 2.5.3. The major version reflects incompatible CLI JSON output and removed options inherited in this upgrade; see [migration](../../README.md#migrate-from-fork-254).
 
 Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance fix (`efd33740`) while preserving fork lifecycle and workbook fixes. It is a patch release for fixes, dependency updates and guidance; it introduces no new public capability or migration. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
 

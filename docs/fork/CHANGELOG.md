@@ -19,7 +19,48 @@ retains the original project's version numbers and contributor credits.
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
-## 3.5.0 â€” 2026-11-03
+## 3.5.1 — 2026-11-03
+
+Updates the MCP SDK and puts both video projects under weekly Dependabot
+monitoring. MCP tools, CLI commands and workbook behaviour are unchanged.
+
+### Dependencies
+
+| Dependency | Previous | New | Scope |
+| --- | --- | --- | --- |
+| ModelContextProtocol | 2.3.0 | 2.3.1 | MCP runtime |
+| HyperFrames, briefing video | 0.8.184 | 0.8.223 | Development only |
+| undici, HyperFrames override | 7.25.0 introduced by the update | 7.30.1 | Development only; removes audit findings in the new tool graph |
+| esbuild, briefing video | 0.25.12 | 0.28.2 | Transitive video tooling, including platform packages |
+| acorn, briefing video | Not previously included | 8.19.0 | Transitive video tooling |
+
+The SDK patch hardens authenticated HTTP sessions in the upstream SDK. These
+portable packages use stdio; this release does not claim that the HTTP issue
+was reachable through our server. See the [SDK release notes](https://github.com/modelcontextprotocol/csharp-sdk/releases/tag/v2.3.1).
+
+### Maintenance
+
+- Dependabot now checks the introduction and briefing video projects weekly.
+- Video scripts use locally installed, lockfile-pinned HyperFrames instead of
+  fetching a CLI through `npx`. Use `npm ci` before running them. The introduction
+  video remains on 0.8.214.
+- Briefing tooling pins the patched undici release within major version 7.
+  The initial HyperFrames update produced audit findings; the merged graph
+  reported zero vulnerabilities on 2026-11-03.
+
+### Compatibility and verification
+
+No migration is required. The SDK remains 10.0.403, the upstream product baseline
+is 2.6.10, and the catalogue remains 442 operations and 64 MCP tools.
+The [verification guide](VERIFICATION-3.5.1.md) defines package and installation
+checks; release assets record actual results and source hashes.
+
+The briefing's original footage is intentionally absent from Git. Its build
+and check commands stop on missing clips, so full video rendering is not claimed.
+This does not affect the portable MCP/CLI packages. No new performance claim or
+resolution of historical RPC/StatusBar observations is made.
+
+## 3.5.0 — 2026-11-03
 
 Agents can send a known sequence of MCP operations in one `batch` call and
 create workbook-owned slicer styles. This release integrates upstream 2.6.9,
@@ -65,7 +106,7 @@ identity, package hashes and machine-readable results. Historical RPC failure
 causes and Excel StatusBar behaviour are not claimed fixed. No new performance
 percentage is claimed for this release.
 
-## 3.4.1 â€” 2026-11-02
+## 3.4.1 — 2026-11-02
 
 A formula returning `-2146826243` could be reported as a blocked `#SPILL!`
 because its numeric value matches Excel's COM error code. Spill inspection now
@@ -88,7 +129,7 @@ All 3.4.0 discovery and packaging changes remain included. No migration is
 required. Historical COM/RPC failures remain unresolved and no new performance
 claim is made. See [3.4.1 verification](VERIFICATION-3.4.1.md).
 
-## 3.4.0 â€” 2026-11-02
+## 3.4.0 — 2026-11-02
 
 Agents can discover exact command names with `excelcli list-actions` without
 starting Excel. The compact JSON includes session actions as well as workbook
@@ -130,7 +171,7 @@ See [3.4.0 verification](VERIFICATION-3.4.0.md) and the release's
 `VERIFICATION-RESULTS.json` for actual checks and executable identities. No new
 performance claim is made.
 
-## 3.3.1 â€” 2026-11-01
+## 3.3.1 — 2026-11-01
 
 CLI commands now retain camelCase fields in structured JSON options. For example,
 `--arguments '[{"type":"number","value":2.5}]'` previously reached the Service
@@ -154,7 +195,7 @@ See the [3.3.1 verification route](VERIFICATION-3.3.1.md) and the release's
 timings and investigation of historical native failures remain separate evidence;
 this patch makes no performance or crash-resolution claim.
 
-## 3.3.0 â€” 2026-11-01
+## 3.3.0 — 2026-11-01
 
 Position chart titles, format axis lines and create named ranges without changing
 an existing definition by mistake. Based on upstream 2.6.7, with 438 operations
@@ -181,7 +222,7 @@ through 63 MCP tools across 33 feature areas.
 Creating an existing name could silently replace its definition with `=0` before
 Excel rejected a formula. The guard now recognises Excel's aliases: surrounding
 ASCII spaces, quoted worksheet scopes, active-sheet local names and equivalent
-Unicode spellings such as `StraÃŸe` / `STRASSE`. Hidden names are included. A
+Unicode spellings such as `Straße` / `STRASSE`. Hidden names are included. A
 rejected duplicate preserves its formula and visibility, including after reopen.
 
 New names are created with their final name, then assigned through Excel's
@@ -237,7 +278,7 @@ the shipped binaries. This release makes no new performance claim. Synthetic
 fixtures do not establish customer calculation or print equivalence; portable
 packages remain unsigned.
 
-## 3.2.0 â€” 2026-10-31
+## 3.2.0 — 2026-10-31
 
 Set a worksheet's scroll position and selection through MCP or CLI, and recover
 access to a workbook when cancellation races with a completed open/create reply.
@@ -297,27 +338,27 @@ checks to the shipped executable hashes. Synthetic fixtures do not establish
 customer calculation or print equivalence. Portable Windows x64 packages remain
 unsigned.
 
-## 3.1.0 â€” 2026-10-30
+## 3.1.0 — 2026-10-30
 
 Adds chart text formatting, reduces MCP response-processing work and simplifies
 PivotCache sharing. Based on upstream 2.6.4, with 436 operations instead of 434.
 
-### MCP responses: 1.60â€“2.16Ã— faster conversion
+### MCP responses: 1.60–2.16× faster conversion
 
 Generated MCP calls now pass the normalized Service result straight to reply
 conversion. The old path serialized that result and then parsed and normalized
 it again. Removing that extra pass preserves returned data, errors, warnings,
 partial state and telemetry.
 
-In seven local non-image fixtures, the typed route was **1.60â€“2.16Ã— faster** and
-allocated **about 43â€“55% fewer managed bytes** per conversion. Selected results:
+In seven local non-image fixtures, the typed route was **1.60–2.16× faster** and
+allocated **about 43–55% fewer managed bytes** per conversion. Selected results:
 
 | Response | String route | Typed route | Speedup | Fewer allocated bytes |
 | --- | --- | --- | --- | --- |
-| Small grid, about 1 KB | 11.48 Âµs | 7.08 Âµs | 1.62Ã— | 43.1% |
-| Grid, about 100 KB | 344.28 Âµs | 215.72 Âµs | 1.60Ã— | 42.6% |
-| Grid, about 224 KB | 437.01 Âµs | 255.21 Âµs | 1.71Ã— | 42.6% |
-| Failure with partial state | 20.61 Âµs | 9.53 Âµs | 2.16Ã— | 54.7% |
+| Small grid, about 1 KB | 11.48 µs | 7.08 µs | 1.62× | 43.1% |
+| Grid, about 100 KB | 344.28 µs | 215.72 µs | 1.60× | 42.6% |
+| Grid, about 224 KB | 437.01 µs | 255.21 µs | 1.71× | 42.6% |
+| Failure with partial state | 20.61 µs | 9.53 µs | 2.16× | 54.7% |
 
 These are median per-response timings from five alternating rounds on
 Windows/.NET 10.0.14, with 200 warmups and 400 iterations per round
@@ -401,7 +442,7 @@ as a fresh full-suite run at the release commit. See
 for provenance, package hashes and limits. Synthetic files do not establish
 customer-workbook calculation or print equivalence.
 
-## 3.0.1 â€” 2026-10-29
+## 3.0.1 — 2026-10-29
 
 Maintenance release based on upstream 2.6.1, including its subsequent chart-label
 fix. No migration is required from fork 3.0.0.
@@ -484,7 +525,7 @@ installed on a user's machine by the portable packages.
 | `pytest-asyncio` | 1.4.0 | 1.4.1 | On-demand evaluation lockfile |
 | `github/gh-aw/actions/setup` | 0.93.3 | 0.93.5 | Pinned issue-triage setup action |
 
-The setup action remains commit-pinned (`317d9005` â†’ `32ecafbc`). Updating that
+The setup action remains commit-pinned (`317d9005` → `32ecafbc`). Updating that
 pin does not regenerate or validate the whole inherited workflow. GitHub Actions
 remain disabled on this fork, and LLM evaluations were not run for this release.
 
@@ -519,10 +560,10 @@ and 0.260 s. This measures process/connection overhead, not Excel calculation,
 workbook reads or printing.
 
 [Release and downloads](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1)
-Â· [Changes since 3.0.0](https://github.com/Antrakt92/mcp-server-excel/compare/v3.0.0...v3.0.1)
-Â· [Verification](VERIFICATION-3.0.1.md)
+· [Changes since 3.0.0](https://github.com/Antrakt92/mcp-server-excel/compare/v3.0.0...v3.0.1)
+· [Verification](VERIFICATION-3.0.1.md)
 
-## 3.0.0 â€” 2026-10-29
+## 3.0.0 — 2026-10-29
 
 Upgraded the fork from upstream 2.5.3 to 2.6.0 and added inspection and VBA
 workflows for agents. The major version reflects incompatible CLI output and
@@ -612,10 +653,10 @@ source-channel VSIX package checks. These results do not mean a fork extension
 was published to a marketplace.
 
 [Release and downloads](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0)
-Â· [Changes since 2.5.4](https://github.com/Antrakt92/mcp-server-excel/compare/v2.5.4...v3.0.0)
-Â· [Verification](VERIFICATION-3.0.0.md)
+· [Changes since 2.5.4](https://github.com/Antrakt92/mcp-server-excel/compare/v2.5.4...v3.0.0)
+· [Verification](VERIFICATION-3.0.0.md)
 
-## 2.5.4 â€” 2026-10-25
+## 2.5.4 — 2026-10-25
 
 First stable Antrakt fork release, based on upstream 2.5.3 by Stefan Broenner and
 contributors, under the original MIT license.
@@ -650,7 +691,7 @@ Actual packaged MCP checks covered protocol initialization, EOF, broken stdout
 and owning-client exit.
 
 [Release and downloads](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4)
-Â· [Verification](VERIFICATION-2.5.4.md)
+· [Verification](VERIFICATION-2.5.4.md)
 
 ## Requirements and verification limits
 
