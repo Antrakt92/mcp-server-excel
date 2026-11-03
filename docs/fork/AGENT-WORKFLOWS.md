@@ -50,7 +50,7 @@ only that session identifier is carried forward, not other result values.
 Use `stop_on_error:true` when later steps depend on earlier ones. Timeout,
 cancellation and unknown completion always stop the sequence. Completed edits
 remain applied; inspect partial results and session state before another request.
-The portable 3.4.1 release does not include this new tool.
+Available in portable fork releases from 3.5.0.
 
 ## Interrupted work
 
