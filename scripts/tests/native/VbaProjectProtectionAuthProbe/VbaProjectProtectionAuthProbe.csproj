@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>ExcelMcp.Test.VbaProjectProtectionAuthProbe</AssemblyName>
+    <RootNamespace>Sbroenne.ExcelMcp.Tests.Native</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

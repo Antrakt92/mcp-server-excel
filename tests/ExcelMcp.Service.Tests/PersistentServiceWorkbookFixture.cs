@@ -256,7 +256,9 @@ public class PersistentServiceWorkbookFixture : IAsyncLifetime, IDisposable
         where T : class =>
         ServiceCommandProxy.Create<T>(this);
 
-    internal async Task SaveAndReopenAsync()
+    internal Task SaveAndReopenAsync() => ReopenAsync(readOnly: false, save: true);
+
+    internal async Task ReopenAsync(bool readOnly, bool save)
     {
         if (_service is null || string.IsNullOrWhiteSpace(_sessionId))
         {
@@ -265,12 +267,12 @@ public class PersistentServiceWorkbookFixture : IAsyncLifetime, IDisposable
         }
 
         var sessionId = _sessionId;
-        await SendAsync("session.close", new { save = true }, sessionId);
+        await SendAsync("session.close", new { save }, sessionId);
         _sessionId = null;
 
         var response = await SendAsync(
             "session.open",
-            new { filePath = WorkbookPath, show = false },
+            new { filePath = WorkbookPath, show = false, readOnly },
             sessionId: null);
         using var document = ParseResult(response);
         _sessionId = document.RootElement.GetProperty("sessionId").GetString();

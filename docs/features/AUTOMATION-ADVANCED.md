@@ -10,7 +10,7 @@ summaries below focus on capabilities and their important requirements.
 
 ---
 
-## VBA Macros (13 operations)
+## VBA Macros (14 operations)
 
 - **Inspect code:** List procedures with their kinds and line numbers, read a selected procedure or up to 500 lines, or view the full module.
 - **Maintain code:** Import standard modules, update whole modules, replace one procedure only when its source has not changed, or remove components.
@@ -20,6 +20,7 @@ summaries below focus on capabilities and their important requirements.
 - **Find source:** Search literal text across modules with limited matches, line numbers, and short excerpts.
 - **Diagnose project access:** Inspect actual access, password protection, and execution mode without changing settings.
 - **Inspect dependencies:** List library references and flag broken ones without automatic repair.
+- **Configure project protection:** Set a new password on an accessible, unlocked VBA project through its own Project Properties dialog. Saving and reopening remain explicit operations.
 
 Listing or editing the VBA project requires Excel's manually configured trust
 setting. Running an existing macro does not require project-inspection trust,
@@ -32,6 +33,42 @@ confirm that the code compiles or runs correctly.
 Procedure replacement preserves introductory comments and surrounding blank lines.
 The status action reports blocked project access rather than guessing protection
 or execution mode when access is denied.
+
+### Project password protection
+
+`vba.protect-project` configures locking for the selected, currently accessible
+VBA project. It rejects an already locked project; it does not authenticate an
+existing password, unlock a project, or remove protection. Workbook structure
+protection is a separate operation.
+This is the VBA editor's viewing lock, not workbook encryption. The workbook
+must contain VBA code or a custom form for Excel to retain the password.
+
+Passwords must use printable ASCII characters. VBA hashes passwords using the
+project's legacy code page, which Excel's public object model does not expose.
+Distinct Unicode passwords can therefore be accepted as the same password.
+ExcelMcp rejects non-ASCII input before changing the project, rather than
+silently substituting characters. See Microsoft's
+[VBA password hash format](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-ovba/4370bcd9-1664-4428-a4c6-fca56aa7d7f1).
+
+The action does not save or reopen the workbook. A successful dialog interaction
+is not proof of persisted protection: explicitly save, close and reopen, then
+check `vba.status` for `Locked`. The current editor can remain unlocked until that
+reopen. Preserve unsaved work when choosing when to close.
+
+For CLI use, pass the command through `excelcli batch --input -` with
+`args.password` in stdin rather than placing the password in process arguments,
+shell history or a temporary JSON file. Do not include passwords in logs or
+published examples.
+
+The driver requires an interactive Windows desktop and Excel's standard VBA
+Project Properties dialog. It briefly shows the editor, selects and verifies
+the requested project, then restores the previous project and editor visibility
+after confirmed dialog cleanup. Existing dialogs must be closed before calling.
+It does not change Trust Center settings or enter an existing project's password.
+
+Failures report the observed phase, whether acceptance was requested, and which
+cleanup/restoration steps completed. An unknown outcome is not a rollback or
+permission to repeat the request. Inspect that state before further changes.
 
 [VBA walkthrough](../guides/RUN-VBA-MACROS.md)
 

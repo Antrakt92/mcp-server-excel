@@ -172,7 +172,7 @@ it and download the files the agent made.
 
 </div>
 
-[Explore capabilities across 64 MCP tools and 442 operations :material-arrow-right:](features.md){ .md-button .md-button--primary }
+[Explore capabilities across 64 MCP tools and 443 operations :material-arrow-right:](features.md){ .md-button .md-button--primary }
 
 ## Popular guides
 
