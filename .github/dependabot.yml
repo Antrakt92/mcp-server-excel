@@ -196,3 +196,35 @@ updates:
     groups:
       mcp-wrapper-dependencies:
         patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/videos/excel-mcp-intro"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "npm", "automated", "skip-changelog"]
+    commit-message:
+      prefix: "chore(video-deps)"
+      include: "scope"
+    groups:
+      video-tooling:
+        patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/videos/agentic-world-bank-briefing"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "npm", "automated", "skip-changelog"]
+    commit-message:
+      prefix: "chore(video-deps)"
+      include: "scope"
+    groups:
+      video-tooling:
+        patterns: ["*"]

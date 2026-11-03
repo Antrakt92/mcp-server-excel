@@ -61,12 +61,12 @@ npm run slides
 Run `npm run build` and then `npm run check` after every change. Fix all errors
 and review warnings before handoff. For Studio review use the persistent
 preview. PowerShell drops the `--` in `npm run dev -- --background`, so call
-the pinned CLI directly:
+the locked local CLI directly after `npm ci`:
 
 ```powershell
-npx --yes hyperframes@0.8.184 preview --background
-npx --yes hyperframes@0.8.184 preview --status
-npx --yes hyperframes@0.8.184 preview --stop
+npm exec --no -- hyperframes preview --background
+npm exec --no -- hyperframes preview --status
+npm exec --no -- hyperframes preview --stop
 ```
 
 ## Render and publication

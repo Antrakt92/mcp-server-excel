@@ -12,7 +12,7 @@ handoff and review warnings before rendering.
 
 For a Studio handoff, use HyperFrames' persistent preview, not a shell background
 wrapper around the foreground server. These commands use the project's pinned
-CLI through the `dev` script:
+CLI through the `dev` script. Run `npm ci` first to install the locked tooling:
 
 ```powershell
 npm run dev -- --background  # preview --background
