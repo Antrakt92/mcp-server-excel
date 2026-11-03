@@ -29,7 +29,7 @@ The builder checks native PE architecture and version metadata. These are packag
 
 For archive verification and switching versions, see [recovery](RECOVERY.md).
 
-The canonical upstream npm/registry/extension metadata is at 2.6.9. The
+The canonical upstream npm/registry/extension metadata is at 2.6.10. The
 portable fork builder explicitly applies the supplied fork version to all compiled assemblies and
 release package metadata; it does not publish those other channels.
 
@@ -47,9 +47,9 @@ parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
 
-Fork 3.4.1 retains upstream 2.6.8 and exposes 438 operations. Build clean,
-committed release source with `-Version 3.4.1`, then follow
-[3.4.1 verification](VERIFICATION-3.4.1.md) against the extracted packages.
+Fork 3.5.1 retains upstream 2.6.10 and exposes 442 operations. Build clean,
+committed release source with `-Version 3.5.1`, then follow
+[3.5.1 verification](VERIFICATION-3.5.1.md) against the extracted packages.
 Building packages does not switch an installed or running version.
 
 Fork 3.3.0 retains its original [verification route](VERIFICATION-3.3.0.md).
@@ -77,8 +77,8 @@ dependency updates in this branch.
 
 | Tool | Current choice | Remaining check |
 | --- | --- | --- |
-| Introduction video HyperFrames CLI | 0.8.214 | 0.8.226 introduces Undici 7.25.0, affected by [GHSA-vmh5-mc38-953g](https://github.com/advisories/GHSA-vmh5-mc38-953g). Recheck the resolved tool graph before accepting a later version. The project lockfile does not cover `npx` downloads. |
-| World Bank video HyperFrames CLI | 0.8.184 | Restore the five original footage clips, then run the video's build, check and render gates before upgrading. A clean checkout deliberately omits those clips. |
+| Introduction video HyperFrames CLI | 0.8.214 | 0.8.226 introduces Undici 7.25.0, affected by [GHSA-vmh5-mc38-953g](https://github.com/advisories/GHSA-vmh5-mc38-953g). Recheck the resolved tool graph before accepting a later version. The locked local CLI avoids untracked `npx` downloads. |
+| World Bank video HyperFrames CLI | 0.8.223, locked; undici overridden to 7.30.1 | Install/audit and CLI smoke passed. Full build, browser checks and rendering require the five original footage clips, deliberately omitted from a clean checkout. |
 | Agentic workflow compiler | 0.89.21 | The 1.0.1 compiler adds `actions: read` to the generated completion job. Review the permission and diagnostics behavior before adopting that migration; regenerate from the Markdown source rather than patching generated YAML. |
 
 The introduction video's 0.8.214 check and one-second 4K compatibility render
