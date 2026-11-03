@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.0) | 2026-11-03 | MCP batch, custom slicer styles and cancellable CLI startup waits |
 | [3.4.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.1) | 2026-11-02 | Correct numeric formula classification in spill inspection |
 | [3.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.0) | 2026-11-02 | Compact CLI discovery, upstream 2.6.8 and simpler agent packages |
 | [3.3.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.3.1) | 2026-11-01 | CLI typed JSON arguments and range/table sort settings |
@@ -17,17 +18,51 @@ retains the original project's version numbers and contributor credits.
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
 
-## Unreleased
+## 3.5.0 — 2026-11-03
 
-- Honour CLI cancellation while waiting for another caller to release the startup lock, including service start/stop coordination. A cancelled wait does not start a daemon or run the protected action.
+Agents can send a known sequence of MCP operations in one `batch` call and
+create workbook-owned slicer styles. This release integrates upstream 2.6.9,
+2.6.10 and the subsequent CLI startup-lock fix, while preserving the fork's
+workbook and lifecycle safeguards.
 
-- Create workbook-owned slicer styles from an existing style, adjust button/header formatting and apply the style without changing the slicer layout or filters. This includes upstream #1298.
+### Added
 
-- Integrate upstream through 2.6.10 and its MCP `batch` tool. Agents can run a known sequence in one call with per-command results, an optional default workbook session and `stop_on_error`. Timeouts, cancellation and unknown completion stop later commands; earlier workbook edits are not rolled back.
-- Keep the fork's audit sessions, bounded range pages and session identifier aliases available through batch. The development catalogue now has 64 MCP tools and 442 operations.
-- Include the accepted upstream versions of our named-range creation and CLI sort-option JSON fixes. These fixes were already present in the fork; the sync preserves their upstream history.
+- MCP `batch` accepts an optional default workbook session, returns a result for
+  each attempted command and supports `stop_on_error`. Timeouts, cancellation
+  and unknown completion stop later commands. Earlier edits are not rolled back.
+- Batch retains audit-only sessions, bounded range pages and supported session
+  identifier aliases, including nested command arguments.
+- Create a slicer style by copying an existing style, edit button and header
+  colours, borders and bold text, then apply it without changing layout or
+  filters. List available styles through either MCP or `excelcli`.
+- The catalogue grows from 438 to 442 operations and from 63 to 64 MCP tools;
+  the 33 feature areas are unchanged.
 
-These changes are in source `main`; the published portable packages remain 3.4.1.
+### Fixed and maintained
+
+- Cancelling CLI startup while another caller holds the startup mutex now
+  interrupts the wait promptly. A cancelled waiter does not start a daemon or
+  run the protected action; acquired and abandoned locks are still released.
+- Include upstream's packaging follow-ups after bundled skills were removed.
+  Optional reference documentation remains available; product packages do not
+  install agent skills.
+- Integrate the accepted upstream histories of our named-range overwrite
+  protection and camelCase CLI sort-option fixes. Both fixes were already in
+  3.4.1; they are not new fixes in this release.
+
+### Dependencies and compatibility
+
+Runtime and development dependency graphs are unchanged from 3.4.1. The SDK
+remains 10.0.403. Upstream product metadata advances from 2.6.8 to 2.6.10; this
+is separate from the fork's portable version. No migration is required.
+
+### Verification and limits
+
+[The verification guide](VERIFICATION-3.5.0.md) defines the final-source,
+packaged MCP/CLI and native Excel gates. Release assets include the exact source
+identity, package hashes and machine-readable results. Historical RPC failure
+causes and Excel StatusBar behaviour are not claimed fixed. No new performance
+percentage is claimed for this release.
 
 ## 3.4.1 — 2026-11-02
 

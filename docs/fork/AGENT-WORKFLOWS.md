@@ -38,7 +38,7 @@ survives native Save As and path reconciliation. Normal shutdown preserves
 unsaved interactive edits through the ordinary handover policy; it does not
 save or discard them automatically.
 
-## MCP batch on development main
+## MCP batch
 
 The `batch` tool, action `run`, accepts entries with `command`, optional
 `sessionId`, and `args` in Service camelCase. For example, `session.open` uses
@@ -50,7 +50,7 @@ only that session identifier is carried forward, not other result values.
 Use `stop_on_error:true` when later steps depend on earlier ones. Timeout,
 cancellation and unknown completion always stop the sequence. Completed edits
 remain applied; inspect partial results and session state before another request.
-The portable 3.4.1 release does not include this new tool.
+Available in portable fork releases from 3.5.0.
 
 ## Interrupted work
 
