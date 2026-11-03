@@ -41,7 +41,7 @@ packaged MCP catalogue includes batch and slicer-style operations and the CLI
 
 Retain the five individual CLI JSON-flag controls: camelCase numeric/Boolean
 VBA arguments, PascalCase numeric argument, multi-column range sorting and
-descending table sorting. Check result types and actual persisted cell order.
+descending table sorting. Check result types and actual cell order.
 
 Publish both ZIPs, `RELEASE-MANIFEST.json`, `VERIFICATION-RESULTS.json` and
 `SHA256SUMS` together. Independently download draft assets and compare bytes

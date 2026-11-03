@@ -38,7 +38,7 @@ survives native Save As and path reconciliation. Normal shutdown preserves
 unsaved interactive edits through the ordinary handover policy; it does not
 save or discard them automatically.
 
-## MCP batch on development main
+## MCP batch
 
 The `batch` tool, action `run`, accepts entries with `command`, optional
 `sessionId`, and `args` in Service camelCase. For example, `session.open` uses
