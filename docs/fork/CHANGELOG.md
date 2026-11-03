@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.1) | 2026-11-03 | MCP SDK maintenance and locked video tooling updates |
 | [3.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.0) | 2026-11-03 | MCP batch, custom slicer styles and cancellable CLI startup waits |
 | [3.4.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.1) | 2026-11-02 | Correct numeric formula classification in spill inspection |
 | [3.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.0) | 2026-11-02 | Compact CLI discovery, upstream 2.6.8 and simpler agent packages |
@@ -17,6 +18,47 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.5.1 — 2026-11-03
+
+Updates the MCP SDK and puts both video projects under weekly Dependabot
+monitoring. MCP tools, CLI commands and workbook behaviour are unchanged.
+
+### Dependencies
+
+| Dependency | Previous | New | Scope |
+| --- | --- | --- | --- |
+| ModelContextProtocol | 2.3.0 | 2.3.1 | MCP runtime |
+| HyperFrames, briefing video | 0.8.184 | 0.8.223 | Development only |
+| undici, HyperFrames override | 7.25.0 introduced by the update | 7.30.1 | Development only; removes audit findings in the new tool graph |
+| esbuild, briefing video | 0.25.12 | 0.28.2 | Transitive video tooling, including platform packages |
+| acorn, briefing video | Not previously included | 8.19.0 | Transitive video tooling |
+
+The SDK patch hardens authenticated HTTP sessions in the upstream SDK. These
+portable packages use stdio; this release does not claim that the HTTP issue
+was reachable through our server. See the [SDK release notes](https://github.com/modelcontextprotocol/csharp-sdk/releases/tag/v2.3.1).
+
+### Maintenance
+
+- Dependabot now checks the introduction and briefing video projects weekly.
+- Video scripts use locally installed, lockfile-pinned HyperFrames instead of
+  fetching a CLI through `npx`. Use `npm ci` before running them. The introduction
+  video remains on 0.8.214.
+- Briefing tooling pins the patched undici release within major version 7.
+  The initial HyperFrames update produced audit findings; the merged graph
+  reported zero vulnerabilities on 2026-11-03.
+
+### Compatibility and verification
+
+No migration is required. The SDK remains 10.0.403, the upstream product baseline
+is 2.6.10, and the catalogue remains 442 operations and 64 MCP tools.
+The [verification guide](VERIFICATION-3.5.1.md) defines package and installation
+checks; release assets record actual results and source hashes.
+
+The briefing's original footage is intentionally absent from Git. Its build
+and check commands stop on missing clips, so full video rendering is not claimed.
+This does not affect the portable MCP/CLI packages. No new performance claim or
+resolution of historical RPC/StatusBar observations is made.
 
 ## 3.5.0 — 2026-11-03
 
