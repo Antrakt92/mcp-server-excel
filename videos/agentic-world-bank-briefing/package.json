@@ -14,6 +14,11 @@
     "publish": "hyperframes publish"
   },
   "devDependencies": {
-    "hyperframes": "0.8.184"
+    "hyperframes": "0.8.223"
+  },
+  "overrides": {
+    "hyperframes": {
+      "undici": "7.30.1"
+    }
   }
 }
