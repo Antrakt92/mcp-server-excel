@@ -23,7 +23,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 /// </summary>
 [ServiceCategory("Vba")]
 [McpTool("vba", Title = "VBA Operations", Destructive = true, Category = "automation",
-    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, replace a full module when its source fingerprint matches, import or update modules, and invoke procedures with typed arguments and function results in .xlsm workbooks. Invoke results allow at most 10,000 array elements and a conservative 4 MiB transport budget; rejected return conversion occurs after macro execution and does not roll back its effects. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
+    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, replace a full module when its source fingerprint matches, import or update modules, configure password protection with explicit save/reopen, and invoke procedures with typed arguments and function results in .xlsm workbooks. Invoke results allow at most 10,000 array elements and a conservative 4 MiB transport budget; rejected return conversion occurs after macro execution and does not roll back its effects. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
 [McpReadOnlyActions("list", "view", "read", "search", "references", "status")]
 public interface IVbaCommands
 {
@@ -38,6 +38,13 @@ public interface IVbaCommands
     /// </summary>
     [ServiceAction("status")]
     VbaProjectStatusResult Status(IExcelBatch batch);
+
+    /// <summary>
+    /// Configures password protection for an accessible VBA project through Excel's own Project Properties dialog. Does not save or reopen the workbook.
+    /// </summary>
+    /// <param name="password">New VBA project password using printable ASCII characters. Non-ASCII input is rejected because the project's legacy password encoding is not exposed by Excel's public object model. Use CLI batch stdin to keep the password out of process arguments. Never include it in logs.</param>
+    [ServiceAction("protect-project")]
+    VbaProjectProtectionResult ProtectProject(IExcelBatch batch, [RequiredParameter] string password);
 
     /// <summary>
     /// Lists VBA library references and flags missing libraries without repairing or changing references.

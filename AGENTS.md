@@ -140,6 +140,10 @@ assumption that passing compilation proves runtime correctness.
 - Returning an owned Excel dialog's visible text to its user for troubleshooting
   is allowed; this is not public disclosure. Do not copy it into public artifacts
   or telemetry, read password/input values, or answer the dialog automatically.
+  The explicitly requested `vba.protect-project` action may drive only its newly
+  introduced Project Properties dialog through the scoped ComInterop driver.
+  Validate process/window/control ownership before input, keep passwords out of
+  diagnostics, and confirm exact-dialog cleanup before reporting success.
 
 ## Errors
 

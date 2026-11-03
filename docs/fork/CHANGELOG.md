@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [3.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.6.0) | 2026-11-03 | Native VBA project password configuration and verified dialog cleanup |
 | [3.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.1) | 2026-11-03 | MCP SDK maintenance and locked video tooling updates |
 | [3.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.0) | 2026-11-03 | MCP batch, custom slicer styles and cancellable CLI startup waits |
 | [3.4.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.4.1) | 2026-11-02 | Correct numeric formula classification in spill inspection |
@@ -18,6 +19,42 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 3.6.0 — 2026-11-03
+
+### Added
+
+- `vba.protect-project` sets a password and enables the VBA project's viewing
+  lock through Excel's own Project Properties dialog. Available through MCP
+  `vba` and CLI batch stdin. Saving and reopening remain explicit operations;
+  the result reports both as required before persisted locking is checked.
+- The driver verifies the selected project's name and file before each dialog,
+  checks the lock option separately, and restores the previous editor project
+  and visibility after cleanup. Failures retain the observed partial state.
+- Native acceptance covers save/reopen, correct and incorrect passwords,
+  whitespace/case/escape differences, source and cell preservation, another
+  project in the same Excel, and owned process shutdown.
+
+### Fixed
+
+- Read-only workbook write refusals now report the `Permissions` category.
+
+### Upstream
+
+Integrates the [2.6.11 release metadata](https://github.com/sbroenne/mcp-server-excel/commit/32174cbf6fd6c83af6a39e10722da5eb3dcbff7c).
+Its CLI startup-cancellation change was already included in fork 3.5.0; this
+sync adds no new runtime changes or dependency updates.
+
+### Limits
+
+Passwords use printable ASCII. VBA's project-specific legacy encoding can map
+different Unicode passwords to the same native value, so non-ASCII input is
+rejected before touching the workbook. Existing locked projects and audit
+sessions are rejected. This action does not unlock projects, encrypt files,
+change Trust Center settings or save pending work automatically.
+
+No dependencies were added or upgraded. The upstream baseline is 2.6.11.
+The source catalogue has 443 operations through 64 MCP tools.
 
 ## 3.5.1 — 2026-11-03
 

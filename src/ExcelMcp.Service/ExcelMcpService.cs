@@ -1185,7 +1185,7 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
-                PartialState = SerializeDisconnectedVbaEditState(exception)
+                PartialState = SerializeDisconnectedVbaState(exception)
             };
         }
         CleanupDeadSession(sessionId);
@@ -1225,12 +1225,13 @@ public sealed class ExcelMcpService : IDisposable
             ExceptionType = ex.GetType().Name,
             HResult = TryGetFatalComHResult(ex) is { } hresult ? $"0x{hresult:X8}" : null,
             InnerError = DescribeDisconnectedInnerErrors(ex),
-            PartialState = SerializeDisconnectedVbaEditState(ex)
+            PartialState = SerializeDisconnectedVbaState(ex)
         };
     }
 
-    private static string? SerializeDisconnectedVbaEditState(Exception error) =>
-        FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) : null;
+    private static string? SerializeDisconnectedVbaState(Exception error) =>
+        FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) :
+        FindVbaProjectProtection(error) is { } protection ? SerializeVbaProtectionState(protection.State, null, null, null) : null;
 
     private static Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException? FindVbaSourceEdit(Exception error)
     {
@@ -1246,9 +1247,23 @@ public sealed class ExcelMcpService : IDisposable
         return null;
     }
 
+    private static Sbroenne.ExcelMcp.Core.Models.VbaProjectProtectionException? FindVbaProjectProtection(Exception error)
+    {
+        for (var current = error; current is not null; current = current.InnerException)
+        {
+            if (current is Sbroenne.ExcelMcp.Core.Models.VbaProjectProtectionException protection)
+                return protection;
+            if (current is AggregateException aggregate)
+                foreach (var cause in aggregate.InnerExceptions)
+                    if (FindVbaProjectProtection(cause) is { } nested)
+                        return nested;
+        }
+        return null;
+    }
+
     private static string? DescribeDisconnectedInnerErrors(Exception error)
     {
-        if (FindVbaSourceEdit(error) is null)
+        if (FindVbaSourceEdit(error) is null && FindVbaProjectProtection(error) is null)
             return error.InnerException?.Message;
 
         var messages = new List<string>();
@@ -1362,6 +1377,8 @@ public sealed class ExcelMcpService : IDisposable
                 innerError += $" [COM: 0x{innerComEx.HResult:X8}]";
             }
         }
+        if (FindVbaSourceEdit(ex) is null && FindVbaProjectProtection(ex) is not null)
+            innerError = DescribeDisconnectedInnerErrors(ex);
         if (recoveryFailure is not null)
         {
             innerError = $"{innerError}{(innerError is null ? "" : Environment.NewLine)}" +
@@ -1381,6 +1398,20 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
                 PartialState = SerializeVbaEditState(vbaEx.State,
+                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    sessionId, retainedFiles)
+            },
+            _ when FindVbaProjectProtection(ex) is { } protection => new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = errorCategory,
+                ErrorMessage = $"{exceptionType}: {protection.Message}",
+                ExceptionType = exceptionType,
+                HResult = hresult,
+                InnerError = innerError,
+                PartialState = SerializeVbaProtectionState(protection.State,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
                     sessionId, retainedFiles)
             },
@@ -1420,6 +1451,18 @@ public sealed class ExcelMcpService : IDisposable
         string? sessionId, IReadOnlyList<string>? retainedFiles)
     {
         var state = JsonSerializer.SerializeToNode(edit, ServiceProtocol.JsonOptions)!.AsObject();
+        var execution = SerializePartialState(null, operation, sessionId, retainedFiles);
+        if (execution is not null)
+            foreach (var property in System.Text.Json.Nodes.JsonNode.Parse(execution)!.AsObject())
+                state[property.Key] = property.Value?.DeepClone();
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
+    }
+
+    private static string SerializeVbaProtectionState(
+        Sbroenne.ExcelMcp.Core.Models.VbaProjectProtectionState protection, ExcelOperationStatus? operation,
+        string? sessionId, IReadOnlyList<string>? retainedFiles)
+    {
+        var state = JsonSerializer.SerializeToNode(protection, ServiceProtocol.JsonOptions)!.AsObject();
         var execution = SerializePartialState(null, operation, sessionId, retainedFiles);
         if (execution is not null)
             foreach (var property in System.Text.Json.Nodes.JsonNode.Parse(execution)!.AsObject())
