@@ -49,7 +49,7 @@ sync adds no new runtime changes or dependency updates.
 
 Passwords use printable ASCII. VBA's project-specific legacy encoding can map
 different Unicode passwords to the same native value, so non-ASCII input is
-rejected before touching the workbook. Existing locked projects and audit
+rejected before protection changes. Existing locked projects and audit
 sessions are rejected. This action does not unlock projects, encrypt files,
 change Trust Center settings or save pending work automatically.
 
