@@ -14,6 +14,6 @@
     "publish": "hyperframes publish"
   },
   "devDependencies": {
-    "hyperframes": "0.8.184"
+    "hyperframes": "0.8.223"
   }
 }
