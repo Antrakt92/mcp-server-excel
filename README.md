@@ -19,28 +19,24 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-3.6.0.md)
+[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-4.0.0.md)
 
-The latest portable release, **3.6.0**, includes upstream **2.6.11** and exposes
-443 operations through 64 MCP tools across 33 feature areas. Run a sequence of
-MCP commands with `batch` and configure a VBA project's viewing lock with
-`vba.protect-project`. Passwords use printable ASCII; saving and reopening
-remain explicit. Audit sessions, bounded reads, custom slicer styles and guarded
-VBA edits remain available. No migration is required from 3.5.1.
+The latest portable release, **4.0.0**, includes upstream **2.6.11** and exposes
+445 operations through 64 MCP tools across 33 feature areas. It adds known-password
+VBA project unlocking and verification, and repairs screenshots in frozen and split
+views. Password authentication opens current-session access without removing saved
+protection, saving or reopening the workbook.
 
-The development source exposes **445 operations** and adds known-password VBA
-project unlocking and verification. These additions are not in the 3.6.0
-packages; native acceptance remains a release gate. In development builds, all
-three VBA password actions require MCP input or CLI batch JSON on stdin. Direct
-password options and password-bearing CLI batch files are refused; see
-[agent workflows](docs/fork/AGENT-WORKFLOWS.md#vba-project-passwords).
+**CLI migration:** all three VBA password actions require batch JSON on stdin.
+Direct password flags and file batches containing password actions are refused;
+see [migration](#migrate-password-calls-from-fork-360). MCP tool inputs remain available.
 
 ## Choose a package
 
 | Package | Use |
 | --- | --- |
-| [ExcelMcp-Antrakt-MCP-3.6.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.6.0/ExcelMcp-Antrakt-MCP-3.6.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
-| [ExcelMcp-Antrakt-CLI-3.6.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.6.0/ExcelMcp-Antrakt-CLI-3.6.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
+| [ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0/ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
+| [ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0/ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
@@ -48,13 +44,13 @@ Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.js
 <summary>Download with PowerShell</summary>
 
 ```powershell
-$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v3.6.0'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-3.6.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-3.6.0-win-x64.zip'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-3.6.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-3.6.0-win-x64.zip'
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
 Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
-Get-FileHash .\ExcelMcp-Antrakt-*-3.6.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\ExcelMcp-Antrakt-*-4.0.0-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 
@@ -88,6 +84,37 @@ Extract the CLI ZIP and run:
 ```
 
 MCP and CLI provide the same underlying Excel capabilities through different interfaces. Their command names and parameter spelling differ; use current CLI help or the connected MCP tool descriptions.
+
+## Migrate password calls from fork 3.6.0
+
+Replace direct `vba protect-project --password ...` calls and password-bearing
+batch files with serialized batch JSON on stdin. This applies to `protect-project`,
+`unlock-project` and `verify-password`. A file batch containing any password action
+runs no commands; ordinary file batches remain supported. MCP tool inputs remain
+available.
+
+In PowerShell 7, with `$sessionId` already set to the target session:
+
+```powershell
+$password = Read-Host 'Known VBA project password' -MaskInput
+@{
+    command = 'vba.unlock-project'
+    sessionId = $sessionId
+    args = @{ password = $password }
+} | ConvertTo-Json -Depth 4 -Compress | .\excelcli.exe batch --input -
+Remove-Variable password
+```
+
+Use command `vba.protect-project` with the new value in `args.password` when
+configuring protection. Omitting `--input` also reads stdin. Password text is
+preserved exactly, including nonempty all-space values; missing, null and empty
+passwords are invalid. Keep credentials out of arguments, files and logs.
+
+Unlocking an already accessible project does not verify the supplied password.
+Verification requires a real locked-project challenge; accepted input also opens
+current-session access. Neither action removes protection settings, saves or
+reopens the workbook. Inspect unknown/error state before retrying: cancellation
+is not rollback. See [agent workflows](docs/fork/AGENT-WORKFLOWS.md#vba-project-passwords).
 
 ## Migrate from fork 2.5.4
 
