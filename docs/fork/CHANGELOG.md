@@ -71,6 +71,12 @@ CLI password calls must migrate to batch JSON on stdin.
 - Historical protection guidance now accurately says unsupported Unicode input
   is rejected before protection changes.
 
+### Dependencies
+
+- Updated the MCP server's existing `System.Numerics.Tensors` dependency from
+  **10.0.13 to 10.0.14** through central transitive pinning. No direct project
+  dependency was added; MCP SDK remains **2.3.1**.
+
 ### CLI migration
 
 `protect-project`, `unlock-project` and `verify-password` require batch JSON on

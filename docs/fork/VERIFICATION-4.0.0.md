@@ -2,8 +2,10 @@
 
 This major release adds known-password VBA authentication and fixes range
 screenshots in normal, frozen and split views, including stale viewport images.
-Existing CLI password workflows must migrate to batch JSON on stdin. Upstream remains 2.6.11 and MCP SDK 2.3.1;
-no dependencies change.
+Existing CLI password workflows must migrate to batch JSON on stdin. Upstream
+remains 2.6.11 and MCP SDK 2.3.1. The existing transitive dependency
+`System.Numerics.Tensors` advances from 10.0.13 to 10.0.14 for the MCP server and
+its tests. Other package versions remain unchanged.
 
 ## Source checks
 
