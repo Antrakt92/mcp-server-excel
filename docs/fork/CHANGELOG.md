@@ -43,6 +43,11 @@ CLI password calls must migrate to batch JSON on stdin.
 
 ### Fixed
 
+- Controller status publishes workbook paths after recording their ownership
+  reservations. This closes a race that could admit a duplicate open during
+  session adoption or rename.
+- Session listing reports worker errors that cannot be shown on a known session
+  row. Cleanup retains reservations still owned by newer worker state.
 - Discovery and first Save As of an attached unsaved workbook keep names such
   as `Book1` out of the file-reservation map. This prevents path-validation
   errors from interrupting cleanup or masking an already completed save.
