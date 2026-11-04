@@ -187,24 +187,6 @@ public class ChartCreateResult : OperationResult
 }
 
 /// <summary>
-/// Result from series operations.
-/// </summary>
-public class ChartSeriesResult : OperationResult
-{
-    /// <summary>Series name</summary>
-    public string SeriesName { get; set; } = string.Empty;
-
-    /// <summary>Range containing Y values</summary>
-    public string ValuesRange { get; set; } = string.Empty;
-
-    /// <summary>Range containing X values/categories (optional)</summary>
-    public string? CategoryRange { get; set; }
-
-    /// <summary>1-based series index</summary>
-    public int SeriesIndex { get; set; }
-}
-
-/// <summary>
 /// Result containing axis scale information.
 /// </summary>
 public class AxisScaleResult : OperationResult
@@ -241,33 +223,6 @@ public class AxisScaleResult : OperationResult
 }
 
 /// <summary>
-/// Information about chart data labels.
-/// </summary>
-public class DataLabelsInfo
-{
-    /// <summary>Show the actual value</summary>
-    public bool ShowValue { get; set; }
-
-    /// <summary>Show percentage (pie/doughnut charts)</summary>
-    public bool ShowPercentage { get; set; }
-
-    /// <summary>Show series name</summary>
-    public bool ShowSeriesName { get; set; }
-
-    /// <summary>Show category name</summary>
-    public bool ShowCategoryName { get; set; }
-
-    /// <summary>Show bubble size (bubble charts)</summary>
-    public bool ShowBubbleSize { get; set; }
-
-    /// <summary>Separator between label parts (e.g., ", " or newline)</summary>
-    public string? Separator { get; set; }
-
-    /// <summary>Position of data labels</summary>
-    public string? Position { get; set; }
-}
-
-/// <summary>
 /// Information about chart gridlines.
 /// </summary>
 public class GridlinesInfo
@@ -295,33 +250,6 @@ public class GridlinesResult : OperationResult
 
     /// <summary>Gridlines configuration</summary>
     public GridlinesInfo Gridlines { get; set; } = new();
-}
-
-/// <summary>
-/// Information about series marker formatting.
-/// </summary>
-public class SeriesFormatInfo
-{
-    /// <summary>1-based series index</summary>
-    public int SeriesIndex { get; set; }
-
-    /// <summary>Series name</summary>
-    public string SeriesName { get; set; } = string.Empty;
-
-    /// <summary>Marker style (none, square, diamond, triangle, x, star, circle, plus, etc.)</summary>
-    public string? MarkerStyle { get; set; }
-
-    /// <summary>Marker size (2-72 points)</summary>
-    public int? MarkerSize { get; set; }
-
-    /// <summary>Marker background color (#RRGGBB hex)</summary>
-    public string? MarkerBackgroundColor { get; set; }
-
-    /// <summary>Marker foreground/border color (#RRGGBB hex)</summary>
-    public string? MarkerForegroundColor { get; set; }
-
-    /// <summary>True to invert colors for negative values</summary>
-    public bool? InvertIfNegative { get; set; }
 }
 
 /// <summary>
