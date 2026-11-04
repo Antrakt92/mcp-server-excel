@@ -7,7 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
-| [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and frozen/split screenshot fixes |
+| [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and worksheet screenshot fixes |
 | [3.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.6.0) | 2026-11-03 | Native VBA project password configuration and verified dialog cleanup |
 | [3.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.1) | 2026-11-03 | MCP SDK maintenance and locked video tooling updates |
 | [3.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.0) | 2026-11-03 | MCP batch, custom slicer styles and cancellable CLI startup waits |
@@ -23,9 +23,9 @@ retains the original project's version numbers and contributor credits.
 
 ## 4.0.0 — 2026-11-04
 
-Adds known-password VBA authentication and fixes worksheet screenshots in frozen
-and split views. This is a major release because existing CLI password calls
-must migrate to batch JSON on stdin.
+Adds known-password VBA authentication and fixes worksheet screenshot capture
+in normal, frozen and split views. This is a major release because existing
+CLI password calls must migrate to batch JSON on stdin.
 
 ### Added
 
@@ -47,8 +47,9 @@ must migrate to batch JSON on stdin.
   and preserve pane layout, zoom and actual visible origins. Maximized windows
   retain their window state. Oversized cells, empty visible ranges and
   incomplete crops fail explicitly instead of returning clipped success.
-- Frozen and split captures use the current pane view instead of an older
-  viewport returned by the previous pane capture mode.
+- Captures refresh the current worksheet view before taking the final image,
+  preventing stale viewport pixels after scrolling or tiling. This covers
+  offscreen styled cells and embedded charts in normal, frozen and split views.
 - Password validation now preserves nonempty whitespace-only passwords instead
   of treating them as missing. Missing, null and empty values remain invalid;
   ordinary required text inputs retain their existing whitespace checks.

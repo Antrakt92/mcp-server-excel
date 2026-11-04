@@ -1,7 +1,7 @@
 # Fork 4.0.0 verification
 
 This major release adds known-password VBA authentication and fixes range
-screenshots in frozen and split views, including stale viewport images.
+screenshots in normal, frozen and split views, including stale viewport images.
 Existing CLI password workflows must migrate to batch JSON on stdin. Upstream remains 2.6.11 and MCP SDK 2.3.1;
 no dependencies change.
 
@@ -30,11 +30,14 @@ explicit save and fresh open with protection still locked. Require normal owned
 Excel/worker/controller shutdown.
 
 Run all 46 screenshot Service cases against the final clean merged release
-source. Retain the matched-scene evidence for the frozen/split stale-viewport
-repair. The standard capture path is selected only for pane captures, preserving
-their zoom; ordinary single-pane captures retain their existing full-content
-mode. Include ordinary fractional-zoom cases so a pane repair cannot regress
-the single-pane path. Run the complete screenshot and VBA source suites once
+source. Retain matched-scene evidence for stale viewport pixels after scrolling
+or tiling. Every capture path uses a standard preparatory render followed by
+the full-content final image. Verify ordinary single-pane captures, including
+fractional zoom, as well as frozen and split panes. Check offscreen styled
+cells, embedded charts and each newly scrolled tile against expected current
+worksheet content at the same coordinates. Preserve existing pane, zoom,
+selection, visibility, window-state and workbook Saved-state invariants.
+Run the complete screenshot and VBA source suites once
 against that final source, rather than repeating the complete suites at each
 preparation step. Source changes invalidate affected evidence. Verify corner markers and complete worksheet pixels across asymmetric frozen panes and split views, varied row sizes, and
 hidden/minimized/maximized windows. Check complete interior row-color bands as

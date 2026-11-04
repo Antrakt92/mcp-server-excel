@@ -244,7 +244,7 @@ public sealed partial class IsolatedServiceScreenshotTests
                 visible = fixedPane.VisibleRange;
                 nint hwnd = (nint)context.App.Hwnd;
                 Rectangle bounds = WindowCapture.GetWindowBounds(hwnd);
-                using var native = WindowCapture.CaptureWindow(hwnd);
+                using var native = WindowCapture.CaptureWindow(hwnd, bounds);
                 int left = fixedPane.PointsToScreenPixelsX(0) - bounds.Left;
                 int top = fixedPane.PointsToScreenPixelsY(0) - bounds.Top;
                 int span = (int)Math.Round(Convert.ToDouble((object)visible.Width, CultureInfo.InvariantCulture) * dpi / 72.0 * zoom);

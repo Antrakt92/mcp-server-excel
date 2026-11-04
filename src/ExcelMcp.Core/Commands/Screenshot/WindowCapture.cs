@@ -53,13 +53,23 @@ internal static class WindowCapture
     /// Renders the window into a bitmap.
     /// </summary>
     /// <param name="hwnd">Top-level window handle.</param>
-    /// <param name="useFullContent">Use the full-content renderer for the normal zoom/tiling path.
-    /// Pane captures retain their zoom and use standard rendering because full-content rendering
-    /// can return the pre-scroll viewport for frozen or split panes.</param>
+    /// <param name="expectedBounds">Window bounds used to calculate the screenshot crop.</param>
     /// <returns>Bitmap of the whole window, in physical pixels. Caller owns the bitmap.</returns>
-    public static Bitmap CaptureWindow(IntPtr hwnd, bool useFullContent = true)
+    public static Bitmap CaptureWindow(IntPtr hwnd, Rectangle expectedBounds)
+    {
+        // A standard render updates the viewport that full-content capture can otherwise
+        // retain from before scrolling. Its bitmap can be incomplete, so discard it before
+        // capturing the full-content frame that supplies the actual screenshot pixels.
+        CaptureWindowCore(hwnd, 0, expectedBounds).Dispose();
+        return CaptureWindowCore(hwnd, PwRenderFullContent, expectedBounds);
+    }
+
+    private static Bitmap CaptureWindowCore(IntPtr hwnd, uint flags, Rectangle expectedBounds)
     {
         Rectangle bounds = GetWindowBounds(hwnd);
+        if (bounds != expectedBounds)
+            throw new InvalidOperationException(
+                $"The Excel window moved or resized before screenshot rendering. Expected {expectedBounds}; observed {bounds}. Retry the capture.");
 
         if (bounds.Width <= 0 || bounds.Height <= 0)
         {
@@ -78,7 +88,7 @@ internal static class WindowCapture
             bool captured;
             try
             {
-                captured = PrintWindow(hwnd, hdc, useFullContent ? PwRenderFullContent : 0);
+                captured = PrintWindow(hwnd, hdc, flags);
             }
             finally
             {
@@ -92,6 +102,11 @@ internal static class WindowCapture
                     "This happens when the desktop is locked or a Remote Desktop session is disconnected. " +
                     "Reconnect to an interactive desktop session and retry the capture.");
             }
+
+            Rectangle renderedBounds = GetWindowBounds(hwnd);
+            if (renderedBounds != expectedBounds)
+                throw new InvalidOperationException(
+                    $"The Excel window moved or resized during screenshot rendering. Expected {expectedBounds}; observed {renderedBounds}. Retry the capture.");
 
             return bitmap;
         }

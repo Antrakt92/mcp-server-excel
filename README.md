@@ -23,9 +23,9 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 The latest portable release, **4.0.0**, includes upstream **2.6.11** and exposes
 445 operations through 64 MCP tools across 33 feature areas. It adds known-password
-VBA project unlocking and verification, and repairs screenshots in frozen and split
-views. Password authentication opens current-session access without removing saved
-protection, saving or reopening the workbook.
+VBA project unlocking and verification, and corrects stale worksheet screenshots
+in normal, frozen and split views. Password authentication opens current-session
+access without removing saved protection, saving or reopening the workbook.
 
 **CLI migration:** all three VBA password actions require batch JSON on stdin.
 Direct password flags and file batches containing password actions are refused;
