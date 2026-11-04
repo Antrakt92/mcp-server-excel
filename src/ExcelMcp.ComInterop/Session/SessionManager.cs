@@ -910,6 +910,7 @@ public sealed class SessionManager : IDisposable
                     ? trackedPath
                     : attached.FilePath;
                 if (previousPath is not null
+                    && (WorkbookLocation.IsRemote(previousPath) || Path.IsPathFullyQualified(previousPath))
                     && _activeFilePaths.TryGetValue(previousPath, out var previousOwner)
                     && string.Equals(previousOwner, sessionId, StringComparison.Ordinal))
                 {
@@ -2309,6 +2310,7 @@ public sealed class SessionManager : IDisposable
             _sessionFilePaths.TryGetValue(sessionId, out var selectedPath);
             var previousPath = previousWorkbookPath ?? selectedPath;
             if (previousPath is not null &&
+                (WorkbookLocation.IsRemote(previousPath) || Path.IsPathFullyQualified(previousPath)) &&
                 !string.Equals(previousPath, normalizedPath, StringComparison.OrdinalIgnoreCase))
             {
                 ReleaseFilePathClaim(previousPath, sessionId);

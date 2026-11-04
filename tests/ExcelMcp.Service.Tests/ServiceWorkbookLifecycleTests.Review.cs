@@ -1277,6 +1277,76 @@ public sealed partial class ServiceWorkbookLifecycleTests
     }
 
     [Fact]
+    public async Task SaveAs_AttachedUnsavedWorkbook_PublishesPathAndPreservesNeighbor()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var ownedPath = Path.Join(directory, "unsaved-saveas-owner.xlsx");
+            var ownedId = await CreateSessionAsync(service, ownedPath);
+            sessions[ownedId] = 0;
+            await WriteMarkerAsync(service, ownedId, "keep neighboring unsaved edits");
+            var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
+            var name = owned.Execute((context, _) => AddReviewWorkbook(context.App, "persist selected edits"));
+            var targetPath = Path.Join(directory, "saved-unsaved-attachment.xlsx");
+            Exception? failure = null;
+            try
+            {
+                var attachedId = await AttachReviewWorkbookAsync(service,
+                    await DiscoverReviewWorkbookAsync(service, name));
+                sessions[attachedId] = 0;
+                var attached = Assert.IsType<AttachedWorkbookBatch>(service.SessionManager.GetSession(attachedId));
+                Assert.Null(attached.FilePath);
+                Assert.Equal(name, attached.WorkbookPath);
+                var saved = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "workbook.save-as",
+                    SessionId = attachedId,
+                    Args = JsonSerializer.Serialize(new { targetPath }, ServiceProtocol.JsonOptions)
+                });
+                RequireSuccess(saved);
+                Assert.True(File.Exists(targetPath));
+                var actual = attached.Execute((context, _) => (context.Book.FullName, context.Book.Saved));
+                Assert.Equal(targetPath, actual.FullName, ignoreCase: true);
+                Assert.True(actual.Saved);
+                Assert.Equal(targetPath, attached.FilePath, ignoreCase: true);
+                Assert.True(service.SessionManager.TryGetFilePath(attachedId, out var reported));
+                Assert.Equal(targetPath, reported, ignoreCase: true);
+                Assert.Throws<InvalidOperationException>(() =>
+                    service.SessionManager.ReserveSessionFilePath(ownedId, targetPath));
+                Assert.Equal("persist selected edits", await ReadMarkerAsync(service, attachedId));
+                Assert.Equal("keep neighboring unsaved edits", await ReadMarkerAsync(service, ownedId));
+                Assert.False(owned.Execute((context, _) => context.Book.Saved));
+
+                await CloseSessionAsync(service, attachedId, save: false);
+                sessions.TryRemove(attachedId, out _);
+                var reopenedId = await OpenSessionAsync(service, targetPath);
+                sessions[reopenedId] = 0;
+                Assert.Equal("persist selected edits", await ReadMarkerAsync(service, reopenedId));
+                Assert.Equal("keep neighboring unsaved edits", await ReadMarkerAsync(service, ownedId));
+                Assert.False(owned.Execute((context, _) => context.Book.Saved));
+            }
+            catch (Exception error) { failure = error; }
+            finally
+            {
+                // Save As can mutate Excel before metadata publication fails.
+                // Locate only this fixture's workbook in its exact owned process,
+                // by either the accepted target path or its original unsaved name.
+                try
+                {
+                    await CloseDiscoveredWorkbooksAsync(service, sessions,
+                        owned.ExcelProcessId!.Value, (targetPath, null), (null, name));
+                }
+                catch (Exception error)
+                {
+                    failure = PersistentServiceCleanupFailures.Combine(failure, error);
+                }
+            }
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        });
+    }
+
+    [Fact]
     public async Task SaveAs_AttachedWorkbook_ImmediatelyReportsNewNameAndPath()
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>

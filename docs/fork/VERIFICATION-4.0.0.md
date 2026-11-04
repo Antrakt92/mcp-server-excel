@@ -38,6 +38,12 @@ Retain the earlier intermittent delayed-shutdown incident separately: successful
 diagnostic runs do not explain its cause, and the ownership fix does not claim
 to eliminate every delay in Excel shutdown.
 
+Verify attached unsaved-workbook discovery and first Save As. Names such as
+`Book1` must not enter file reservations. Check unsaved/saved location
+transitions, unrelated reservations, saved-file readback after reopening, and
+preserved neighboring workbook content and save state. Run the affected
+incomplete-discovery cleanup and running attached-callback shutdown cases.
+
 Run all 46 screenshot Service cases against the final clean merged release
 source. Retain matched-scene evidence for stale viewport pixels after scrolling
 or tiling. Every capture path uses a standard preparatory render followed by

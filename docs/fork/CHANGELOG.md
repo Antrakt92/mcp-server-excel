@@ -43,6 +43,9 @@ CLI password calls must migrate to batch JSON on stdin.
 
 ### Fixed
 
+- Discovery and first Save As of an attached unsaved workbook keep names such
+  as `Book1` out of the file-reservation map. This prevents path-validation
+  errors from interrupting cleanup or masking an already completed save.
 - Normal session shutdown confirms that the exact owned Excel process has
   exited before reporting completed cleanup. An unconfirmed exit keeps the
   process tracked and the session quarantined; closing again after confirmed
