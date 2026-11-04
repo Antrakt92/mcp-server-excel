@@ -10,7 +10,7 @@ summaries below focus on capabilities and their important requirements.
 
 ---
 
-## VBA Macros (14 operations)
+## VBA Macros (16 operations)
 
 - **Inspect code:** List procedures with their kinds and line numbers, read a selected procedure or up to 500 lines, or view the full module.
 - **Maintain code:** Import standard modules, update whole modules, replace one procedure only when its source has not changed, or remove components.
@@ -21,6 +21,7 @@ summaries below focus on capabilities and their important requirements.
 - **Diagnose project access:** Inspect actual access, password protection, and execution mode without changing settings.
 - **Inspect dependencies:** List library references and flag broken ones without automatic repair.
 - **Configure project protection:** Set a new password on an accessible, unlocked VBA project through its own Project Properties dialog. Saving and reopening remain explicit operations.
+- **Authenticate a known password:** Unlock current-session project access, or check a password against a real locked-project challenge. Both actions leave protection settings untouched.
 
 Listing or editing the VBA project requires Excel's manually configured trust
 setting. Running an existing macro does not require project-inspection trust,
@@ -55,10 +56,10 @@ is not proof of persisted protection: explicitly save, close and reopen, then
 check `vba.status` for `Locked`. The current editor can remain unlocked until that
 reopen. Preserve unsaved work when choosing when to close.
 
-For CLI use, pass the command through `excelcli batch --input -` with
-`args.password` in stdin rather than placing the password in process arguments,
-shell history or a temporary JSON file. Do not include passwords in logs or
-published examples.
+For CLI use, the password actions require `excelcli batch --input -` with
+`args.password` in stdin. Direct password options and batch input files are
+refused. Migrate earlier `vba protect-project --password ...` calls to stdin.
+Never include passwords in shell history, logs, session metadata or published examples.
 
 The driver requires an interactive Windows desktop and Excel's standard VBA
 Project Properties dialog. It briefly shows the editor, selects and verifies
@@ -69,6 +70,36 @@ It does not change Trust Center settings or enter an existing project's password
 Failures report the observed phase, whether acceptance was requested, and which
 cleanup/restoration steps completed. An unknown outcome is not a rollback or
 permission to repeat the request. Inspect that state before further changes.
+
+### Known-password authentication
+
+`vba.unlock-project` submits the supplied password to the selected locked
+project's native challenge. `vba.verify-password` checks the same challenge;
+successful verification also makes the project accessible in the current VBE
+session. Both require a normal writable session opened by this host. Audit,
+read-only and attached sessions are refused before dialog input. Neither action
+enables macros, changes Trust Center settings or tries passwords other than the
+one supplied. Printable ASCII input is transmitted exactly, including spaces,
+quotes and backslashes. Unsupported characters and native length overflow are
+refused without substituting or truncating the password.
+
+For a recognized incorrect password, verification completes with
+`passwordVerified: false`; unlocking fails with `Permissions` and reports the
+observed locked state. If UI, cancellation or a timeout prevents observing an
+outcome, the error retains `passwordVerified: null`, never a guessed mismatch. If the project is
+already accessible, unlocking returns `alreadyAccessible: true`,
+`authenticationPerformed: false` and `passwordVerified: null`. Verification
+instead requires a locked project and returns `Prerequisite`; it does not
+automatically close or reopen a workbook to create a challenge.
+
+Authentication cancels the target Properties dialog without changing its lock
+checkbox or password settings. It does not save, close, reopen or remove the
+saved viewing lock. A later fresh open can therefore be locked again. Cleanup
+and restoration failures preserve observed authentication state; cancellation
+does not undo access already granted by Excel.
+
+**Development status:** these new actions are prepared in this branch. Native
+authentication acceptance remains a required gate before release.
 
 [VBA walkthrough](../guides/RUN-VBA-MACROS.md)
 

@@ -132,7 +132,10 @@ public static class ServiceInfoExtractor
                     xmlDoc?.Summary,
                     hasBatchParameter,
                     hasProgressParameter,
-                    methodMcpToolReadOnly));
+                    methodMcpToolReadOnly,
+                    method.GetAttributes().Any(attribute => attribute.AttributeClass?.Name == "ServiceActionAttribute"
+                        && attribute.NamedArguments.Any(argument => argument.Key == "CliBatchStdinOnly"
+                            && argument.Value.Value is true))));
             }
         }
 
@@ -230,6 +233,7 @@ public static class ServiceInfoExtractor
         string? exposedName = null;
         bool isRequired = false;
         bool allowsEmptyString = false;
+        bool allowsWhitespace = false;
 
         foreach (var attr in param.GetAttributes())
         {
@@ -258,6 +262,8 @@ public static class ServiceInfoExtractor
             else if (attrName == "RequiredParameterAttribute")
             {
                 isRequired = true;
+                allowsWhitespace = attr.NamedArguments.Any(argument =>
+                    argument.Key == "AllowWhitespace" && argument.Value.Value is true);
             }
             else if (attrName == "AllowEmptyStringAttribute")
             {
@@ -346,7 +352,8 @@ public static class ServiceInfoExtractor
             param.IsParams,
             allowsEmptyString,
             isJsonObject: param.Type.TypeKind == TypeKind.Class &&
-                          param.Type.SpecialType == SpecialType.None);
+                          param.Type.SpecialType == SpecialType.None,
+            allowsWhitespace: allowsWhitespace);
     }
 
     private static XmlDocumentation? ExtractXmlDocumentation(IMethodSymbol method)

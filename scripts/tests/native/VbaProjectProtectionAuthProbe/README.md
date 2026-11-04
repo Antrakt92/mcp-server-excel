@@ -13,7 +13,7 @@ dotnet build scripts/tests/native/VbaProjectProtectionAuthProbe/VbaProjectProtec
 Invoke the built executable with four named arguments:
 
 ```text
---identity <identity.json> --mode correct|wrong --ready <new-ready.json> --result <new-result.json>
+--identity <identity.json> --mode correct|wrong|observe --ready <new-ready.json> --result <new-result.json>
 ```
 
 The identity JSON contains `processId` and `startedAt` (the process creation time
@@ -28,6 +28,13 @@ code units. Both modes submit that exact value; mode only selects the expected
 authentication outcome. For wrong mode, the caller supplies a distinct password
 with the same length and Unicode category as the correct password, so the probe
 can detect lossy character conversion rather than merely reject ASCII input.
+
+`observe` inventories an owned synthetic challenge's caption and control IDs,
+then cancels it without reading stdin or submitting a password. Use this mode
+to establish a native dialog signature before a production-driver acceptance
+run. Its receipt reports `passwordSubmitted:false`; it does not verify a password.
+Captions may contain the synthetic project name. Keep this test helper on
+disposable fixtures and keep its receipts out of customer/public reports.
 
 Wait for the newly created ready JSON before asking the product to open the
 locked fixture's Project Properties command. Correct mode expects the standard

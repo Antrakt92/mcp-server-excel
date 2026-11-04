@@ -29,6 +29,8 @@ public sealed class AuditSessionPolicyTests
     [InlineData("pivottable.share-cache")]
     [InlineData("vba.run")]
     [InlineData("vba.invoke")]
+    [InlineData("vba.unlock-project")]
+    [InlineData("vba.verify-password")]
     [InlineData("vba.replace-module")]
     [InlineData("vba.update")]
     [InlineData("workbook.save-as")]

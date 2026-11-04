@@ -26,8 +26,8 @@ internal static class Program
             if (File.Exists(options.Ready) || File.Exists(options.Result))
                 throw new ProbeException("output_already_exists");
             Console.InputEncoding = new UTF8Encoding(false, true);
-            var password = ReadPassword();
-            if (password.Length == 0 || password.Any(char.IsControl))
+            var password = options.Mode == "observe" ? string.Empty : ReadPassword();
+            if (options.Mode != "observe" && (password.Length == 0 || password.Any(char.IsControl)))
                 throw new ProbeException("invalid_stdin_password");
             probe = new AuthProbe(options.Identity);
             result.ProcessIdentityConfirmed = true;
@@ -47,6 +47,11 @@ internal static class Program
                 result.PasswordControlUnicode = probe.PasswordControlUnicode;
                 result.PasswordControlSupportsUnichar = probe.PasswordControlSupportsUnichar;
                 result.WindowsAnsiCodePage = probe.WindowsAnsiCodePage;
+                result.AuthenticationCaption = probe.AuthenticationCaption;
+                result.PasswordControlId = probe.PasswordControlId;
+                result.AuthenticationButtonCount = probe.AuthenticationButtonCount;
+                result.PasswordSubmitted = probe.PasswordSubmitted;
+                result.DialogOwnership = probe.DialogOwnership;
                 try { result.CleanupConfirmed = probe.Cleanup(result.Errors); }
                 catch (Exception error) { result.Errors.Add(ErrorCode(error)); }
                 try { probe.Dispose(); }
@@ -100,7 +105,7 @@ internal static class Program
                     string.IsNullOrWhiteSpace(arguments[index + 1]) || !values.TryAdd(key, arguments[index + 1]))
                     throw new ProbeException("invalid_arguments");
             }
-            if (!values.TryGetValue("--mode", out var mode) || mode is not ("correct" or "wrong"))
+            if (!values.TryGetValue("--mode", out var mode) || mode is not ("correct" or "wrong" or "observe"))
                 throw new ProbeException("invalid_mode");
             var identity = Path.GetFullPath(values["--identity"]);
             var ready = Path.GetFullPath(values["--ready"]);
@@ -121,6 +126,11 @@ internal static class Program
         public bool? PasswordControlUnicode { get; set; }
         public bool? PasswordControlSupportsUnichar { get; set; }
         public uint? WindowsAnsiCodePage { get; set; }
+        public string? AuthenticationCaption { get; set; }
+        public int? PasswordControlId { get; set; }
+        public int? AuthenticationButtonCount { get; set; }
+        public bool PasswordSubmitted { get; set; }
+        public List<string> DialogOwnership { get; set; } = [];
         public bool ExpectedOutcomeObserved { get; set; }
         public bool CleanupConfirmed { get; set; }
         public bool Success { get; set; }
@@ -147,6 +157,22 @@ internal static class Program
         internal bool? PasswordControlUnicode { get; private set; }
         internal bool? PasswordControlSupportsUnichar { get; private set; }
         internal uint? WindowsAnsiCodePage { get; private set; }
+        internal string? AuthenticationCaption { get; private set; }
+        internal int? PasswordControlId { get; private set; }
+        internal int? AuthenticationButtonCount { get; private set; }
+        internal bool PasswordSubmitted { get; private set; }
+        internal List<string> DialogOwnership { get; } = [];
+
+        private void RecordOwnership(nint root, string phase)
+        {
+            var parts = new List<string>();
+            for (int depth = 0; root != 0 && depth < 16; root = GetWindow(root, 4), depth++)
+            {
+                CheckWindow(root);
+                parts.Add($"{root:X}:{Class(root)}:{Text(root)}");
+            }
+            DialogOwnership.Add(phase + "|" + string.Join(" -> ", parts));
+        }
 
         internal AuthProbe(string identityPath)
         {
@@ -301,6 +327,15 @@ internal static class Program
                 throw new ProbeException("password_control_identity_unconfirmed");
             PasswordControlUnicode = IsWindowUnicode(edit);
             WindowsAnsiCodePage = GetACP();
+            AuthenticationCaption = Text(authentication);
+            RecordOwnership(authentication, "challenge");
+            PasswordControlId = GetDlgCtrlID(edit);
+            AuthenticationButtonCount = Children(authentication).Count(window => Class(window) == "Button");
+            if (mode == "observe")
+            {
+                Click(authentication, DialogKind.Authentication, 2);
+                return;
+            }
             // UNICODE_NOCHAR queries support without inserting text.
             if (SendMessageTimeout(edit, 0x109, 0xFFFF, 0, 0x23, 500, out var supportsUnichar) != 0)
                 PasswordControlSupportsUnichar = supportsUnichar != 0;
@@ -313,6 +348,7 @@ internal static class Program
                     SendMessageTimeout(edit, 0x102, character, 1, 0x23, 500, out _) == 0)
                     throw new ProbeException("password_character_not_confirmed");
             }
+            PasswordSubmitted = true;
             Click(authentication, DialogKind.Authentication, 1);
             wait.Restart();
             while (wait.ElapsedMilliseconds < 10000)
@@ -331,6 +367,7 @@ internal static class Program
                 if (candidates.Length == 1)
                 {
                     var outcome = candidates[0];
+                    RecordOwnership(outcome, mode);
                     Remember(outcome, wanted);
                     Click(outcome, wanted, 2);
                     WaitClosed(outcome);

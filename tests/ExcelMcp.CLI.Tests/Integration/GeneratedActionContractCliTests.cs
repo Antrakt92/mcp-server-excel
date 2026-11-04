@@ -449,10 +449,7 @@ public sealed class GeneratedActionContractCliTests : IDisposable
             inputPath,
             """[{"command":"diag.ping","args":{},"unexpected":true}]""");
 
-        var result = await InProcessCliHelper.RunWithServiceAsync(["batch", "--input", inputPath]);
-
-        Assert.Equal(1, result.ExitCode);
-        Assert.Contains("unexpected", result.Stderr + result.Stdout, StringComparison.OrdinalIgnoreCase);
+        await AssertSanitizedTopLevelRejectionAsync(inputPath, "unexpected");
     }
 
     [Theory]
@@ -504,10 +501,30 @@ public sealed class GeneratedActionContractCliTests : IDisposable
             inputPath,
             """[{"Command":"diag.ping","args":{}}]""");
 
-        var result = await InProcessCliHelper.RunWithServiceAsync(["batch", "--input", inputPath]);
+        await AssertSanitizedTopLevelRejectionAsync(inputPath, "Command");
+    }
+
+    private static async Task AssertSanitizedTopLevelRejectionAsync(string inputPath, string suppliedProperty)
+    {
+        int dispatchCount = 0;
+        var result = await InProcessCliHelper.RunAsync(["batch", "--input", inputPath], _ =>
+        {
+            dispatchCount++;
+            return new ServiceResponse { Success = true };
+        });
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("Command", result.Stdout + result.Stderr, StringComparison.Ordinal);
+        Assert.Equal(0, dispatchCount);
+        using var document = JsonDocument.Parse(result.Stdout);
+        Assert.False(document.RootElement.GetProperty("success").GetBoolean());
+        var error = document.RootElement.GetProperty("error");
+        Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+        Assert.Equal(nameof(JsonException), error.GetProperty("exceptionType").GetString());
+        var message = error.GetProperty("message").GetString();
+        Assert.Contains("Batch input is not valid JSON command data.", message, StringComparison.Ordinal);
+        Assert.Matches(@"LineNumber: \d+; BytePositionInLine: \d+\.", message);
+        Assert.DoesNotContain(suppliedProperty, result.Stdout + result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(inputPath, result.Stdout + result.Stderr, StringComparison.Ordinal);
     }
 
     [Fact]

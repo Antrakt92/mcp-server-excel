@@ -67,10 +67,11 @@ public sealed class MethodInfo
 
     /// <summary>Whether the original interface method has an IProgress&lt;T&gt; parameter.</summary>
     public bool HasProgressParameter { get; }
+    public bool CliBatchStdinOnly { get; }
 
     public MethodInfo(string methodName, string actionName, string returnType, ITypeSymbol returnTypeSymbol, string mcpTool,
         List<ParameterInfo> parameters, string? xmlDocSummary = null, bool hasBatchParameter = true,
-        bool hasProgressParameter = false, bool mcpToolReadOnly = false)
+        bool hasProgressParameter = false, bool mcpToolReadOnly = false, bool cliBatchStdinOnly = false)
     {
         MethodName = methodName;
         ActionName = actionName;
@@ -82,6 +83,7 @@ public sealed class MethodInfo
         XmlDocSummary = xmlDocSummary;
         HasBatchParameter = hasBatchParameter;
         HasProgressParameter = hasProgressParameter;
+        CliBatchStdinOnly = cliBatchStdinOnly;
     }
 }
 
@@ -100,6 +102,7 @@ public sealed class ParameterInfo
     public string? ExposedName { get; }
     public bool IsRequired { get; }
     public bool AllowsEmptyString { get; }
+    public bool AllowsWhitespace { get; }
     public bool IsParams { get; }
     public bool IsEnum { get; }
     public bool IsJsonObject { get; }
@@ -128,7 +131,7 @@ public sealed class ParameterInfo
         bool isRequired = false, bool isEnum = false,
         string? xmlDocDescription = null, string? enumTypeName = null,
         IReadOnlyList<EnumAliasInfo>? enumAliases = null, bool isParams = false,
-        bool allowsEmptyString = false, bool isJsonObject = false)
+        bool allowsEmptyString = false, bool isJsonObject = false, bool allowsWhitespace = false)
     {
         Name = name;
         TypeName = typeName;
@@ -140,6 +143,7 @@ public sealed class ParameterInfo
         ExposedName = exposedName;
         IsRequired = isRequired;
         AllowsEmptyString = allowsEmptyString;
+        AllowsWhitespace = allowsWhitespace;
         IsParams = isParams;
         IsEnum = isEnum;
         IsJsonObject = isJsonObject;

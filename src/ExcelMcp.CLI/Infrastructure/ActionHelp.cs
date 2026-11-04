@@ -19,6 +19,12 @@ internal static class ActionHelp
             return false;
         }
 
+        if (_CliCategoryMetadata.RequiresBatchStdin(arguments[0] + "." + arguments[1]))
+        {
+            WriteStdinOnly(arguments[0] + "." + arguments[1]);
+            return true;
+        }
+
         var category = _CliCategoryMetadata.Categories.Single(
             item => string.Equals(item.CliCommandName, arguments[0], StringComparison.OrdinalIgnoreCase));
         var registryTypeName = category.RegistryTypeName.Split('.').Last();
@@ -92,5 +98,33 @@ internal static class ActionHelp
 
         CliCommandRuntime.Current.Output.Write(output.ToString());
         return true;
+    }
+
+    internal static void WriteStdinOnly(string command)
+    {
+        var parts = command.Split('.', 2);
+        var category = _CliCategoryMetadata.Categories.Single(item =>
+            string.Equals(item.CliCommandName, parts[0], StringComparison.OrdinalIgnoreCase));
+        var action = _CliCategoryMetadata.ActionParametersByCommand[category.CliCommandName].Keys.Single(item =>
+            string.Equals(item, parts[1], StringComparison.OrdinalIgnoreCase));
+        var output = new StringBuilder();
+        output.AppendLine(_CliCategoryMetadata.ActionDescriptionsByCommand[category.CliCommandName][action]);
+        output.AppendLine();
+        output.AppendLine(_CliCategoryMetadata.BatchStdinOnlyMessage);
+        output.AppendLine();
+        output.AppendLine("Batch input (supply the required arguments through stdin):");
+        output.AppendLine(JsonSerializer.Serialize(new
+        {
+            command = category.CliCommandName + "." + action,
+            sessionId = "<session-id>",
+            args = new Dictionary<string, object?>()
+        }));
+        output.AppendLine("Batch arguments (case-sensitive):");
+        foreach (var parameter in _CliCategoryMetadata.ActionParametersByCommand[category.CliCommandName][action])
+            output.AppendLine("  args." + parameter);
+        output.AppendLine("Supply args.password as a required JSON string, preserving spaces, quotes and backslashes with a JSON serializer.");
+        output.AppendLine("Select the workbook with the entry's top-level sessionId, not inside args.");
+        output.AppendLine("See excelcli batch --help for stdin execution examples.");
+        CliCommandRuntime.Current.Output.Write(output.ToString());
     }
 }

@@ -46,3 +46,9 @@ Follow [repository review checks](../../AGENTS.md#code-review-rules) and
   and reveals the owned workbook; reject new work until the original callback
   and cleanup return and readiness is confirmed. Do not terminate Excel or
   discard edits merely because a wait expired.
+- Known-password VBA authentication is confined to the selected owned workbook's
+  new expected dialogs. Retain PID/start-time/user/session identity, reselect and
+  read back project identity after showing VBE, reject input beyond the edit's
+  native limit before typing, and independently drain introduced dialog cleanup.
+  Never infer a password match from already accessible state, unknown UI or a
+  truncated input. Do not save, reopen, alter protection options or enable trust.

@@ -13,7 +13,7 @@ the same features as the MCP Server and usually uses fewer AI tokens.
 > **Primary distribution: npm or standalone executable** — Run `npx -y @sbroenne/excelcli@latest --help` or download `excelcli.exe` from the [latest release](https://github.com/sbroenne/mcp-server-excel/releases/latest). No .NET runtime required.
 > **Secondary distribution: NuGet .NET tool** — `dotnet tool install --global Sbroenne.ExcelMcp.CLI` (requires .NET 10 runtime).
 
-The CLI provides 33 feature command categories with 443 operations matching the MCP Server, plus `session`, `service`, `batch`, and `list-actions` commands — the same capabilities without loading 33 tool schemas into context.
+The CLI provides 33 feature command categories with 445 operations matching the MCP Server, plus `session`, `service`, `batch`, and `list-actions` commands — the same capabilities without loading 33 tool schemas into context.
 
 | Interface | Best For | Why |
 |-----------|----------|-----|
@@ -75,11 +75,20 @@ Use individual commands when you need to inspect a result before choosing the
 next step. See [CLI batch jobs](../../docs/reference/workflows.md#cli-batch-jobs)
 for the complete workflow.
 
+VBA `protect-project`, `unlock-project`, and `verify-password` accept passwords
+only in batch JSON read from stdin: use `excelcli batch --input -` or omit
+`--input`. Migrate existing direct `vba protect-project --password ...` calls
+and password-bearing batch files to stdin; these forms are now rejected before
+connecting to the service. A file batch containing any such action is rejected
+in full before its first command runs. Keep `password` inside the entry's `args`
+object and `sessionId` at the entry's top level. Password text is passed exactly,
+including spaces, quotes, and backslashes; encode it with a JSON serializer.
+
 ---
 
 ## 📋 What You Can Do
 
-ExcelMcp.CLI provides **443 operations** across 31 feature command categories including Power Query, Python in Excel, Data Model/DAX, What-If Analysis, PivotTables, Excel Tables, Charts, Drawings, VBA, Ranges, Worksheets, Workbooks, QueryTables, XML Maps, Connections, and Window Management.
+ExcelMcp.CLI provides **445 operations** across 31 feature command categories including Power Query, Python in Excel, Data Model/DAX, What-If Analysis, PivotTables, Excel Tables, Charts, Drawings, VBA, Ranges, Worksheets, Workbooks, QueryTables, XML Maps, Connections, and Window Management.
 
 Drives the **actual Excel application** via COM — not a file-format parser — so live operations (Power Query refresh, recalculation, DAX evaluation, VBA execution) run for real and existing workbooks stay intact.
 

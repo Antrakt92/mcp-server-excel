@@ -29,6 +29,12 @@ internal static class BatchHelp
                 excelcli range set-values --help
               Substitute the group and action you need.
 
+              Actions marked as stdin-only accept batch JSON only through stdin,
+              never direct CLI options or --input files. A file batch containing
+              any stdin-only action is refused before its first command runs.
+              Use --input - or omit --input; serialize credential values as JSON
+              strings without trimming them or writing them to command arguments.
+
             Sessions:
               --session supplies the default; an entry's sessionId overrides it.
               Without a default, successful session.open/create/attach captures

@@ -59,6 +59,39 @@ pending operation and late outcome before issuing another request. Do not retry
 a mutation merely because its response was interrupted. Recovery and attachment
 retain the workbook's actual state; see [recovery](RECOVERY.md).
 
+## VBA project passwords
+
+The development actions `unlock-project` and `verify-password` require an
+interactive desktop, a normal writable session opened by this host, printable
+ASCII input, and the recognized English native password-dialog signature.
+Audit, read-only and attached sessions are refused. Unknown dialog signatures
+fail closed. Native authentication acceptance remains a release gate.
+
+Use MCP `vba` with action `unlock-project` to open current-session project
+access using a known password. `verify-password` requires a real locked-project
+challenge; accepted input also opens current-session access. An already
+accessible project returns `passwordVerified:null` from unlocking; verification
+instead returns `Prerequisite` without reopening it. A recognized wrong
+password returns `passwordVerified:false` from verification and a `Permissions`
+error from unlocking. Unknown outcomes remain errors, not guessed mismatches.
+Neither action removes protection, saves, or automatically closes/reopens the
+workbook. Cancellation does not undo access already granted by Excel.
+
+All three password actions, including `protect-project`, accept passwords
+through MCP tool inputs or CLI batch JSON on stdin only. Use
+`excelcli batch --input -` or omit `--input`; the entry's `args.password` carries
+the exact value and its top-level `sessionId` selects the workbook. Direct
+password flags and CLI batch input files are refused before connecting; a mixed
+file batch runs no commands. Preserve spaces, quotes and backslashes with a
+JSON serializer, and keep passwords out of arguments, files and logs.
+
+`protect-project` configures the viewing lock on an accessible project. To
+establish persisted locking, explicitly save, close and freshly reopen when
+authorized, then inspect `vba.status` for `Locked`. Unlocking an editor session
+does not prove that the saved protection settings changed. See
+[project protection and authentication](../features/AUTOMATION-ADVANCED.md#project-password-protection)
+for result and cleanup details.
+
 ## VBA source and function results
 
 Read a module with `vba_read` action `view` before a full replacement. Pass its

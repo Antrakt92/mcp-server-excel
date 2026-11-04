@@ -102,12 +102,16 @@ Do not click or answer them: report the dialog text to the user. After
 reporting, you may close or stop that Excel copy as described above. Keep
 dialog text out of public artifacts.
 
-The synthetic VBA protection acceptance helper is an explicit exception for
+The synthetic VBA protection/authentication acceptance paths are an explicit exception for
 its deliberately introduced password, invalid-password and Project Properties
 dialogs. It must validate retained process identity and each expected dialog,
 independently dismiss its prompts on failure, and verify closure. The caller
 must also prove workbook/worker/Excel shutdown; any leftover fails the run.
 Unexpected dialogs and unrelated instances remain outside that exception.
+Known-password tests must distinguish accepted, recognized-rejected and unknown
+outcomes, and prove that an accessible project does not verify a supplied password.
+Exercise same-session access and fresh-open persisted locking separately; the
+authentication action must not save, reopen or remove protection settings.
 
 PDF/XPS export tests first check that Windows can open the default printer and
 fail with a plain message if it cannot, because Excel would otherwise show

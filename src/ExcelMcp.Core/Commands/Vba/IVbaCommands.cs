@@ -23,7 +23,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 /// </summary>
 [ServiceCategory("Vba")]
 [McpTool("vba", Title = "VBA Operations", Destructive = true, Category = "automation",
-    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, replace a full module when its source fingerprint matches, import or update modules, configure password protection with explicit save/reopen, and invoke procedures with typed arguments and function results in .xlsm workbooks. Invoke results allow at most 10,000 array elements and a conservative 4 MiB transport budget; rejected return conversion occurs after macro execution and does not roll back its effects. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
+    Description = "Inspect VBA project status and library references, search source with limited results, list procedures and source ranges, read a bounded part of a module, replace one procedure only when its source fingerprint still matches, replace a full module when its source fingerprint matches, import or update modules, configure password protection with explicit save/reopen, authenticate a known printable ASCII password for current-session project access, and invoke procedures with typed arguments and function results in .xlsm workbooks. Password verification requires an actual locked-project challenge and opens current access when accepted; it does not save, reopen or remove persisted protection. Invoke results allow at most 10,000 array elements and a conservative 4 MiB transport budget; rejected return conversion occurs after macro execution and does not roll back its effects. Project inspection requires Trust Center access; status reports blocked access without enabling it. Replacing source preserves surrounding comments but does not prove it compiles or runs correctly.")]
 [McpReadOnlyActions("list", "view", "read", "search", "references", "status")]
 public interface IVbaCommands
 {
@@ -43,8 +43,18 @@ public interface IVbaCommands
     /// Configures password protection for an accessible VBA project through Excel's own Project Properties dialog. Does not save or reopen the workbook.
     /// </summary>
     /// <param name="password">New VBA project password using printable ASCII characters. Non-ASCII input is rejected because the project's legacy password encoding is not exposed by Excel's public object model. Use CLI batch stdin to keep the password out of process arguments. Never include it in logs.</param>
-    [ServiceAction("protect-project")]
-    VbaProjectProtectionResult ProtectProject(IExcelBatch batch, [RequiredParameter] string password);
+    [ServiceAction("protect-project", CliBatchStdinOnly = true)]
+    VbaProjectProtectionResult ProtectProject(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
+
+    /// <summary>Authenticates a locked project with its known password and opens access in the current editor session. Leaves protection settings untouched and does not save or reopen. Already accessible projects return without verifying the password. Audit, read-only and attached sessions are refused.</summary>
+    /// <param name="password">Known printable ASCII password, submitted exactly without trimming. CLI requires batch stdin; never put this value in arguments, files or logs.</param>
+    [ServiceAction("unlock-project", CliBatchStdinOnly = true)]
+    VbaProjectAuthenticationResult UnlockProject(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
+
+    /// <summary>Checks a known password against a locked project's native challenge. Correct input opens current-session access; protection settings are left untouched. Recognized rejection returns passwordVerified=false. An already accessible project cannot verify a password and is refused without reopening. Audit, read-only and attached sessions are refused.</summary>
+    /// <param name="password">Known printable ASCII password, submitted exactly without trimming. CLI requires batch stdin; never put this value in arguments, files or logs.</param>
+    [ServiceAction("verify-password", CliBatchStdinOnly = true)]
+    VbaProjectAuthenticationResult VerifyPassword(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
 
     /// <summary>
     /// Lists VBA library references and flags missing libraries without repairing or changing references.

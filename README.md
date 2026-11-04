@@ -28,6 +28,13 @@ MCP commands with `batch` and configure a VBA project's viewing lock with
 remain explicit. Audit sessions, bounded reads, custom slicer styles and guarded
 VBA edits remain available. No migration is required from 3.5.1.
 
+The development source exposes **445 operations** and adds known-password VBA
+project unlocking and verification. These additions are not in the 3.6.0
+packages; native acceptance remains a release gate. In development builds, all
+three VBA password actions require MCP input or CLI batch JSON on stdin. Direct
+password options and password-bearing CLI batch files are refused; see
+[agent workflows](docs/fork/AGENT-WORKFLOWS.md#vba-project-passwords).
+
 ## Choose a package
 
 | Package | Use |
@@ -115,7 +122,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The combined catalogue provides **64 MCP tools across 33 feature areas, with 443 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 443 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **64 MCP tools across 33 feature areas, with 445 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 445 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 
