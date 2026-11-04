@@ -61,11 +61,11 @@ retain the workbook's actual state; see [recovery](RECOVERY.md).
 
 ## VBA project passwords
 
-The development actions `unlock-project` and `verify-password` require an
+The `unlock-project` and `verify-password` actions in fork 4.0.0 require an
 interactive desktop, a normal writable session opened by this host, printable
 ASCII input, and the recognized English native password-dialog signature.
 Audit, read-only and attached sessions are refused. Unknown dialog signatures
-fail closed. Native authentication acceptance remains a release gate.
+fail closed. Use the release verification receipt for the tested native scope.
 
 Use MCP `vba` with action `unlock-project` to open current-session project
 access using a known password. `verify-password` requires a real locked-project

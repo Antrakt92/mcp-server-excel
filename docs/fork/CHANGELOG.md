@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and frozen/split screenshot fixes |
 | [3.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.6.0) | 2026-11-03 | Native VBA project password configuration and verified dialog cleanup |
 | [3.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.1) | 2026-11-03 | MCP SDK maintenance and locked video tooling updates |
 | [3.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.0) | 2026-11-03 | MCP batch, custom slicer styles and cancellable CLI startup waits |
@@ -19,6 +20,89 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 4.0.0 — 2026-11-04
+
+Adds known-password VBA authentication and fixes worksheet screenshots in frozen
+and split views. This is a major release because existing CLI password calls
+must migrate to batch JSON on stdin.
+
+### Added
+
+- `vba.unlock-project` opens current-session access with a known password.
+  `vba.verify-password` checks a real locked-project challenge; accepted input
+  also opens current-session access. Neither action removes saved protection,
+  saves, closes or reopens the workbook.
+- Verification reports recognized rejection as `passwordVerified:false`.
+  Unlocking with a wrong password returns `Permissions`. For an already
+  accessible project, unlocking reports that no authentication occurred;
+  verification returns `Prerequisite` rather than claiming a password match.
+- Errors retain observed authentication and cleanup state. Unknown outcomes
+  are not guessed mismatches, and cancellation does not undo access already
+  granted. Inspect that state before retrying.
+
+### Fixed
+
+- Range captures in frozen and split views use the correct worksheet pixels
+  and preserve pane layout, zoom and actual visible origins. Maximized windows
+  retain their window state. Oversized cells, empty visible ranges and
+  incomplete crops fail explicitly instead of returning clipped success.
+- Frozen and split captures use the current pane view instead of an older
+  viewport returned by the previous pane capture mode.
+- Password validation now preserves nonempty whitespace-only passwords instead
+  of treating them as missing. Missing, null and empty values remain invalid;
+  ordinary required text inputs retain their existing whitespace checks.
+- Password-action help includes each action's description, canonical batch
+  command, argument names and workbook selection. Batch parse errors retain
+  type and numeric position without echoing input tokens.
+- Historical protection guidance now accurately says unsupported Unicode input
+  is rejected before protection changes.
+
+### CLI migration
+
+`protect-project`, `unlock-project` and `verify-password` require batch JSON on
+stdin. Direct password flags and batch input files are refused before connecting;
+a file batch containing any password action runs no commands. Ordinary file
+batches remain supported. MCP tool inputs remain available.
+
+With the target `$sessionId` already selected, use PowerShell 7:
+
+```powershell
+$password = Read-Host 'Known VBA project password' -MaskInput
+@{
+    command = 'vba.unlock-project'
+    sessionId = $sessionId
+    args = @{ password = $password }
+} | ConvertTo-Json -Depth 4 -Compress | excelcli batch --input -
+Remove-Variable password
+```
+
+For password configuration, use command `vba.protect-project` with the new value
+in `args.password`. Keep passwords out of arguments, files and logs. Omitting
+`--input` also reads stdin; a JSON serializer preserves spaces, quotes and
+backslashes.
+
+### Limits and verification
+
+Authentication requires an interactive desktop, a normal writable owned
+session, printable ASCII input and recognized English native dialogs. Audit,
+read-only and attached sessions are refused. Unknown dialogs are not answered.
+The action does not enable macros or change Trust Center settings. Native
+length overflow is refused; exact maximum-length acceptance across Office
+versions is not established.
+
+Screenshot capture briefly brings Excel to the foreground and requires an
+interactive desktop. Hidden or minimized Excel
+windows are temporarily shown and their original visibility and window state
+are restored. Native freeze-divider lines may remain visible. Existing large-range
+limits still apply, with top-left truncation reported in the result message.
+
+Unknown/cancellation transport tests do not establish native failure injection
+or every cleanup/cancellation phase. See [4.0.0 verification](VERIFICATION-4.0.0.md).
+
+No dependencies were added or upgraded. The upstream baseline remains 2.6.11
+and MCP SDK remains 2.3.1. The catalogue contains 445 operations through 64 MCP
+tools across 33 feature areas.
 
 ## 3.6.0 — 2026-11-03
 

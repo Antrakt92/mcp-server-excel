@@ -13,11 +13,11 @@ For development packages only. Records dirty source explicitly in the manifest.
 .PARAMETER NoRestore
 Passes --no-restore to dotnet publish when the win-x64 assets are already restored.
 .EXAMPLE
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 3.6.0 -OutputDirectory artifacts/fork/3.6.0
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 4.0.0 -OutputDirectory artifacts/fork/4.0.0
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '3.6.0',
+    [string]$Version = '4.0.0',
     [string]$OutputDirectory,
     [string]$DotNetExecutable = 'dotnet',
     [switch]$AllowDirtySource,
@@ -142,6 +142,16 @@ Requires installed Microsoft Excel 2016 or later and an interactive Windows desk
 The .NET runtime is included. Extract the complete ZIP into its own directory.
 $usage
 Set EXCELMCP_TELEMETRY_MODE=off to explicitly disable telemetry.
+
+VBA unlock-project and verify-password authenticate a known password for current-session
+project access; neither removes saved protection, saves, closes or reopens the workbook.
+CLI migration: protect-project, unlock-project and verify-password now accept passwords
+only as batch JSON on stdin (excelcli batch --input -; omitting --input also reads stdin).
+Put the exact password in args.password and the workbook session in top-level sessionId.
+Direct password flags and file batches containing these actions are refused before
+connecting. Ordinary file batches remain supported. Keep passwords out of files and logs.
+MCP callers continue to use the vba tool's password input. Printable ASCII values retain
+spaces, quotes and backslashes, including nonempty all-space input; null/empty is invalid.
 
 Verify this ZIP against SHA256SUMS from the same release. See RELEASE-MANIFEST.json
 for source provenance and verification status. Build completion is not runtime acceptance.

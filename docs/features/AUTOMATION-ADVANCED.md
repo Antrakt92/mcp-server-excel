@@ -98,8 +98,7 @@ saved viewing lock. A later fresh open can therefore be locked again. Cleanup
 and restoration failures preserve observed authentication state; cancellation
 does not undo access already granted by Excel.
 
-**Development status:** these new actions are prepared in this branch. Native
-authentication acceptance remains a required gate before release.
+Known-password authentication is included in fork 4.0.0. See the release verification receipt for the tested native scope.
 
 [VBA walkthrough](../guides/RUN-VBA-MACROS.md)
 

@@ -4,10 +4,17 @@ ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://
 
 Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance fix (`efd33740`) while preserving fork lifecycle and workbook fixes. It is a patch release for fixes, dependency updates and guidance; it introduces no new public capability or migration. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
 
-Fork 3.6.0 retains upstream 2.6.11 and MCP SDK 2.3.1. It adds native VBA project
+Fork 4.0.0 retains upstream 2.6.11 and MCP SDK 2.3.1. It adds known-password
+VBA project unlocking and verification, exact whitespace-preserving password
+validation, and screenshot repairs for frozen and split views. The catalogue
+has 445 operations through 64 MCP tools across 33 feature areas. CLI password
+actions now require batch JSON on stdin; direct password flags and file batches
+containing those actions are refused. See [migration](../../README.md#migrate-password-calls-from-fork-360).
+
+Fork 3.6.0 retained upstream 2.6.11 and MCP SDK 2.3.1. It introduced native VBA project
 password configuration through MCP and CLI, with explicit save/reopen and
-printable ASCII passwords. The catalogue has 443 operations through 64 MCP
-tools across 33 feature areas. Existing 3.5.1 inputs remain supported.
+printable ASCII passwords. Its catalogue has 443 operations through 64 MCP
+tools across 33 feature areas. Existing 3.5.1 inputs remained supported.
 
 See the [fork changelog](CHANGELOG.md) for dated release notes, dependency versions,
 migration details and changes made after the latest published packages.
@@ -60,7 +67,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [3.6.0 verification](VERIFICATION-3.6.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [4.0.0 verification](VERIFICATION-4.0.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 

@@ -47,6 +47,12 @@ parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
 
+Fork 4.0.0 retains upstream 2.6.11 and exposes 445 operations. Build clean,
+committed release source with `-Version 4.0.0`, then follow
+[4.0.0 verification](VERIFICATION-4.0.0.md) against the extracted packages.
+The release requires migration of CLI password calls to batch JSON on stdin.
+Building packages does not switch an installed or running version.
+
 Fork 3.6.0 retains upstream 2.6.11 and exposes 443 operations. Build clean,
 committed release source with `-Version 3.6.0`, then follow
 [3.6.0 verification](VERIFICATION-3.6.0.md) against the extracted packages.
