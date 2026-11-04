@@ -209,7 +209,7 @@ public partial class ScreenshotCommands
                             throw new InvalidOperationException(
                                 $"The complete screenshot tile is not visible inside its Excel pane. Tile={new Rectangle(x, y, width, height)}; pane={paneBounds}.");
                         var bounds = WindowCapture.GetWindowBounds(hwnd);
-                        using var shot = WindowCapture.CaptureWindow(hwnd);
+                        using var shot = WindowCapture.CaptureWindow(hwnd, useFullContent: false);
                         EnsureWindowRendered(shot);
                         var source = new Rectangle(x - bounds.X, y - bounds.Y, width, height);
                         if (width <= 0 || height <= 0 || !new Rectangle(0, 0, shot.Width, shot.Height).Contains(source))
