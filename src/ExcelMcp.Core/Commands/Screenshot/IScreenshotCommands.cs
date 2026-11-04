@@ -49,7 +49,8 @@ public class ScreenshotResult : OperationResult
 /// Capture Excel worksheet content as images for visual verification.
 /// Photographs the live Excel window and crops to the requested range, so the image shows exactly
 /// what Excel displays: formatting, conditional formatting, charts, and all visual elements.
-/// Works on protected worksheets and never touches the workbook or the clipboard.
+/// Works on protected worksheets and preserves workbook data, pane layout and the clipboard.
+/// Native frozen-pane separator lines can remain visible inside the captured range.
 ///
 /// ACTIONS:
 /// - capture: Capture a specific range as an image
@@ -59,7 +60,8 @@ public class ScreenshotResult : OperationResult
 /// is required. Capture fails on a locked desktop or a disconnected Remote Desktop session.
 ///
 /// LARGE RANGES: Ranges wider or taller than the Excel window are zoomed to fit, then captured in
-/// several passes and stitched together. Very large ranges are truncated to their top-left portion,
+/// several passes and stitched together. Split and frozen views keep their current zoom and are
+/// captured pane by pane. Very large ranges are truncated to their top-left portion,
 /// which is reported in the result message.
 ///
 /// RETURNS: Base64-encoded image data with dimensions metadata.

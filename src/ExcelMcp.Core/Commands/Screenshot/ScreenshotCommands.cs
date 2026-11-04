@@ -17,12 +17,11 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Screenshot;
 /// range. Nothing is written to the workbook and the clipboard is never touched, so capture works
 /// on protected worksheets and leaves no trace in the file (issue #777).
 /// </summary>
-public class ScreenshotCommands : IScreenshotCommands
+public partial class ScreenshotCommands : IScreenshotCommands
 {
     // Excel WindowState constants
     private const Excel.XlWindowState XlNormal = Excel.XlWindowState.xlNormal;
     private const Excel.XlWindowState XlMinimized = Excel.XlWindowState.xlMinimized;
-    private const int SwRestore = 9;
 
     // Excel needs a moment to render after the window becomes visible or the view changes.
     private const int VisibilitySettleMs = 600;
@@ -213,9 +212,8 @@ public class ScreenshotCommands : IScreenshotCommands
         bool windowStateChanged = false;
         int originalZoom = 100;
         bool zoomChanged = false;
-        int originalScrollRow = 1;
-        int originalScrollColumn = 1;
-        bool scrollChanged = false;
+        ScreenshotPaneState? paneState = null;
+        bool paneStateChanged = false;
         Exception? captureFailure = null;
         var restoreFailures = new List<Exception>();
         ScreenshotResult? result = null;
@@ -260,10 +258,16 @@ public class ScreenshotCommands : IScreenshotCommands
             BringExcelToForeground(app);
 
             originalZoom = Convert.ToInt32((object)window.Zoom, CultureInfo.InvariantCulture);
-            originalScrollRow = Convert.ToInt32(window.ScrollRow);
-            originalScrollColumn = Convert.ToInt32(window.ScrollColumn);
+            paneState = ScreenshotPaneState.Capture(window);
+            // Each pane has its own coordinates and scroll state. Retain the layout: removing
+            // and recreating a freeze marks the workbook modified even after exact restoration.
+            paneStateChanged = true;
 
-            CapturePlanner.CapturePlan plan = CapturePlanner.Plan(window, range);
+            // Changing zoom can shift an unfrozen split even when the original zoom is
+            // restored. Tile the existing panes at their original scale instead.
+            CapturePlanner.CapturePlan plan = paneState.HasMultiplePanes
+                ? CapturePlanner.Replan(range, originalZoom, CapturePlanner.MeasureUsablePane(window))
+                : CapturePlanner.Plan(window, range);
 
             if (plan.Zoom != originalZoom)
             {
@@ -272,16 +276,17 @@ public class ScreenshotCommands : IScreenshotCommands
                 Thread.Sleep(ViewSettleMs);
             }
 
-            scrollChanged = true;
-            composed = CaptureTiles(app, window, range, ref plan);
+            composed = paneState.HasMultiplePanes
+                ? CapturePaneTiles(app, window, range, ref plan)
+                : CaptureTiles(app, window, range, ref plan);
 
             var encoded = ScreenshotEncoder.Encode(composed, quality);
 
             string message = $"Captured {rangeAddress} on '{sheetName}' ({encoded.Width}x{encoded.Height}px)";
 
-            if (plan.RowSegments.Count * plan.ColumnSegments.Count > 1)
+            if (plan.CapturedTiles > 1)
             {
-                message += $" from {plan.RowSegments.Count * plan.ColumnSegments.Count} tiles at {plan.Zoom}% zoom";
+                message += $" from {plan.CapturedTiles} tiles at {plan.Zoom}% zoom";
             }
 
             if (plan.Truncated)
@@ -324,10 +329,9 @@ public class ScreenshotCommands : IScreenshotCommands
                     Restore(() => window.Zoom = originalZoom);
                 }
 
-                if (scrollChanged)
+                if (paneStateChanged && paneState is not null)
                 {
-                    Restore(() => window.ScrollRow = originalScrollRow);
-                    Restore(() => window.ScrollColumn = originalScrollColumn);
+                    Restore(() => paneState.Restore(window));
                 }
             }
 
@@ -387,13 +391,15 @@ public class ScreenshotCommands : IScreenshotCommands
         int paneMaxWidth = (int)Math.Round(usable.Width * deviceScale);
         int paneMaxHeight = (int)Math.Round(usable.Height * deviceScale);
 
-        plan = CapturePlanner.Replan(range, plan.Zoom, usable);
+        plan = CapturePlanner.ReplanPixels(range, plan.Zoom, usable, pixelsPerPoint, paneMaxWidth, paneMaxHeight);
 
         int[] columnOffsets = BuildPixelOffsets(range, false, plan.ColumnSegments, pixelsPerPoint, paneMaxWidth);
         int[] rowOffsets = BuildPixelOffsets(range, true, plan.RowSegments, pixelsPerPoint, paneMaxHeight);
 
-        int totalWidth = Math.Max(1, columnOffsets[^1]);
-        int totalHeight = Math.Max(1, rowOffsets[^1]);
+        int totalWidth = columnOffsets[^1];
+        int totalHeight = rowOffsets[^1];
+        if (totalWidth <= 0 || totalHeight <= 0)
+            throw new InvalidOperationException("The requested screenshot range has no visible cell area.");
 
         var canvas = new Bitmap(totalWidth, totalHeight, PixelFormat.Format32bppArgb);
         Excel.Worksheet? sheet = null;
@@ -403,8 +409,6 @@ public class ScreenshotCommands : IScreenshotCommands
             sheet = range.Worksheet;
             using var graphics = Graphics.FromImage(canvas);
             graphics.Clear(Color.White);
-
-            bool verifiedNotBlank = false;
 
             for (int rowIndex = 0; rowIndex < plan.RowSegments.Count; rowIndex++)
             {
@@ -425,11 +429,7 @@ public class ScreenshotCommands : IScreenshotCommands
                         Rectangle windowBounds = WindowCapture.GetWindowBounds(hwnd);
                         shot = WindowCapture.CaptureWindow(hwnd);
 
-                        if (!verifiedNotBlank)
-                        {
-                            EnsureWindowRendered(shot);
-                            verifiedNotBlank = true;
-                        }
+                        EnsureWindowRendered(shot);
 
                         // Excel clamps scrolling near the sheet edges, so measure how far the tile
                         // actually sits from the pane corner rather than assuming it landed there.
@@ -439,18 +439,21 @@ public class ScreenshotCommands : IScreenshotCommands
                         int originX = (int)Math.Round(paneOrigin.X) + offsetX;
                         int originY = (int)Math.Round(paneOrigin.Y) + offsetY;
 
-                        int tileWidth = Math.Min(
-                            columnOffsets[columnIndex + 1] - columnOffsets[columnIndex],
-                            paneMaxWidth - offsetX);
-                        int tileHeight = Math.Min(
-                            rowOffsets[rowIndex + 1] - rowOffsets[rowIndex],
-                            paneMaxHeight - offsetY);
+                        int tileWidth = columnOffsets[columnIndex + 1] - columnOffsets[columnIndex];
+                        int tileHeight = rowOffsets[rowIndex + 1] - rowOffsets[rowIndex];
+                        if (offsetX < 0 || offsetY < 0 || tileWidth <= 0 || tileHeight <= 0 ||
+                            tileWidth > paneMaxWidth - offsetX || tileHeight > paneMaxHeight - offsetY)
+                        {
+                            throw new InvalidOperationException(
+                                "The requested screenshot tile is not fully visible in the worksheet grid. " +
+                                "Enlarge the Excel window or capture a smaller range.");
+                        }
 
                         var source = new Rectangle(
                             originX - windowBounds.X,
                             originY - windowBounds.Y,
-                            Math.Max(1, tileWidth),
-                            Math.Max(1, tileHeight));
+                            tileWidth,
+                            tileHeight);
 
                         var destination = new Point(columnOffsets[columnIndex], rowOffsets[rowIndex]);
 
@@ -464,6 +467,7 @@ public class ScreenshotCommands : IScreenshotCommands
                 }
             }
 
+            plan = plan with { CapturedTiles = plan.RowSegments.Count * plan.ColumnSegments.Count };
             return canvas;
         }
         catch
@@ -533,16 +537,17 @@ public class ScreenshotCommands : IScreenshotCommands
     }
 
     /// <summary>
-    /// Copies the visible part of a tile from the window capture onto the canvas, clipping to what
-    /// the window actually contains so an off-screen edge cannot stretch or wrap the image.
+    /// Copies a complete tile. Missing pixels must fail capture rather than leave a white gap.
     /// </summary>
     private static void DrawTile(Graphics graphics, Bitmap shot, Rectangle source, Point destination)
     {
         Rectangle clipped = Rectangle.Intersect(source, new Rectangle(0, 0, shot.Width, shot.Height));
 
-        if (clipped.Width <= 0 || clipped.Height <= 0)
+        if (source.Width <= 0 || source.Height <= 0 || clipped != source)
         {
-            return;
+            throw new InvalidOperationException(
+                "The requested screenshot tile extends outside the captured Excel window. " +
+                "No complete image could be produced; restore the window and retry.");
         }
 
         var target = new Rectangle(
@@ -569,9 +574,9 @@ public class ScreenshotCommands : IScreenshotCommands
             for (int i = 0; i < segments.Count; i++)
             {
                 offsets[i] = cursor;
-                int renderedSize = 0;
                 var segment = segments[i];
-                for (int index = segment.Start; index < segment.Start + segment.Count; index++)
+                int renderedSize = segment.RenderedPixels ?? 0;
+                for (int index = segment.Start; !segment.RenderedPixels.HasValue && index < segment.Start + segment.Count; index++)
                 {
                     Excel.Range? item = null;
                     try
@@ -587,7 +592,13 @@ public class ScreenshotCommands : IScreenshotCommands
                     }
                 }
 
-                cursor += Math.Min(renderedSize, paneMax);
+                if (renderedSize > paneMax)
+                {
+                    throw new InvalidOperationException(
+                        "A screenshot row or column is larger than the available worksheet viewport. " +
+                        "Enlarge the Excel window before capturing this range.");
+                }
+                cursor = checked(cursor + renderedSize);
             }
         }
         finally
@@ -705,14 +716,11 @@ public class ScreenshotCommands : IScreenshotCommands
         IntPtr hwnd = new(Convert.ToInt64(app.Hwnd));
         if (hwnd != IntPtr.Zero)
         {
-            ShowWindow(hwnd, SwRestore);
             SetForegroundWindow(hwnd);
             Thread.Sleep(ViewSettleMs);
         }
     }
 
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);

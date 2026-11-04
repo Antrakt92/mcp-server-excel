@@ -36,7 +36,10 @@ internal static class CapturePlanner
     private const int HardMaxTiles = 64;
 
     /// <summary>A contiguous run of rows or columns that fits in one viewport.</summary>
-    internal sealed record Segment(int Start, int Count, double Offset, double Size);
+    internal sealed record Segment(int Start, int Count, double Offset, double Size)
+    {
+        internal int? RenderedPixels { get; init; }
+    }
 
     /// <summary>The grid area available for capture, in screen points.</summary>
     internal readonly record struct UsablePane(double Width, double Height);
@@ -46,7 +49,10 @@ internal static class CapturePlanner
         int Zoom,
         IReadOnlyList<Segment> RowSegments,
         IReadOnlyList<Segment> ColumnSegments,
-        bool Truncated);
+        bool Truncated)
+    {
+        internal int CapturedTiles { get; init; }
+    }
 
     /// <summary>
     /// Safety margin, in screen points, trimmed off the measured grid area.
@@ -183,6 +189,71 @@ internal static class CapturePlanner
         return BuildPlan(range, usable, zoom, zoom);
     }
 
+    /// <summary>Plans against the sum of individually rounded cell pixels at the final zoom.</summary>
+    internal static CapturePlan ReplanPixels(Excel.Range range, int zoom, UsablePane usable,
+        double pixelsPerPoint, int paneMaxWidthPixels, int paneMaxHeightPixels)
+    {
+        if (!double.IsFinite(pixelsPerPoint) || pixelsPerPoint <= 0
+            || usable.Width <= 0 || usable.Height <= 0
+            || paneMaxWidthPixels <= 0 || paneMaxHeightPixels <= 0)
+            throw new InvalidOperationException("The Excel pane has no measurable screenshot viewport.");
+        var (rowCount, columnCount) = Range.RangeHelpers.GetDimensions(range);
+        var columns = BuildPixelSegments(range, false, columnCount, pixelsPerPoint, paneMaxWidthPixels);
+        var rows = BuildPixelSegments(range, true, rowCount, pixelsPerPoint, paneMaxHeightPixels);
+        bool truncated = (long)columns.Count * rows.Count > HardMaxTiles;
+        if (truncated)
+        {
+            int maxPerAxis = (int)Math.Sqrt(HardMaxTiles);
+            columns = [.. columns.Take(maxPerAxis)];
+            rows = [.. rows.Take(maxPerAxis)];
+        }
+        return new CapturePlan(zoom, rows, columns, truncated);
+    }
+
+    private static List<Segment> BuildPixelSegments(Excel.Range range, bool rows, int count,
+        double pixelsPerPoint, int pixelBudget)
+    {
+        var segments = new List<Segment>();
+        if (count <= 0) return segments;
+        double origin = GetOffset(range, rows, 1);
+        int start = 1;
+        // A 65th segment already proves that the 64-tile limit will be exceeded.
+        while (start <= count && segments.Count <= HardMaxTiles)
+        {
+            double startOffset = GetOffset(range, rows, start);
+            int candidate = FindSegmentEnd(range, rows, start, count, startOffset, pixelBudget / pixelsPerPoint);
+            int rendered = 0, end = start - 1, index = start;
+            while (index <= candidate)
+            {
+                double extent = GetExtent(range, rows, index);
+                double pixels = Math.Round(extent * pixelsPerPoint, MidpointRounding.AwayFromZero);
+                if (pixels > pixelBudget)
+                    throw new InvalidOperationException(
+                        "A screenshot row or column is larger than the available worksheet viewport. " +
+                        "Enlarge the Excel window before capturing this range.");
+                if (pixels > pixelBudget - rendered) break;
+                rendered = checked(rendered + (int)pixels);
+                end = index;
+                if (extent == 0)
+                {
+                    // Hidden runs can span the entire worksheet; skip them by geometry.
+                    double offset = GetOffset(range, rows, index);
+                    end = FindSegmentEnd(range, rows, index, candidate, offset, 0);
+                }
+                index = end + 1;
+            }
+            if (end < start)
+                throw new InvalidOperationException("The screenshot planner could not fit a complete cell in its viewport.");
+            double endOffset = GetOffset(range, rows, end) + GetExtent(range, rows, end);
+            segments.Add(new Segment(start, end - start + 1, startOffset - origin, endOffset - startOffset)
+            {
+                RenderedPixels = rendered
+            });
+            start = end + 1;
+        }
+        return segments;
+    }
+
     /// <summary>
     /// Splits the range into tiles for a given pane size, stepping the zoom down while the tile
     /// count exceeds <see cref="PreferredMaxTiles"/> and the fit zoom allows it.
@@ -260,7 +331,8 @@ internal static class CapturePlanner
         double origin = GetOffset(range, rows, 1);
         int start = 1;
 
-        while (start <= count)
+        // More than 64 segments on either axis already exceeds the complete tile budget.
+        while (start <= count && segments.Count <= HardMaxTiles)
         {
             double startOffset = GetOffset(range, rows, start);
             int end = FindSegmentEnd(range, rows, start, count, startOffset, tilePoints);
