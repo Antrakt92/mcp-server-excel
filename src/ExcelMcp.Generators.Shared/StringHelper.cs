@@ -8,25 +8,7 @@ namespace Sbroenne.ExcelMcp.Generators.Common;
 /// </summary>
 public static class StringHelper
 {
-    public static string ToKebabCase(string pascalCase)
-    {
-        var sb = new StringBuilder();
-        for (int i = 0; i < pascalCase.Length; i++)
-        {
-            var c = pascalCase[i];
-            if (char.IsUpper(c))
-            {
-                if (i > 0)
-                    sb.Append('-');
-                sb.Append(char.ToLowerInvariant(c));
-            }
-            else
-            {
-                sb.Append(c);
-            }
-        }
-        return sb.ToString();
-    }
+    public static string ToKebabCase(string pascalCase) => ToSeparatedCase(pascalCase, '-');
 
     public static string ToPascalCase(string kebabCase)
     {
@@ -39,16 +21,18 @@ public static class StringHelper
     /// Converts camelCase or PascalCase to snake_case.
     /// Example: "sheetName" → "sheet_name", "rangeAddress" → "range_address"
     /// </summary>
-    public static string ToSnakeCase(string camelCase)
+    public static string ToSnakeCase(string camelCase) => ToSeparatedCase(camelCase, '_');
+
+    private static string ToSeparatedCase(string value, char separator)
     {
         var sb = new StringBuilder();
-        for (int i = 0; i < camelCase.Length; i++)
+        for (int i = 0; i < value.Length; i++)
         {
-            var c = camelCase[i];
+            var c = value[i];
             if (char.IsUpper(c))
             {
                 if (i > 0)
-                    sb.Append('_');
+                    sb.Append(separator);
                 sb.Append(char.ToLowerInvariant(c));
             }
             else
