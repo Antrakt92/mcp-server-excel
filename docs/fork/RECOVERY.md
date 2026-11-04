@@ -36,6 +36,14 @@ Cancellation and timeout stop waiting; Excel's work may continue. Check the Exce
 
 If recovery requires a process-level action, establish the exact owned process identity and current workbook state first. A process name alone does not establish ownership. Unrelated Excel instances must remain untouched.
 
+When a visibility snapshot fails, `partialState.diagnostics.execution` separates
+its exception type and HRESULT from the operation's failure. `callbackReturned`
+means the callback returned normally; it does not prove saving or verify workbook
+contents. `complete:false` means the available chain cannot establish one
+unambiguous boundary. Original error fields and observed VBA state remain in
+the response. A retained `ExcelDisconnected` session stops later batch commands
+even if a partial state reports that an individual callback completed.
+
 ## Rebuild or report a problem
 
 The separately labeled [historical 2.4.1 patch](LEGACY.md) preserves the earlier

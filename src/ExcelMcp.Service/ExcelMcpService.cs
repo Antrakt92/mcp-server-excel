@@ -1191,7 +1191,7 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
-                PartialState = state.ToJsonString(ServiceProtocol.JsonOptions)
+                PartialState = MergeExecutionDiagnostics(state.ToJsonString(ServiceProtocol.JsonOptions), exception)
             };
         }
         CleanupDeadSession(sessionId);
@@ -1231,7 +1231,7 @@ public sealed class ExcelMcpService : IDisposable
             ExceptionType = ex.GetType().Name,
             HResult = TryGetFatalComHResult(ex) is { } hresult ? $"0x{hresult:X8}" : null,
             InnerError = DescribeDisconnectedInnerErrors(ex),
-            PartialState = SerializeDisconnectedVbaState(ex)
+            PartialState = MergeExecutionDiagnostics(SerializeDisconnectedVbaState(ex), ex)
         };
     }
 
@@ -1239,6 +1239,37 @@ public sealed class ExcelMcpService : IDisposable
         FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) :
         FindVbaProjectProtection(error) is { } protection ? SerializeVbaProtectionState(protection.State, null, null, null) :
         FindVbaProjectAuthentication(error) is { } authentication ? SerializeVbaAuthenticationState(authentication.State, null, null, null) : null;
+
+    private static string? MergeExecutionDiagnostics(string? partialState, Exception error)
+    {
+        var found = ExcelExecutionFailureContext.TryFind(error, out var context, out var complete);
+        if (!found && complete)
+            return partialState;
+
+        var state = partialState is null
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+        var diagnostics = state["diagnostics"] as System.Text.Json.Nodes.JsonObject;
+        if (diagnostics is null)
+        {
+            diagnostics = new System.Text.Json.Nodes.JsonObject();
+            state["diagnostics"] = diagnostics;
+        }
+        var execution = new System.Text.Json.Nodes.JsonObject { ["complete"] = complete };
+        // An incomplete traversal could hide another boundary; do not select its callback outcome.
+        if (found && complete && context is not null)
+        {
+            execution["callbackReturned"] = context.CallbackReturned;
+            if (context.OperationExceptionType is not null)
+                execution["operationExceptionType"] = context.OperationExceptionType;
+            if (context.OperationHResult is { } operationHResult)
+                execution["operationHResult"] = $"0x{operationHResult:X8}";
+            execution["snapshotExceptionType"] = context.SnapshotExceptionType;
+            execution["snapshotHResult"] = $"0x{context.SnapshotHResult:X8}";
+        }
+        diagnostics["execution"] = execution;
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
+    }
 
     private static Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException? FindVbaSourceEdit(Exception error)
     {
@@ -1418,9 +1449,9 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
-                PartialState = SerializeVbaEditState(vbaEx.State,
+                PartialState = MergeExecutionDiagnostics(SerializeVbaEditState(vbaEx.State,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles)
+                    sessionId, retainedFiles), ex)
             },
             _ when FindVbaProjectProtection(ex) is { } protection => new ServiceResponse
             {
@@ -1432,9 +1463,9 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = SerializeVbaProtectionState(protection.State,
+                PartialState = MergeExecutionDiagnostics(SerializeVbaProtectionState(protection.State,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles)
+                    sessionId, retainedFiles), ex)
             },
             _ when FindVbaProjectAuthentication(ex) is { } authentication => new ServiceResponse
             {
@@ -1446,9 +1477,9 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = SerializeVbaAuthenticationState(authentication.State,
+                PartialState = MergeExecutionDiagnostics(SerializeVbaAuthenticationState(authentication.State,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles)
+                    sessionId, retainedFiles), ex)
             },
             PowerQueryCommandException pqEx => new ServiceResponse
             {
@@ -1460,9 +1491,9 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = SerializePartialState(pqEx.PartialState,
+                PartialState = MergeExecutionDiagnostics(SerializePartialState(pqEx.PartialState,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles)
+                    sessionId, retainedFiles), ex)
             },
             _ => new ServiceResponse
             {
@@ -1474,9 +1505,9 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = SerializePartialState(null,
+                PartialState = MergeExecutionDiagnostics(SerializePartialState(null,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles)
+                    sessionId, retainedFiles), ex)
             }
         };
     }

@@ -26,7 +26,7 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Feature", "ExcelMcpService")]
 [Trait("Speed", "Fast")]
 [Trait("RequiresExcel", "false")]
-public sealed class ExcelMcpServiceErrorTests
+public sealed partial class ExcelMcpServiceErrorTests
 {
     [Theory]
     [InlineData(false)]

@@ -1395,9 +1395,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             using var writeGuard = new ExcelWriteGuard(application, _logger);
 
             Exception? operationFailure = null;
+            var callbackReturned = false;
             try
             {
-                return operation(_context!, CancellationToken.None);
+                var result = operation(_context!, CancellationToken.None);
+                callbackReturned = true;
+                return result;
             }
             catch (Exception ex)
             {
@@ -1406,7 +1409,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
             finally
             {
-                UpdateVisibilitySnapshot(operationFailure);
+                UpdateVisibilitySnapshot(operationFailure, callbackReturned);
             }
         }, completion, error =>
         {
@@ -1567,7 +1570,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Restoring an explicit hide after a deferred recovery reveal is cosmetic; failures are logged with cause and the following Visible read reports the window as shown, so the operation result is never misrepresented.")]
-    private void UpdateVisibilitySnapshot(Exception? operationFailure)
+    private void UpdateVisibilitySnapshot(Exception? operationFailure, bool callbackReturned = false)
     {
         var revision = _applicationLease?.VisibilityRevision;
         try
@@ -1616,16 +1619,24 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         {
             UpdateConfirmedVisibility(false, revision);
         }
-        catch (Exception snapshotFailure) when (operationFailure is not null)
+        catch (Exception snapshotFailure)
         {
+            if (operationFailure is null)
+            {
+                ExcelExecutionFailureContext.Attach(snapshotFailure, null, snapshotFailure, callbackReturned);
+                throw;
+            }
             var failure = new AggregateException(
                 "The Excel operation and updating its visibility snapshot both failed.",
                 operationFailure, snapshotFailure);
             if (operationFailure is OperationCanceledException canceled)
             {
-                throw new OperationCanceledException(canceled.Message, failure, canceled.CancellationToken);
+                var cancellation = new OperationCanceledException(canceled.Message, failure, canceled.CancellationToken);
+                ExcelExecutionFailureContext.Attach(cancellation, operationFailure, snapshotFailure, callbackReturned);
+                throw cancellation;
             }
 
+            ExcelExecutionFailureContext.Attach(failure, operationFailure, snapshotFailure, callbackReturned);
             throw failure;
         }
     }
