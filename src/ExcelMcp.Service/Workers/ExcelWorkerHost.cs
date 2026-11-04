@@ -136,6 +136,8 @@ internal sealed class ExcelWorkerHost : IDisposable
         {
             if (_registration.Excel != observation.Identity && _registration.ReleasedExcel != observation.Identity)
                 throw new InvalidOperationException("The observed Excel application does not match this worker.");
+            if (_registration.LastExcelObservation == observation)
+                return;
             var observed = _registration with { LastExcelObservation = observation };
             _registry.Write(observed);
             _registration = observed;

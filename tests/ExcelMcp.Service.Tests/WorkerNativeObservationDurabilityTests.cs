@@ -13,6 +13,44 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed class WorkerNativeObservationDurabilityTests
 {
     [Fact]
+    public void RecordObservation_DurableDuplicateSurvivesWriteFailureButRicherStateStillRequiresPersistence()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"excelmcp-native-observation-{Guid.NewGuid():N}");
+        try
+        {
+            var registry = new WorkerRegistry(directory);
+            var initial = Registration(released: true);
+            registry.Write(initial);
+            using var host = new ExcelWorkerHost(initial, registry: registry);
+            var unknown = new ExcelNativeProcessObservation(initial.ReleasedExcel!.Value,
+                ExcelNativeProcessState.Exited, null, 5);
+            Record(host, unknown);
+            var durable = CurrentRegistration(host);
+            var temporary = Path.Combine(directory, initial.PipeName + ".json.tmp");
+            Directory.CreateDirectory(temporary);
+
+            Record(host, unknown);
+
+            Assert.Same(durable, CurrentRegistration(host));
+            Assert.Equal(durable, registry.Read(initial.PipeName));
+            var richer = unknown with { ExitCode = 0, NativeError = null };
+            var failure = Assert.Throws<TargetInvocationException>(() => Record(host, richer));
+            Assert.True(failure.InnerException is IOException or UnauthorizedAccessException);
+            Assert.Same(durable, CurrentRegistration(host));
+            Assert.Equal(durable, registry.Read(initial.PipeName));
+            Directory.Delete(temporary);
+            Record(host, richer);
+            Assert.Equal(richer, CurrentRegistration(host).LastExcelObservation);
+            Assert.Equal(CurrentRegistration(host), registry.Read(initial.PipeName));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RecordObservation_WriteFailureRetainsRegistrationAndCanRetry()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"excelmcp-native-observation-{Guid.NewGuid():N}");
