@@ -471,8 +471,12 @@ internal sealed class ExcelController : IDisposable
     {
         try
         {
-            if (!worker.Registration.Worker.IsAlive()
-                && _registry.Read(worker.Registration.PipeName) is { ReleaseConfirmed: true } released)
+            var recorded = !worker.Registration.Worker.IsAlive()
+                ? _registry.Read(worker.Registration.PipeName)
+                : null;
+            if (recorded is not null)
+                PreserveRecordedNativeExit(worker, recorded);
+            if (recorded is { ReleaseConfirmed: true } released)
             {
                 worker.RecordSnapshot(new(released, [],
                     new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[],"count":0}""" },
@@ -540,7 +544,38 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
+    private void PreserveRecordedNativeExit(ExcelWorkerClient worker, WorkerRegistration recorded)
+    {
+        var current = worker.Registration;
+        if (recorded.PipeName != current.PipeName || recorded.Worker != current.Worker
+            || recorded.Controller != _identity || recorded.Generation != _generation
+            || recorded.Build != WorkerRegistry.Build)
+            throw new InvalidOperationException("The retained Excel worker record has a mismatched process identity or build.");
+
+        // Durable diagnostics do not restore worker/session ownership or acknowledge release.
+        if (recorded.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation)
+        {
+            if ((current.Excel != observation.Identity && current.ReleasedExcel != observation.Identity)
+                || (recorded.Excel != observation.Identity && recorded.ReleasedExcel != observation.Identity))
+                throw new InvalidOperationException("The retained native observation does not match the known Excel process identity.");
+            RememberNativeExit(recorded);
+        }
+    }
+
     private void PublishProcessIdentity(WorkerRegistration registration)
+    {
+        RememberNativeExit(registration);
+        if (registration.ReleasedExcel is { } finished)
+            ExcelProcessReleased?.Invoke(finished);
+        if (registration is { OwnsExcel: true, Excel: { } excel })
+        {
+            ExcelProcessObserved?.Invoke(excel);
+            if (registration.ExcelPreserved)
+                ExcelProcessPreserved?.Invoke(excel);
+        }
+    }
+
+    private void RememberNativeExit(WorkerRegistration registration)
     {
         if (registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation
             && (registration.Excel == observation.Identity || registration.ReleasedExcel == observation.Identity))
@@ -561,14 +596,6 @@ internal sealed class ExcelController : IDisposable
                     recorded.Value = observation;
                 }
             }
-        }
-        if (registration.ReleasedExcel is { } finished)
-            ExcelProcessReleased?.Invoke(finished);
-        if (registration is { OwnsExcel: true, Excel: { } excel })
-        {
-            ExcelProcessObserved?.Invoke(excel);
-            if (registration.ExcelPreserved)
-                ExcelProcessPreserved?.Invoke(excel);
         }
     }
 
