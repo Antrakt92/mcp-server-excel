@@ -38,6 +38,10 @@ Retain the earlier intermittent delayed-shutdown incident separately: successful
 diagnostic runs do not explain its cause, and the ownership fix does not claim
 to eliminate every delay in Excel shutdown.
 
+Retained `session.test` validation remains audit-only. Assert that Save As is
+refused without changing files or permissions. To test subsequent editing,
+close without saving and explicitly open a new normal session before Save As.
+
 Verify attached unsaved-workbook discovery and first Save As. Names such as
 `Book1` must not enter file reservations. Check unsaved/saved location
 transitions, unrelated reservations, saved-file readback after reopening, and

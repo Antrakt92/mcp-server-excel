@@ -195,6 +195,37 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 var target = Path.Join(directory, "validation-writable.xlsx");
                 if (saveAs)
                 {
+                    Assert.True(service.SessionManager.IsAuditSession(session));
+                    var refused = await service.ProcessAsync(new ServiceRequest
+                    {
+                        Command = "workbook.save-as",
+                        SessionId = session,
+                        Args = JsonSerializer.Serialize(new { targetPath = target }, ServiceProtocol.JsonOptions)
+                    });
+                    Assert.False(refused.Success);
+                    Assert.Equal("Permissions", refused.ErrorCategory);
+                    Assert.Contains("Audit session", refused.ErrorMessage, StringComparison.Ordinal);
+                    Assert.False(File.Exists(target));
+                    Assert.Equal(savedBytes, await File.ReadAllBytesAsync(path));
+                    Assert.True(batch.Execute((context, _) => context.Book.ReadOnly));
+                    Assert.True(service.SessionManager.IsAuditSession(session));
+
+                    // Retained validation is inspection-only. End it explicitly
+                    // before opening a normal session for the authorized edit scenario.
+                    var validationIdentity = identity;
+                    await CloseSessionAsync(service, session, save: false);
+                    sessions.TryRemove(session, out _);
+                    Assert.False(service.SessionManager.TryGetFilePath(session, out _));
+                    Assert.True(OwnedProcessGuard.TryConfirmExited(validationIdentity));
+                    Assert.DoesNotContain(validationIdentity, SessionManager.GetTrackedExcelProcesses());
+                    session = await OpenSessionAsync(service, path);
+                    sessions[session] = 0;
+                    batch = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(session));
+                    Assert.False(service.SessionManager.IsAuditSession(session));
+                    Assert.False(batch.Execute((context, _) => context.Book.ReadOnly));
+                    identity = Assert.Single(SessionManager.GetTrackedExcelProcesses(),
+                        candidate => candidate.ProcessId == batch.ExcelProcessId);
+                    Assert.NotEqual(validationIdentity, identity);
                     RequireSuccess(await service.ProcessAsync(new ServiceRequest
                     {
                         Command = "workbook.save-as",
