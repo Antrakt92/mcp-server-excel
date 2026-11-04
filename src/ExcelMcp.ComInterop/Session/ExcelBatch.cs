@@ -105,6 +105,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     internal Action? BeforeVisibilitySnapshotPublicationHookForTests { get; set; }
     internal static Action<ExcelBatch>? BeforeStartupVisibilityPublicationHookForTests { get; set; }
     internal Action? BeforeStaCleanupHookForTests { get; set; }
+    internal Func<ExcelProcessIdentity, bool>? OwnedProcessExitConfirmationHookForTests { get; set; }
     internal Action<object>? BeforeEmptyApplicationDetachHookForTests { get; set; }
 
     // COM state (STA thread only)
@@ -2173,7 +2174,10 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
             else
             {
-                SessionManager.UntrackExcelProcess(identity);
+                // Quit returning does not establish native process exit. Keep
+                // ownership and recoverable teardown state until exit is known.
+                FinalizeOwnedProcessTeardown(identity,
+                    OwnedProcessExitConfirmationHookForTests ?? WaitForOwnedProcessExit);
             }
         }
         FinishOperation(null);

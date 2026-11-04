@@ -1385,6 +1385,72 @@ public sealed partial class ServiceWorkbookLifecycleTests
         });
     }
 
+    [Fact]
+    public async Task Close_UnconfirmedNormalProcessExit_RetainsIdentityAndQuarantinesUntilConfirmed()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var ownedId = await CreateSessionAsync(service, Path.Join(directory, "unconfirmed-normal-exit.xlsx"));
+            sessions[ownedId] = 0;
+            var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
+            var identity = Assert.IsType<ExcelProcessIdentity>(owned.ProcessIdentity);
+            using var process = System.Diagnostics.Process.GetProcessById(identity.ProcessId);
+            Assert.NotEqual(IntPtr.Zero, process.Handle);
+            var observed = new System.Collections.Concurrent.ConcurrentQueue<ExcelProcessIdentity>();
+            owned.OwnedProcessExitConfirmationHookForTests = candidate =>
+            {
+                observed.Enqueue(candidate);
+                return false;
+            };
+            try
+            {
+                // Execute the real Close -> STA cleanup -> CompleteDispose path.
+                // Only the final native-exit observation is made inconclusive.
+                var close = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.close",
+                    SessionId = ownedId,
+                    Args = """{"save":false}"""
+                });
+                Assert.False(close.Success);
+                Assert.NotEmpty(observed);
+                Assert.All(observed, candidate => Assert.Equal(identity, candidate));
+                Assert.True(((IExcelBatchCloseState)owned).ShutdownCommitted);
+                Assert.Contains(identity, SessionManager.GetTrackedExcelProcesses());
+                Assert.Contains(ownedId, service.SessionManager.ActiveSessionIds);
+                Assert.True(service.SessionManager.TryGetFilePath(ownedId, out _));
+                Assert.False(service.SessionManager.TryBeginOperation(ownedId,
+                    out var quarantined, out var message, out var admissionError));
+                Assert.Null(quarantined);
+                Assert.Equal(SessionOperationError.Quarantined, admissionError);
+                Assert.Contains("quarantined", message, StringComparison.OrdinalIgnoreCase);
+
+                // Observe this retained native handle's actual exit. No forced
+                // termination or extra Quit/Close is used to satisfy the test.
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.True(OwnedProcessGuard.TryConfirmExited(identity));
+                owned.OwnedProcessExitConfirmationHookForTests = null;
+                var retried = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.close",
+                    SessionId = ownedId,
+                    // A committed teardown must reconcile exit without trying to
+                    // save the already-closed workbook on this retry.
+                    Args = """{"save":true}"""
+                });
+                RequireSuccess(retried);
+                sessions.TryRemove(ownedId, out _);
+                Assert.DoesNotContain(identity, SessionManager.GetTrackedExcelProcesses());
+                Assert.DoesNotContain(ownedId, service.SessionManager.ActiveSessionIds);
+                Assert.False(service.SessionManager.TryGetFilePath(ownedId, out _));
+            }
+            finally
+            {
+                owned.OwnedProcessExitConfirmationHookForTests = null;
+            }
+        });
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

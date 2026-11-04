@@ -43,6 +43,10 @@ CLI password calls must migrate to batch JSON on stdin.
 
 ### Fixed
 
+- Normal session shutdown confirms that the exact owned Excel process has
+  exited before reporting completed cleanup. An unconfirmed exit keeps the
+  process tracked and the session quarantined; closing again after confirmed
+  exit reconciles cleanup without saving or closing the workbook a second time.
 - Range captures in frozen and split views use the correct worksheet pixels
   and preserve pane layout, zoom and actual visible origins. Maximized windows
   retain their window state. Oversized cells, empty visible ranges and

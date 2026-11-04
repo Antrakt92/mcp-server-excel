@@ -29,6 +29,15 @@ bytes, restored editor context, and source edits that remain present after an
 explicit save and fresh open with protection still locked. Require normal owned
 Excel/worker/controller shutdown.
 
+Run the normal-close exit-confirmation regression and existing late-exit lease
+checks. An injected unconfirmed native exit must fail close, retain the exact
+process identity and quarantine the session. After actual exit, another close
+must reconcile tracking without attempting another workbook save or close.
+Exercise affected lifecycle and ownership tests as well as VBA and screenshots.
+Retain the earlier intermittent delayed-shutdown incident separately: successful
+diagnostic runs do not explain its cause, and the ownership fix does not claim
+to eliminate every delay in Excel shutdown.
+
 Run all 46 screenshot Service cases against the final clean merged release
 source. Retain matched-scene evidence for stale viewport pixels after scrolling
 or tiling. Every capture path uses a standard preparatory render followed by
