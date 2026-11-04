@@ -427,7 +427,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
                         ScrollIntoView(window, tileRange);
 
                         Rectangle windowBounds = WindowCapture.GetWindowBounds(hwnd);
-                        shot = WindowCapture.CaptureWindow(hwnd);
+                        shot = WindowCapture.CaptureWindow(hwnd, windowBounds);
 
                         EnsureWindowRendered(shot);
 

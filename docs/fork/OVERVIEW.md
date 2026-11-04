@@ -6,8 +6,8 @@ Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance 
 
 Fork 4.0.0 retains upstream 2.6.11 and MCP SDK 2.3.1. It adds known-password
 VBA project unlocking and verification, exact whitespace-preserving password
-validation, and screenshot repairs for frozen and split views. The catalogue
-has 445 operations through 64 MCP tools across 33 feature areas. CLI password
+validation, and screenshot fixes for normal, frozen and split views. The
+catalogue has 445 operations through 64 MCP tools across 33 feature areas. CLI password
 actions now require batch JSON on stdin; direct password flags and file batches
 containing those actions are refused. See [migration](../../README.md#migrate-password-calls-from-fork-360).
 
