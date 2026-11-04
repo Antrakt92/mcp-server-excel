@@ -53,6 +53,11 @@ public sealed class PersistentServiceVbaAuthenticationTests : PersistentServiceW
         Assert.True(configured.ConfigurationApplied);
         await fixture.SaveAndReopenAsync();
         Assert.Equal("Locked", RequireSuccess(commands.Status(fixture.BatchToken)).Protection);
+        var lockedView = await fixture.SendForFailureAsync("vba.view", new { moduleName = "AuthenticationMarker" });
+        Assert.Equal("Permissions", lockedView.ErrorCategory);
+        Assert.Contains("unlock-project", lockedView.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains("batch JSON on stdin", lockedView.ErrorMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("does not unlock projects", lockedView.ErrorMessage, StringComparison.Ordinal);
         AssertTargetCells();
         byte[] savedBytes = ReadSavedHash(fixture.WorkbookPath);
         string editedHash = string.Empty;

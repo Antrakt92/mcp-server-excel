@@ -267,7 +267,7 @@ public partial class VbaCommands
         if (GetProjectProtection(Convert.ToInt32(project.Protection, CultureInfo.InvariantCulture)) == "Locked")
         {
             throw new OperationFailureException(OperationFailureCategory.Permissions,
-                "The VBA project is password-locked. Unlock it manually in Excel before inspecting or editing its source. ExcelMcp does not unlock projects.");
+                "The VBA project is password-locked. With a known password, use the vba tool's unlock-project action in a normal writable owned session before inspecting or editing source. CLI: submit vba.unlock-project through batch JSON on stdin. Otherwise unlock it manually in Excel.");
         }
     }
 }
