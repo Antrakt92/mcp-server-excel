@@ -119,7 +119,7 @@ limits still apply, with top-left truncation reported in the result message.
 Unknown/cancellation transport tests do not establish native failure injection
 or every cleanup/cancellation phase. See [4.0.0 verification](VERIFICATION-4.0.0.md).
 
-No dependencies were added or upgraded. The upstream baseline remains 2.6.11
+The upstream baseline remains 2.6.11
 and MCP SDK remains 2.3.1. The catalogue contains 445 operations through 64 MCP
 tools across 33 feature areas.
 
