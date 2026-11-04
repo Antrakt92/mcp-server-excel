@@ -193,6 +193,16 @@ def run_case(host, entry_point, path, benchmark):
             "A wrong password changed project access.")
     host.report["wrong_password_verification_and_unlock_confirmed"] = True
 
+    # A nonempty all-space value must reach the native challenge unchanged,
+    # rather than being rejected as a missing argument by an adapter.
+    whitespace_rejected = call(host, entry_point, "vba.verify-password", {"password": "   "},
+                               identifier, passwords=passwords)
+    auth_result(whitespace_rejected, project, False)
+    whitespace_failure = call(host, entry_point, "vba.unlock-project", {"password": "   "},
+                              identifier, True, passwords)
+    auth_error(whitespace_failure, "Permissions", True, False, False, "Locked")
+    host.report["whitespace_password_rejection_confirmed"] = True
+
     host.report["phase"] = "verify-correct-and-already-accessible"
     accepted = call(host, entry_point, "vba.verify-password", {"password": password}, identifier, passwords=passwords)
     auth_result(accepted, project, True)

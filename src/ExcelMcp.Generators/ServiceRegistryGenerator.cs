@@ -682,7 +682,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
                         !parameter.IsEnum &&
                         StringHelper.IsStringType(parameter.TypeName) &&
                         IsRequiredParameter(parameter) &&
-                        !parameter.AllowsEmptyString)
+                        !parameter.AllowsEmptyString &&
+                        !AllowsWhitespaceOnly(parameter))
                     .ToList();
                 if (requiredStringParameters.Count > 0)
                 {
@@ -697,6 +698,13 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
                         sb.AppendLine(
                             $"                        ({propertyExpression}, \"{propertyName}\"){comma}");
                     }
+                }
+                foreach (var parameter in method.Parameters.Where(parameter =>
+                             IsRequiredParameter(parameter) && !parameter.AllowsEmptyString && AllowsWhitespaceOnly(parameter)))
+                {
+                    var propertyName = parameter.ExposedName ?? parameter.Name;
+                    sb.AppendLine($"                    if (string.IsNullOrEmpty(args.{StringHelper.ToPascalCase(propertyName)}))");
+                    sb.AppendLine($"                        throw new System.ArgumentException(\"{propertyName} is required for {method.ActionName} action.\", \"{propertyName}\");");
                 }
                 foreach (var parameter in method.Parameters.Where(parameter =>
                              !parameter.IsFileOrValue &&
@@ -1211,6 +1219,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             .Where(p =>
                 IsRequiredParameter(p) &&
                 !p.AllowsEmptyString &&
+                !AllowsWhitespaceOnly(p) &&
                 ((includeFileOrValue && p.IsFileOrValue) ||
                  (!p.IsFileOrValue && StringHelper.IsStringType(p.TypeName)) ||
                  (p.IsFromString && p.IsEnum)))
@@ -1231,6 +1240,14 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
                 var comma = i < requiredParameters.Count - 1 ? "," : ");";
                 sb.AppendLine($"{indent}    ({valueExpression}, \"{parameterName}\"){comma}");
             }
+        }
+
+        foreach (var parameter in method.Parameters.Where(p =>
+                     IsRequiredParameter(p) && !p.AllowsEmptyString && AllowsWhitespaceOnly(p)))
+        {
+            var parameterName = parameter.ExposedName ?? parameter.Name;
+            sb.AppendLine($"{indent}if (string.IsNullOrEmpty({parameterName}))");
+            sb.AppendLine($"{indent}    throw new System.ArgumentException(\"{parameterName} is required for {method.ActionName} action.\", \"{parameterName}\");");
         }
 
         foreach (var parameter in method.Parameters.Where(p =>
@@ -1267,6 +1284,10 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
 
     private static bool IsRequiredParameter(ParameterInfo parameter)
         => parameter.RequiresValue;
+
+    private static bool AllowsWhitespaceOnly(ParameterInfo parameter) =>
+        parameter.AllowsWhitespace && !parameter.IsFileOrValue && !parameter.IsEnum &&
+        StringHelper.IsStringType(parameter.TypeName);
 
     private static void GenerateArgsClass(StringBuilder sb, MethodInfo method)
     {

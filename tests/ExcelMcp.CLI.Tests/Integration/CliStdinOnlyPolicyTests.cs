@@ -70,21 +70,46 @@ public sealed class CliStdinOnlyPolicyTests
     }
 
     [Theory]
-    [InlineData(null)]
-    [InlineData("-")]
-    public async Task StdinBatch_TransportsExactCredentials(string? inputFile)
+    [InlineData(null, Secret)]
+    [InlineData("-", Secret)]
+    [InlineData(null, " ")]
+    [InlineData("-", " ")]
+    [InlineData(null, "   ")]
+    [InlineData("-", "   ")]
+    public async Task StdinBatch_TransportsExactCredentials(string? inputFile, string password)
     {
         foreach (var action in new[] { "protect-project", "unlock-project", "verify-password" })
         {
             var arguments = inputFile is null ? new[] { "batch" } : new[] { "batch", "--input", inputFile };
-            var result = await Run(arguments, Entry("vba." + action));
+            var result = await Run(arguments, Entry("vba." + action, password));
             Assert.Equal(0, result.ExitCode);
             Assert.Equal(1, result.Client.Connections);
             var request = Assert.Single(result.Client.Requests);
             using var payload = JsonDocument.Parse(request.Args!);
-            Assert.Equal(Secret, payload.RootElement.GetProperty("password").GetString());
+            Assert.Equal(password, payload.RootElement.GetProperty("password").GetString());
+            Assert.DoesNotContain("\"password\":", result.Output + result.Error, StringComparison.Ordinal);
             Assert.DoesNotContain(Secret, result.Output + result.Error, StringComparison.Ordinal);
             Assert.DoesNotContain(JsonEncodedText.Encode(Secret).ToString(), result.Output + result.Error, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"password\":null}")]
+    [InlineData("{\"password\":\"\"}")]
+    [InlineData("{\"password\":42}")]
+    [InlineData("{\"password\":true}")]
+    public async Task StdinBatch_InvalidRequiredPasswordIsRejectedBeforeConnecting(string argsJson)
+    {
+        foreach (var action in new[] { "protect-project", "unlock-project", "verify-password" })
+        {
+            var input = "{\"command\":\"vba." + action + "\",\"sessionId\":\"owned\",\"args\":" + argsJson + "}";
+            var result = await Run(["batch"], input);
+            Assert.Equal(1, result.ExitCode);
+            Assert.Equal(0, result.Client.Connections);
+            Assert.Empty(result.Client.Requests);
+            using var output = JsonDocument.Parse(result.Output);
+            Assert.Equal("InvalidInput", output.RootElement.GetProperty("error").GetProperty("category").GetString());
         }
     }
 
@@ -153,11 +178,11 @@ public sealed class CliStdinOnlyPolicyTests
         Assert.False(_CliCategoryMetadata.RequiresBatchStdin("vba.status"));
     }
 
-    private static string Entry(string command) => JsonSerializer.Serialize(new
+    private static string Entry(string command, string password = Secret) => JsonSerializer.Serialize(new
     {
         command,
         sessionId = "owned",
-        args = new { password = Secret }
+        args = new { password }
     });
 
     private static async Task<(int ExitCode, string Output, string Error, RecordingClient Client)> Run(

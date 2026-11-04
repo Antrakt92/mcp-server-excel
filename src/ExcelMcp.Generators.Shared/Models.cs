@@ -102,6 +102,7 @@ public sealed class ParameterInfo
     public string? ExposedName { get; }
     public bool IsRequired { get; }
     public bool AllowsEmptyString { get; }
+    public bool AllowsWhitespace { get; }
     public bool IsParams { get; }
     public bool IsEnum { get; }
     public bool IsJsonObject { get; }
@@ -130,7 +131,7 @@ public sealed class ParameterInfo
         bool isRequired = false, bool isEnum = false,
         string? xmlDocDescription = null, string? enumTypeName = null,
         IReadOnlyList<EnumAliasInfo>? enumAliases = null, bool isParams = false,
-        bool allowsEmptyString = false, bool isJsonObject = false)
+        bool allowsEmptyString = false, bool isJsonObject = false, bool allowsWhitespace = false)
     {
         Name = name;
         TypeName = typeName;
@@ -142,6 +143,7 @@ public sealed class ParameterInfo
         ExposedName = exposedName;
         IsRequired = isRequired;
         AllowsEmptyString = allowsEmptyString;
+        AllowsWhitespace = allowsWhitespace;
         IsParams = isParams;
         IsEnum = isEnum;
         IsJsonObject = isJsonObject;

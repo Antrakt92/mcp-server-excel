@@ -27,6 +27,47 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 public sealed class GeneratedActionContractTests
 {
     [Theory]
+    [InlineData("protect-project", VbaAction.ProtectProject)]
+    [InlineData("unlock-project", VbaAction.UnlockProject)]
+    [InlineData("verify-password", VbaAction.VerifyPassword)]
+    public void PasswordContracts_PreserveWhitespaceInValidationAndForwarding(string actionName, VbaAction action)
+    {
+        foreach (var password in new[] { " ", "   " })
+        {
+            ServiceRegistry.ValidateCommandArguments("vba." + actionName, JsonSerializer.Serialize(new { password }));
+            int calls = 0;
+            var forwarded = ServiceRegistry.Vba.RouteAction(action, "owned", (command, session, args) =>
+            {
+                calls++;
+                Assert.Equal("vba." + actionName, command);
+                Assert.Equal("owned", session);
+                return JsonSerializer.SerializeToElement(args);
+            }, password: password);
+            Assert.Equal(1, calls);
+            Assert.Equal(password, forwarded.GetProperty("Password").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(VbaAction.ProtectProject)]
+    [InlineData(VbaAction.UnlockProject)]
+    [InlineData(VbaAction.VerifyPassword)]
+    public void PasswordContracts_RejectMissingNullEmptyAndNonStringValues(VbaAction action)
+    {
+        var command = "vba." + ServiceRegistry.Vba.ToActionString(action);
+        foreach (var args in new[] { "{}", "{\"password\":null}", "{\"password\":\"\"}", "{\"password\":42}" })
+            Assert.Throws<ArgumentException>(() => ServiceRegistry.ValidateCommandArguments(command, args));
+        foreach (var password in new string?[] { null, "" })
+        {
+            int calls = 0;
+            Assert.Throws<ArgumentException>(() => ServiceRegistry.Vba.RouteAction(action, "owned", (_, _, _) => ++calls,
+                password: password));
+            Assert.Equal(0, calls);
+        }
+        Assert.Throws<ArgumentException>(() => ServiceRegistry.ValidateCommandArguments("vba.run", "{\"procedureName\":\"   \"}"));
+    }
+
+    [Theory]
     [InlineData("{}")]
     [InlineData("""{"sheetName":null,"rangeAddress":null,"quality":null}""")]
     public void ScreenshotDispatch_OmittedInputsUseCoreDefaults(string argsJson)

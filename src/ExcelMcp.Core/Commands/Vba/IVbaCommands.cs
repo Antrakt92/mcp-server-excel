@@ -44,17 +44,17 @@ public interface IVbaCommands
     /// </summary>
     /// <param name="password">New VBA project password using printable ASCII characters. Non-ASCII input is rejected because the project's legacy password encoding is not exposed by Excel's public object model. Use CLI batch stdin to keep the password out of process arguments. Never include it in logs.</param>
     [ServiceAction("protect-project", CliBatchStdinOnly = true)]
-    VbaProjectProtectionResult ProtectProject(IExcelBatch batch, [RequiredParameter] string password);
+    VbaProjectProtectionResult ProtectProject(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
 
     /// <summary>Authenticates a locked project with its known password and opens access in the current editor session. Leaves protection settings untouched and does not save or reopen. Already accessible projects return without verifying the password. Audit, read-only and attached sessions are refused.</summary>
     /// <param name="password">Known printable ASCII password, submitted exactly without trimming. CLI requires batch stdin; never put this value in arguments, files or logs.</param>
     [ServiceAction("unlock-project", CliBatchStdinOnly = true)]
-    VbaProjectAuthenticationResult UnlockProject(IExcelBatch batch, [RequiredParameter] string password);
+    VbaProjectAuthenticationResult UnlockProject(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
 
     /// <summary>Checks a known password against a locked project's native challenge. Correct input opens current-session access; protection settings are left untouched. Recognized rejection returns passwordVerified=false. An already accessible project cannot verify a password and is refused without reopening. Audit, read-only and attached sessions are refused.</summary>
     /// <param name="password">Known printable ASCII password, submitted exactly without trimming. CLI requires batch stdin; never put this value in arguments, files or logs.</param>
     [ServiceAction("verify-password", CliBatchStdinOnly = true)]
-    VbaProjectAuthenticationResult VerifyPassword(IExcelBatch batch, [RequiredParameter] string password);
+    VbaProjectAuthenticationResult VerifyPassword(IExcelBatch batch, [RequiredParameter(AllowWhitespace = true)] string password);
 
     /// <summary>
     /// Lists VBA library references and flags missing libraries without repairing or changing references.

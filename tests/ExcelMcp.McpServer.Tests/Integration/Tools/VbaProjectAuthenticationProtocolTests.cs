@@ -69,6 +69,47 @@ public sealed class VbaProjectAuthenticationProtocolTests(RecordingProgramTransp
         Assert.Contains("password", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("protect-project")]
+    [InlineData("unlock-project")]
+    [InlineData("verify-password")]
+    public async Task PasswordActions_PreserveWhitespaceOnlyPasswordThroughPublicTool(string action)
+    {
+        foreach (var password in new[] { " ", "   " })
+        {
+            var call = await fixture.CallToolAsync("vba", new()
+            {
+                ["action"] = action,
+                ["workbook_session_id"] = "session-1",
+                ["password"] = password
+            }, RecordingToolTest.Success("{\"success\":true}"), "vba." + action,
+                JsonSerializer.Serialize(new { password }));
+            Assert.False(call.Result.IsError);
+            using var args = JsonDocument.Parse(call.Request.Args!);
+            Assert.Equal(password, args.RootElement.GetProperty("password").GetString());
+            Assert.DoesNotContain("\"password\":", call.JsonResult, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData("protect-project")]
+    [InlineData("unlock-project")]
+    [InlineData("verify-password")]
+    public async Task PasswordActions_RejectNullAndEmptyBeforeDispatch(string action)
+    {
+        foreach (var password in new string?[] { null, "" })
+        {
+            var result = await fixture.CallResultWithoutDispatchAsync("vba", new()
+            {
+                ["action"] = action,
+                ["workbook_session_id"] = "session-1",
+                ["password"] = password
+            });
+            Assert.True(result.IsError);
+            Assert.Contains("password", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     [Fact]
     public async Task UnknownAuthentication_DoesNotBecomeFalseOrEchoThePassword()
     {
