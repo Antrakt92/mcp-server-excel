@@ -2,8 +2,10 @@
 
 This major release adds known-password VBA authentication and fixes range
 screenshots in normal, frozen and split views, including stale viewport images.
-Existing CLI password workflows must migrate to batch JSON on stdin. Upstream remains 2.6.11 and MCP SDK 2.3.1;
-no dependencies change.
+Existing CLI password workflows must migrate to batch JSON on stdin. Upstream
+remains 2.6.11 and MCP SDK 2.3.1. The existing transitive dependency
+`System.Numerics.Tensors` advances from 10.0.13 to 10.0.14 for the MCP server and
+its tests. Other package versions remain unchanged.
 
 ## Source checks
 
@@ -28,6 +30,25 @@ refusal. Verify source/cell preservation, unchanged sibling project and saved
 bytes, restored editor context, and source edits that remain present after an
 explicit save and fresh open with protection still locked. Require normal owned
 Excel/worker/controller shutdown.
+
+Run the normal-close exit-confirmation regression and existing late-exit lease
+checks. An injected unconfirmed native exit must fail close, retain the exact
+process identity and quarantine the session. After actual exit, another close
+must reconcile tracking without attempting another workbook save or close.
+Exercise affected lifecycle and ownership tests as well as VBA and screenshots.
+Retain the earlier intermittent delayed-shutdown incident separately: successful
+diagnostic runs do not explain its cause, and the ownership fix does not claim
+to eliminate every delay in Excel shutdown.
+
+Retained `session.test` validation remains audit-only. Assert that Save As is
+refused without changing files or permissions. To test subsequent editing,
+close without saving and explicitly open a new normal session before Save As.
+
+Verify attached unsaved-workbook discovery and first Save As. Names such as
+`Book1` must not enter file reservations. Check unsaved/saved location
+transitions, unrelated reservations, saved-file readback after reopening, and
+preserved neighboring workbook content and save state. Run the affected
+incomplete-discovery cleanup and running attached-callback shutdown cases.
 
 Run all 46 screenshot Service cases against the final clean merged release
 source. Retain matched-scene evidence for stale viewport pixels after scrolling

@@ -504,6 +504,393 @@ public sealed class ExcelControllerTests
     private static extern int NtSuspendProcess(IntPtr processHandle);
 
     [Fact(Timeout = 30000)]
+    public async Task Controller_TemporaryReservationCleanupRetainsNewerRawOwnership()
+    {
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        _ = exited.Handle;
+        var exitedIdentity = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var controller = new ExcelController(launcher: Launcher);
+        var worker = await controller.StartWorkerAsync(null, CancellationToken.None);
+        using var process = System.Diagnostics.Process.GetProcessById(worker.Registration.Worker.ProcessId);
+        _ = process.Handle;
+        Assert.Equal(worker.Registration.Worker, WorkerProcess.From(process));
+        var session = Guid.NewGuid().ToString("N");
+        var oldPath = Path.Join(Path.GetTempPath(), $"cleanup-old-{Guid.NewGuid():N}.xlsx");
+        var targetPath = Path.Join(Path.GetTempPath(), $"cleanup-target-{Guid.NewGuid():N}.xlsx");
+        var advanced = false;
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ExcelController).GetMethod("ApplyWorkerSnapshot", hidden)!;
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            // Drive the publication interleaving explicitly; a later poll must not repair
+            // a dropped reservation before the production completion path is verified.
+            var stop = Assert.IsType<CancellationTokenSource>(typeof(ExcelController).GetField("_stop", hidden)!.GetValue(controller));
+            stop.Cancel();
+            await ((Task)typeof(ExcelController).GetField("_poll", hidden)!.GetValue(controller)!)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            var initial = new WorkerSnapshot(
+                worker.Registration with
+                {
+                    Excel = new ExcelProcessIdentity(exitedIdentity.ProcessId, exitedIdentity.StartedAtUtcFileTime)
+                },
+                [new SessionDescriptor(session, oldPath)],
+                new ServiceResponse
+                {
+                    Success = true,
+                    Result = JsonSerializer.Serialize(new
+                    {
+                        sessions = new[] { new { sessionId = session, filePath = oldPath, operationPending = false } }
+                    })
+                }, null, null,
+                new Dictionary<string, IReadOnlyList<string>> { [session] = [oldPath] },
+                Revision: long.MaxValue - 1);
+            worker.RecordSnapshot(initial);
+            Assert.Same(initial, apply.Invoke(controller, [worker]));
+            var newer = initial with
+            {
+                Sessions = [new SessionDescriptor(session, targetPath)],
+                SessionList = new ServiceResponse
+                {
+                    Success = true,
+                    Result = JsonSerializer.Serialize(new
+                    {
+                        sessions = new[] { new { sessionId = session, filePath = targetPath, operationPending = false } }
+                    })
+                },
+                OwnershipKeys = new Dictionary<string, IReadOnlyList<string>> { [session] = [targetPath] },
+                Revision = long.MaxValue
+            };
+            var reservationType = typeof(ExcelController).GetNestedType("PathReservation", System.Reflection.BindingFlags.NonPublic)!;
+            var reservation = Activator.CreateInstance(reservationType, [worker.Registration.PipeName, session])!;
+            var paths = typeof(ExcelController).GetField("_paths", hidden)!.GetValue(controller)!;
+            Assert.True((bool)paths.GetType().GetMethod("TryAdd", hidden)!.Invoke(paths, [targetPath, reservation])!);
+            controller.BeforeRecordPathPublicationHookForTests = (candidate, path) =>
+            {
+                if (candidate != session) return;
+                if (path == oldPath)
+                {
+                    worker.RecordSnapshot(newer);
+                    advanced = true;
+                }
+            };
+            var complete = typeof(ExcelController).GetMethod("CompleteWorkerRequestAsync", hidden)!;
+            var response = await ((Task<ServiceResponse>)complete.Invoke(controller,
+                [new ServiceRequest { Command = "diag.echo", Args = """{"message":"ownership-cleanup"}""" },
+                    worker, new List<string> { targetPath }, reservation])!).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(response.Success, response.ErrorMessage);
+            Assert.True(advanced);
+            Assert.Same(newer, worker.Snapshot);
+            Assert.True((bool)paths.GetType().GetMethod("ContainsKey", hidden)!.Invoke(paths, [targetPath])!);
+            var duplicate = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = targetPath, timeoutSeconds = 1 })
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(duplicate.Success);
+            Assert.Equal("Conflict", duplicate.ErrorCategory);
+        });
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            controller.BeforeRecordPathPublicationHookForTests = null;
+            if (!process.HasExited)
+                Assert.True((await worker.ReleaseAsync(CancellationToken.None)).Success);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            var workers = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, ExcelWorkerClient>>(
+                typeof(ExcelController).GetField("_workers", hidden)!.GetValue(controller));
+            workers.TryRemove(worker.Registration.PipeName, out _);
+        });
+        if (failure is not null && cleanup is not null)
+            throw new AggregateException(failure, cleanup);
+        if (failure is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((failure ?? cleanup)!).Throw();
+    }
+
+    [Theory(Timeout = 30000)]
+    [InlineData("missing", true)]
+    [InlineData("empty", true)]
+    [InlineData("represented", true)]
+    [InlineData("missing", false)]
+    [InlineData("empty", false)]
+    [InlineData("represented", false)]
+    public async Task Controller_SessionListDoesNotHideUnrepresentedWorkerErrors(string publication, bool statusFails)
+    {
+        using var controller = new ExcelController(launcher: Launcher);
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var workers = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, ExcelWorkerClient>>(
+            typeof(ExcelController).GetField("_workers", hidden)!.GetValue(controller));
+        var fresh = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, byte>>(
+            typeof(ExcelController).GetField("_newWorkers", hidden)!.GetValue(controller));
+        var apply = typeof(ExcelController).GetMethod("ApplyWorkerSnapshot", hidden)!;
+        ExcelWorkerClient CreateWorker()
+        {
+            var generation = Guid.NewGuid().ToString("N");
+            var registration = new WorkerRegistration($"excelmcp-worker-{generation}", WorkerProcess.Current,
+                WorkerProcess.Current, generation, WorkerRegistry.Build, null);
+            var worker = new ExcelWorkerClient(registration, WorkerProcess.Current, generation);
+            Assert.True(workers.TryAdd(registration.PipeName, worker));
+            Assert.True(fresh.TryAdd(registration.PipeName, 0));
+            return worker;
+        }
+        WorkerSnapshot Snapshot(ExcelWorkerClient worker, string? session) => new(worker.Registration,
+            session is null ? [] : [new SessionDescriptor(session, null)],
+            new ServiceResponse
+            {
+                Success = true,
+                Result = session is null ? """{"sessions":[]}""" : JsonSerializer.Serialize(new
+                {
+                    sessions = new[] { new { sessionId = session, operationPending = false, canClose = true } }
+                })
+            }, null, null, session is null ? new Dictionary<string, IReadOnlyList<string>>()
+                : new Dictionary<string, IReadOnlyList<string>> { [session] = [] }, Revision: long.MaxValue);
+        var knownSession = Guid.NewGuid().ToString("N");
+        var affectedSession = Guid.NewGuid().ToString("N");
+        var known = CreateWorker();
+        var affected = CreateWorker();
+        try
+        {
+            known.RecordSnapshot(Snapshot(known, knownSession));
+            apply.Invoke(controller, [known]);
+            affected.RecordSnapshot(Snapshot(affected, publication == "represented" ? affectedSession : null));
+            if (publication != "missing")
+                apply.Invoke(controller, [affected]);
+            affected.StatusError = statusFails ? "Test-only ownership publication failure." : null;
+            var response = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" });
+            var unrepresentedError = statusFails && publication != "represented";
+            Assert.Equal(!unrepresentedError, response.Success);
+            using var result = JsonDocument.Parse(unrepresentedError ? response.PartialState! : response.Result!);
+            var listed = result.RootElement.GetProperty("sessions").EnumerateArray().ToArray();
+            Assert.Contains(listed, session => session.GetProperty("sessionId").GetString() == knownSession);
+            Assert.Equal(publication == "represented" ? 2 : 1, listed.Length);
+            if (unrepresentedError)
+            {
+                Assert.Equal("ServiceUnavailable", response.ErrorCategory);
+                Assert.False(result.RootElement.GetProperty("complete").GetBoolean());
+                Assert.Contains("Test-only ownership publication failure.", response.ErrorMessage);
+            }
+            if (statusFails && publication == "represented")
+            {
+                var affectedRow = Assert.Single(listed, session => session.GetProperty("sessionId").GetString() == affectedSession);
+                Assert.False(affectedRow.GetProperty("canClose").GetBoolean());
+                Assert.Equal("WorkerUnavailable", affectedRow.GetProperty("blockingReason").GetString());
+            }
+        }
+        finally
+        {
+            // Fabricated workers are metadata-only and must never receive shutdown RPCs.
+            workers.TryRemove(known.Registration.PipeName, out _);
+            workers.TryRemove(affected.Registration.PipeName, out _);
+            fresh.TryRemove(known.Registration.PipeName, out _);
+            fresh.TryRemove(affected.Registration.PipeName, out _);
+        }
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Controller_NewSessionIsNotVisibleBeforeItsPathReservationIsPublished()
+    {
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        _ = exited.Handle;
+        var exitedIdentity = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var controller = new ExcelController(launcher: Launcher);
+        var worker = await controller.StartWorkerAsync(null, CancellationToken.None);
+        using var process = System.Diagnostics.Process.GetProcessById(worker.Registration.Worker.ProcessId);
+        _ = process.Handle;
+        Assert.Equal(worker.Registration.Worker, WorkerProcess.From(process));
+        var session = Guid.NewGuid().ToString("N");
+        var path = Path.Join(Path.GetTempPath(), $"publishing-{Guid.NewGuid():N}.xlsx");
+        var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        controller.BeforeRecordPathPublicationHookForTests = (candidate, candidatePath) =>
+        {
+            if (candidate != session || candidatePath != path) return;
+            publishing.TrySetResult();
+            if (!resume.Wait(TimeSpan.FromSeconds(20)))
+                throw new TimeoutException("The test did not release path-reservation publication.");
+        };
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            worker.RecordSnapshot(new WorkerSnapshot(
+                worker.Registration with
+                {
+                    Excel = new ExcelProcessIdentity(exitedIdentity.ProcessId, exitedIdentity.StartedAtUtcFileTime)
+                },
+                [new SessionDescriptor(session, path)],
+                new ServiceResponse
+                {
+                    Success = true,
+                    Result = JsonSerializer.Serialize(new
+                    {
+                        sessions = new[] { new { sessionId = session, filePath = path, filePaths = new[] { path }, operationPending = false } }
+                    })
+                }, null, null,
+                new Dictionary<string, IReadOnlyList<string>> { [session] = [path] },
+                Revision: long.MaxValue));
+            await publishing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            try
+            {
+                // Exercise every visibility reader while the publisher is held
+                // immediately before its first ownership-path publication.
+                var visible = controller.Sessions;
+                var listed = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" })
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(listed.Success, listed.ErrorMessage);
+                using var listing = JsonDocument.Parse(listed.Result!);
+                var status = await controller.ProcessAsync(new ServiceRequest { Command = "service.status" })
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(status.Success, status.ErrorMessage);
+                using var serviceStatus = JsonDocument.Parse(status.Result!);
+                Assert.Empty(visible);
+                Assert.Equal(0, listing.RootElement.GetProperty("sessions").GetArrayLength());
+                Assert.Equal(0, serviceStatus.RootElement.GetProperty("sessionCount").GetInt32());
+            }
+            finally
+            {
+                controller.BeforeRecordPathPublicationHookForTests = null;
+                resume.Set();
+            }
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (controller.Sessions.All(candidate => candidate.SessionId != session))
+                await Task.Delay(25, timeout.Token);
+            var duplicate = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = path })
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(duplicate.Success);
+            Assert.Equal("Conflict", duplicate.ErrorCategory);
+        });
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            controller.BeforeRecordPathPublicationHookForTests = null;
+            resume.Set();
+            if (!process.HasExited)
+                Assert.True((await worker.ReleaseAsync(CancellationToken.None)).Success);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        });
+        if (failure is not null && cleanup is not null)
+            throw new AggregateException(failure, cleanup);
+        if (failure is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((failure ?? cleanup)!).Throw();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Controller_RenamedSessionKeepsPublishedPathUntilItsNewReservationIsPublished()
+    {
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        _ = exited.Handle;
+        var exitedIdentity = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var controller = new ExcelController(launcher: Launcher);
+        var worker = await controller.StartWorkerAsync(null, CancellationToken.None);
+        using var process = System.Diagnostics.Process.GetProcessById(worker.Registration.Worker.ProcessId);
+        _ = process.Handle;
+        Assert.Equal(worker.Registration.Worker, WorkerProcess.From(process));
+        var session = Guid.NewGuid().ToString("N");
+        var oldPath = Path.Join(Path.GetTempPath(), $"published-{Guid.NewGuid():N}.xlsx");
+        var newPath = Path.Join(Path.GetTempPath(), $"renamed-{Guid.NewGuid():N}.xlsx");
+        var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        WorkerSnapshot Snapshot(string path, long revision) => new(
+            worker.Registration with
+            {
+                Excel = new ExcelProcessIdentity(exitedIdentity.ProcessId, exitedIdentity.StartedAtUtcFileTime)
+            },
+            [new SessionDescriptor(session, path)],
+            new ServiceResponse
+            {
+                Success = true,
+                Result = JsonSerializer.Serialize(new
+                {
+                    sessions = new[] { new { sessionId = session, filePath = path, filePaths = new[] { path }, operationPending = false } }
+                })
+            }, null, null,
+            new Dictionary<string, IReadOnlyList<string>> { [session] = [path] },
+            Revision: revision);
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            worker.RecordSnapshot(Snapshot(oldPath, long.MaxValue - 1));
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (controller.Sessions.All(candidate => candidate.SessionId != session))
+                    await Task.Delay(25, timeout.Token);
+            Assert.Equal(oldPath, Assert.Single(controller.Sessions).FilePath);
+            var originalDuplicate = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = oldPath })
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(originalDuplicate.Success);
+            Assert.Equal("Conflict", originalDuplicate.ErrorCategory);
+
+            controller.BeforeRecordPathPublicationHookForTests = (candidate, candidatePath) =>
+            {
+                if (candidate != session || candidatePath != newPath) return;
+                publishing.TrySetResult();
+                if (!resume.Wait(TimeSpan.FromSeconds(20)))
+                    throw new TimeoutException("The test did not release renamed path-reservation publication.");
+            };
+            worker.RecordSnapshot(Snapshot(newPath, long.MaxValue));
+            await publishing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            try
+            {
+                var visible = Assert.Single(controller.Sessions);
+                var listed = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" })
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(listed.Success, listed.ErrorMessage);
+                using var listing = JsonDocument.Parse(listed.Result!);
+                var listedSession = Assert.Single(listing.RootElement.GetProperty("sessions").EnumerateArray());
+                Assert.Equal(session, visible.SessionId);
+                Assert.Equal(session, listedSession.GetProperty("sessionId").GetString());
+                Assert.Equal(oldPath, visible.FilePath);
+                Assert.Equal(oldPath, listedSession.GetProperty("filePath").GetString());
+                Assert.Equal(oldPath, Assert.Single(listedSession.GetProperty("filePaths").EnumerateArray()).GetString());
+            }
+            finally
+            {
+                controller.BeforeRecordPathPublicationHookForTests = null;
+                resume.Set();
+            }
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                while (controller.Sessions.All(candidate => candidate.SessionId != session || candidate.FilePath != newPath))
+                    await Task.Delay(25, timeout.Token);
+            var renamed = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" })
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(renamed.Success, renamed.ErrorMessage);
+            using var renamedListing = JsonDocument.Parse(renamed.Result!);
+            var renamedSession = Assert.Single(renamedListing.RootElement.GetProperty("sessions").EnumerateArray());
+            Assert.Equal(session, renamedSession.GetProperty("sessionId").GetString());
+            Assert.Equal(newPath, renamedSession.GetProperty("filePath").GetString());
+            Assert.Equal(newPath, Assert.Single(renamedSession.GetProperty("filePaths").EnumerateArray()).GetString());
+            var duplicate = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = newPath })
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(duplicate.Success);
+            Assert.Equal("Conflict", duplicate.ErrorCategory);
+            var released = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = oldPath, timeoutSeconds = 1 })
+            }).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(released.Success);
+            Assert.Equal("ArgumentOutOfRangeException", released.ExceptionType);
+        });
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            controller.BeforeRecordPathPublicationHookForTests = null;
+            resume.Set();
+            if (!process.HasExited)
+                Assert.True((await worker.ReleaseAsync(CancellationToken.None)).Success);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        });
+        if (failure is not null && cleanup is not null)
+            throw new AggregateException(failure, cleanup);
+        if (failure is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((failure ?? cleanup)!).Throw();
+    }
+
+    [Fact(Timeout = 30000)]
     public async Task Controller_ExitedWorkerAndExcelReleasePathsWithoutClaimingConfirmedClosure()
     {
         using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);

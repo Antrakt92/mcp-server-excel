@@ -21,6 +21,7 @@ internal sealed class ExcelController : IDisposable
     private readonly DateTime _startTime = DateTime.UtcNow;
     private readonly ConcurrentDictionary<string, ExcelWorkerClient> _workers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExcelWorkerClient> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, WorkerSnapshot> _publishedSnapshots = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (ExcelWorkerClient Worker, OpenWorkbookInfo Workbook)> _selections = new(StringComparer.Ordinal);
     private sealed record PathReservation(string Token, string? SessionId = null);
     private readonly WorkbookPathReservations<PathReservation> _paths = new((first, second) =>
@@ -43,6 +44,7 @@ internal sealed class ExcelController : IDisposable
     internal event Action<ExcelProcessIdentity>? ExcelProcessObserved;
     internal event Action<ExcelProcessIdentity>? ExcelProcessPreserved;
     internal event Action<ExcelProcessIdentity>? ExcelProcessReleased;
+    internal Action<string, string>? BeforeRecordPathPublicationHookForTests { get; set; }
 
     internal ExcelController(
         Func<ServiceRequest, Func<Task<ServiceResponse>>, Task<ServiceResponse>>? trackRequest = null,
@@ -67,7 +69,8 @@ internal sealed class ExcelController : IDisposable
         _host.RunAsync(pipeName), _controlHost.RunAsync(ServiceClient.GetControlPipeName(pipeName)));
 
     internal IReadOnlyList<SessionDescriptor> Sessions => _sessions
-        .SelectMany(entry => entry.Value.Snapshot?.Sessions.Where(session => session.SessionId == entry.Key) ?? [])
+        .SelectMany(entry => _publishedSnapshots.TryGetValue(entry.Value.Registration.PipeName, out var snapshot)
+            ? snapshot.Sessions.Where(session => session.SessionId == entry.Key) : [])
         .DistinctBy(session => session.SessionId).ToArray();
 
     internal IReadOnlyCollection<ExcelProcessIdentity> ExcelProcesses =>
@@ -155,8 +158,9 @@ internal sealed class ExcelController : IDisposable
                 if (selectedWorkbook.Workbook.Location is { } location)
                 {
                     var keys = selectedWorkbook.Workbook.SessionId is { } selectedSession
-                        && worker.Snapshot is { } snapshot
-                        ? RecordedPaths(snapshot, selectedSession).Where(key =>
+                        && _publishedSnapshots.TryGetValue(worker.Registration.PipeName, out var snapshot)
+                        && snapshot.OwnershipKeys.TryGetValue(selectedSession, out var ownedPaths)
+                        ? ownedPaths.Where(key =>
                             WorkbookLocation.MatchesReportedLocation(key, location)).ToArray()
                         : [WorkbookLocation.GetOwnershipKey(location)];
                     foreach (var key in keys)
@@ -272,20 +276,25 @@ internal sealed class ExcelController : IDisposable
             {
                 if (!_workers.TryGetValue(worker.Registration.PipeName, out var current) || current != worker)
                     return response;
-                if (response.SessionId is { } created && worker.Snapshot?.Sessions.Any(session => session.SessionId == created) == true)
+                var published = _publishedSnapshots.GetValueOrDefault(worker.Registration.PipeName);
+                var live = worker.Snapshot;
+                if (response.SessionId is { } created && published is { } createdSnapshot
+                    && createdSnapshot.Sessions.Any(session => session.SessionId == created))
                 {
-                    _sessions[created] = worker;
                     if (response.Success && request.Command == "session.attach"
                         && JsonNode.Parse(request.Args!)?["workbookId"]?.GetValue<string>() is { } selectionId
                         && _selections.TryGetValue(selectionId, out var selection) && selection.Worker == worker)
                         _selections[selectionId] = (worker, selection.Workbook with { SessionId = created });
-                    var currentPaths = RecordedPaths(worker.Snapshot, created);
+                    var currentPaths = RecordedPaths(createdSnapshot, created);
                     foreach (var path in reservedPaths)
                         if (currentPaths.Contains(path))
                             RecordPath(worker, path, created);
+                    _sessions[created] = worker;
                 }
                 if (response.Success && request.SessionId is { } reconciled
-                    && worker.StatusError is null && worker.Snapshot is { StatusError: null } settledSnapshot
+                    && worker.StatusError is null && live is { StatusError: null } && !HasPendingWork(live)
+                    && published is { StatusError: null } settledSnapshot
+                    && settledSnapshot.Revision == live.Revision
                     && !HasPendingWork(settledSnapshot)
                     && settledSnapshot.Sessions.FirstOrDefault(session => session.SessionId == reconciled)?.FilePath is not null)
                 {
@@ -373,6 +382,7 @@ internal sealed class ExcelController : IDisposable
 
     private void RecordPath(ExcelWorkerClient worker, string path, string sessionId)
     {
+        BeforeRecordPathPublicationHookForTests?.Invoke(sessionId, path);
         var recorded = new PathReservation("recorded", sessionId);
         if (_paths.TryGetValue(path, out var existing))
         {
@@ -440,6 +450,7 @@ internal sealed class ExcelController : IDisposable
     {
         _registry.Remove(worker.Registration.PipeName);
         _workers.TryRemove(worker.Registration.PipeName, out _);
+        _publishedSnapshots.TryRemove(worker.Registration.PipeName, out _);
         _newWorkers.TryRemove(worker.Registration.PipeName, out _);
         _abandonedWorkers.TryRemove(worker.Registration.PipeName, out _);
         foreach (var path in _paths.Where(entry => entry.Value.Token == worker.Registration.PipeName
@@ -486,33 +497,35 @@ internal sealed class ExcelController : IDisposable
                 || worker.Snapshot is not { } snapshot)
                 return null;
             PublishProcessIdentity(snapshot.Registration);
-            foreach (var session in snapshot.Sessions)
+            var sessions = snapshot.Sessions.Where(session => !_closedSessions.ContainsKey(session.SessionId)).ToArray();
+            var settled = !HasPendingWork(snapshot) && snapshot.StatusError is null;
+            // Keep the previous published metadata and its claims until every new path is owned.
+            // A failed registration deliberately retains any partial claims for safe reconciliation.
+            foreach (var session in sessions)
+                if (!string.IsNullOrWhiteSpace(session.FilePath))
+                    foreach (var ownedPath in RecordedPaths(snapshot, session.SessionId))
+                        RecordPath(worker, ownedPath, session.SessionId);
+
+            _publishedSnapshots[worker.Registration.PipeName] = snapshot;
+            foreach (var session in sessions)
             {
-                if (_closedSessions.ContainsKey(session.SessionId))
-                    continue;
                 if (_newWorkers.ContainsKey(snapshot.Registration.PipeName))
                     _sessions[session.SessionId] = worker;
-                if (!string.IsNullOrWhiteSpace(session.FilePath))
+                if (settled && !string.IsNullOrWhiteSpace(session.FilePath))
                 {
-                    var path = session.FilePath;
                     var currentPaths = RecordedPaths(snapshot, session.SessionId);
-                    foreach (var ownedPath in currentPaths)
-                        RecordPath(worker, ownedPath, session.SessionId);
-                    if (!HasPendingWork(snapshot) && snapshot.StatusError is null)
-                    {
-                        foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker
-                            && entry.Value.Workbook.SessionId == session.SessionId
-                            && !currentPaths.Any(key => WorkbookLocation.MatchesReportedLocation(key,
-                                entry.Value.Workbook.Location))))
-                            _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = path });
-                        foreach (var old in _paths.Where(entry => entry.Value.Token == "recorded"
-                            && entry.Value.SessionId == session.SessionId
-                            && !currentPaths.Contains(entry.Key)))
-                            _paths.TryRemove(old);
-                    }
+                    foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker
+                        && entry.Value.Workbook.SessionId == session.SessionId
+                        && !currentPaths.Any(key => WorkbookLocation.MatchesReportedLocation(key,
+                            entry.Value.Workbook.Location))))
+                        _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = session.FilePath });
+                    foreach (var old in _paths.Where(entry => entry.Value.Token == "recorded"
+                        && entry.Value.SessionId == session.SessionId
+                        && !currentPaths.Contains(entry.Key)))
+                        _paths.TryRemove(old);
                 }
             }
-            if (!HasPendingWork(snapshot) && snapshot.StatusError is null)
+            if (settled)
                 foreach (var removed in _sessions.Where(entry => entry.Value == worker
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
@@ -540,30 +553,52 @@ internal sealed class ExcelController : IDisposable
     private ServiceResponse SessionList()
     {
         var sessions = new JsonArray();
+        List<string> unavailableWorkers = [];
         foreach (var worker in _workers.Values)
         {
-            if (worker.Snapshot is not { } snapshot)
+            var live = worker.Snapshot;
+            _publishedSnapshots.TryGetValue(worker.Registration.PipeName, out var snapshot);
+            var statusError = worker.StatusError ?? live?.StatusError ?? snapshot?.StatusError;
+            if (snapshot is null)
+            {
+                if (statusError is not null)
+                    unavailableWorkers.Add(statusError);
                 continue;
+            }
+            var visibleSessionsBefore = sessions.Count;
+            var pending = snapshot.PendingOperation is not null || live is not null && HasPendingWork(live);
+            var releasing = snapshot.Releasing || live?.Releasing == true;
             var list = JsonNode.Parse(snapshot.SessionList.Result!)!.AsObject();
             foreach (var session in list["sessions"]!.AsArray())
             {
                 if (session?["sessionId"]?.GetValue<string>() is not { } sessionId || !_sessions.ContainsKey(sessionId))
                     continue;
                 var copy = session.DeepClone();
-                if (snapshot.PendingOperation is not null)
+                if (pending)
                 {
                     copy["operationPending"] = true;
                     copy["canClose"] = false;
                 }
-                if (worker.StatusError is not null || snapshot.Releasing)
+                if (statusError is not null || releasing)
                 {
                     copy["canClose"] = false;
                     copy["blockingReason"] = "WorkerUnavailable";
-                    copy["blockingMessage"] = worker.StatusError ?? "The Excel worker is being released.";
+                    copy["blockingMessage"] = statusError ?? "The Excel worker is being released.";
                 }
                 sessions.Add(copy);
             }
+            if (statusError is not null && sessions.Count == visibleSessionsBefore)
+                unavailableWorkers.Add(statusError);
         }
+        if (unavailableWorkers.Count > 0)
+            return new ServiceResponse
+            {
+                Success = false,
+                ErrorCategory = "ServiceUnavailable",
+                ErrorMessage = string.Join(Environment.NewLine, unavailableWorkers),
+                PartialState = JsonSerializer.Serialize(new { complete = false, sessions, count = sessions.Count },
+                    ServiceProtocol.JsonOptions)
+            };
         return new ServiceResponse
         {
             Success = true,
@@ -692,6 +727,7 @@ internal sealed class ExcelController : IDisposable
                     || _paths.Values.Any(path => path.Token == registration.PipeName)))
                 return;
             _workers.TryRemove(registration.PipeName, out _);
+            _publishedSnapshots.TryRemove(registration.PipeName, out _);
             _newWorkers.TryRemove(registration.PipeName, out _);
             _abandonedWorkers.TryRemove(registration.PipeName, out _);
             var sessions = _sessions.Where(entry => entry.Value == worker).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);

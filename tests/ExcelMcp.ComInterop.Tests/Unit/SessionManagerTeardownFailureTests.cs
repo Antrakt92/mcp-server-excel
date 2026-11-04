@@ -16,6 +16,114 @@ namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 [Collection("Sequential")]
 public sealed class SessionManagerTeardownFailureTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void AttachedLocation_Update_KeepsUnsavedNamesOutOfFileReservations(bool initiallySaved, bool savedAfterDiscovery)
+    {
+        using var manager = new SessionManager();
+        const string sessionId = "attached-location";
+        var directory = Path.Combine(Path.GetTempPath(), "excelmcp-location-" + Guid.NewGuid().ToString("N"));
+        var previousPath = Path.Combine(directory, "previous.xlsx");
+        var nextPath = Path.Combine(directory, "saved.xlsx");
+        var unrelatedPath = Path.Combine(directory, "unrelated.xlsx");
+        var initial = new OpenWorkbookInfo("fixture-book", initiallySaved ? "previous.xlsx" : "Book1",
+            initiallySaved ? previousPath : null, 123, false, null);
+        var attached = RegisterAttachedLocationSession(manager, sessionId, initial);
+        var reservations = GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths");
+        reservations[unrelatedPath] = "other-session";
+        var current = initial with
+        {
+            Name = savedAfterDiscovery ? "saved.xlsx" : "Book2",
+            Location = savedAfterDiscovery ? nextPath : null
+        };
+        var revision = attached.LocationRevision;
+        try
+        {
+            var updater = typeof(SessionManager).GetMethod("UpdateAttachedWorkbookLocation",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var error = updater.Invoke(manager, [sessionId, attached, current, revision]);
+            Assert.Null(error);
+            Assert.Equal(current.Name, attached.WorkbookName);
+            Assert.Equal(current.Location, attached.FilePath);
+            Assert.Equal(current.Location ?? current.Name, attached.WorkbookPath);
+            Assert.Equal(revision + 1, attached.LocationRevision);
+            Assert.True(manager.TryGetFilePath(sessionId, out var reported));
+            Assert.Equal(current.Location ?? current.Name, reported);
+            Assert.False(reservations.ContainsKey(previousPath));
+            Assert.Equal("other-session", reservations[unrelatedPath]);
+            Assert.Equal(savedAfterDiscovery ? 2 : 1, reservations.Count());
+            if (savedAfterDiscovery) Assert.Equal(sessionId, reservations[nextPath]);
+            Assert.All(reservations, entry => Assert.True(Path.IsPathFullyQualified(entry.Key)));
+        }
+        finally
+        {
+            ClearAttachedLocationSession(manager, attached);
+        }
+    }
+
+    [Fact]
+    public void SaveAs_UnsavedAttachedSession_CommitsReservedAbsolutePathWithoutReleasingDisplayName()
+    {
+        using var manager = new SessionManager();
+        const string sessionId = "unsaved-saveas";
+        var directory = Path.Combine(Path.GetTempPath(), "excelmcp-saveas-name-" + Guid.NewGuid().ToString("N"));
+        var targetPath = Path.Combine(directory, "saved.xlsx");
+        var unrelatedPath = Path.Combine(directory, "unrelated.xlsx");
+        var attached = RegisterAttachedLocationSession(manager, sessionId,
+            new OpenWorkbookInfo("fixture-book", "Book1", null, 123, false, null));
+        var reservations = GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths");
+        reservations[unrelatedPath] = "other-session";
+        try
+        {
+            var reserved = manager.ReserveSessionFilePath(sessionId, targetPath);
+            Assert.Equal(targetPath, reserved);
+            Assert.Equal(sessionId, reservations[targetPath]);
+            // Model the already-completed Save As path update without COM. The
+            // following manager call must commit metadata rather than normalize Book1.
+            attached.UpdateWorkbookPath(targetPath);
+            manager.UpdateSessionFilePath(sessionId, targetPath);
+            manager.ReleaseSessionFilePathReservation(sessionId, reserved);
+            Assert.True(manager.TryGetFilePath(sessionId, out var reported));
+            Assert.Equal(targetPath, reported);
+            Assert.Equal(targetPath, attached.FilePath);
+            Assert.Equal(sessionId, reservations[targetPath]);
+            Assert.Equal("other-session", reservations[unrelatedPath]);
+            Assert.Equal(2, reservations.Count());
+            Assert.Empty(GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePathReservations"));
+            Assert.All(reservations, entry => Assert.True(Path.IsPathFullyQualified(entry.Key)));
+        }
+        finally
+        {
+            ClearAttachedLocationSession(manager, attached);
+        }
+    }
+
+    private static AttachedWorkbookBatch RegisterAttachedLocationSession(
+        SessionManager manager, string sessionId, OpenWorkbookInfo workbook)
+    {
+        // The location updater never enters its Excel owner. A null owner makes
+        // an accidental COM dependency in this Excel-free regression fail visibly.
+        var attached = new AttachedWorkbookBatch(null!, workbook);
+        GetField<ConcurrentDictionary<string, IExcelBatch>>(manager, "_activeSessions")[sessionId] = attached;
+        GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePaths")[sessionId] = workbook.Location ?? workbook.Name;
+        if (workbook.Location is not null)
+            GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths")[workbook.Location] = sessionId;
+        return attached;
+    }
+
+    private static void ClearAttachedLocationSession(SessionManager manager, AttachedWorkbookBatch attached)
+    {
+        // Remove synthetic registrations before the real manager's Dispose; an
+        // attached-session close would correctly require its absent Excel owner.
+        attached.Dispose();
+        GetField<ConcurrentDictionary<string, IExcelBatch>>(manager, "_activeSessions").Clear();
+        GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePaths").Clear();
+        GetField<ConcurrentDictionary<string, string>>(manager, "_sessionFilePathReservations").Clear();
+        GetField<WorkbookPathReservations<string>>(manager, "_activeFilePaths").Clear();
+    }
+
     [Fact]
     public void SaveAs_HardLinkReservationSurvivesReplacementAndReleasesOriginalPath()
     {

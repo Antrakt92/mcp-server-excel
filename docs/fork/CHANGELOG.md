@@ -43,6 +43,18 @@ CLI password calls must migrate to batch JSON on stdin.
 
 ### Fixed
 
+- Controller status publishes workbook paths after recording their ownership
+  reservations. This closes a race that could admit a duplicate open during
+  session adoption or rename.
+- Session listing reports worker errors that cannot be shown on a known session
+  row. Cleanup retains reservations still owned by newer worker state.
+- Discovery and first Save As of an attached unsaved workbook keep names such
+  as `Book1` out of the file-reservation map. This prevents path-validation
+  errors from interrupting cleanup or masking an already completed save.
+- Normal session shutdown confirms that the exact owned Excel process has
+  exited before reporting completed cleanup. An unconfirmed exit keeps the
+  process tracked and the session quarantined; closing again after confirmed
+  exit reconciles cleanup without saving or closing the workbook a second time.
 - Range captures in frozen and split views use the correct worksheet pixels
   and preserve pane layout, zoom and actual visible origins. Maximized windows
   retain their window state. Oversized cells, empty visible ranges and
@@ -58,6 +70,12 @@ CLI password calls must migrate to batch JSON on stdin.
   type and numeric position without echoing input tokens.
 - Historical protection guidance now accurately says unsupported Unicode input
   is rejected before protection changes.
+
+### Dependencies
+
+- Updated the MCP server's existing `System.Numerics.Tensors` dependency from
+  **10.0.13 to 10.0.14** through central transitive pinning. No direct project
+  dependency was added; MCP SDK remains **2.3.1**.
 
 ### CLI migration
 

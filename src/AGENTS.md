@@ -21,6 +21,10 @@ These rules also apply to owning generators, not just hand-written runtime code.
   Optional-property probes must distinguish documented unavailable members from
   failures; an error, timeout, or cancellation must not become empty data.
   Follow [MCP boundaries](ExcelMcp.McpServer/AGENTS.md) for MCP and its generator.
+- Publish controller session locations only after registering their ownership
+  paths. Separate published metadata from live worker state: temporary reservation
+  cleanup uses current ownership. A worker-status error without a visible session
+  row must fail listing rather than produce a healthy empty list.
 - Public interface parameters use camelCase; generated MCP names use snake_case.
   Use naming attributes only for exceptions. Unknown action/enum values must
   fail rather than select a default.

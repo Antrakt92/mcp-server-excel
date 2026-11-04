@@ -1277,6 +1277,76 @@ public sealed partial class ServiceWorkbookLifecycleTests
     }
 
     [Fact]
+    public async Task SaveAs_AttachedUnsavedWorkbook_PublishesPathAndPreservesNeighbor()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var ownedPath = Path.Join(directory, "unsaved-saveas-owner.xlsx");
+            var ownedId = await CreateSessionAsync(service, ownedPath);
+            sessions[ownedId] = 0;
+            await WriteMarkerAsync(service, ownedId, "keep neighboring unsaved edits");
+            var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
+            var name = owned.Execute((context, _) => AddReviewWorkbook(context.App, "persist selected edits"));
+            var targetPath = Path.Join(directory, "saved-unsaved-attachment.xlsx");
+            Exception? failure = null;
+            try
+            {
+                var attachedId = await AttachReviewWorkbookAsync(service,
+                    await DiscoverReviewWorkbookAsync(service, name));
+                sessions[attachedId] = 0;
+                var attached = Assert.IsType<AttachedWorkbookBatch>(service.SessionManager.GetSession(attachedId));
+                Assert.Null(attached.FilePath);
+                Assert.Equal(name, attached.WorkbookPath);
+                var saved = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "workbook.save-as",
+                    SessionId = attachedId,
+                    Args = JsonSerializer.Serialize(new { targetPath }, ServiceProtocol.JsonOptions)
+                });
+                RequireSuccess(saved);
+                Assert.True(File.Exists(targetPath));
+                var actual = attached.Execute((context, _) => (context.Book.FullName, context.Book.Saved));
+                Assert.Equal(targetPath, actual.FullName, ignoreCase: true);
+                Assert.True(actual.Saved);
+                Assert.Equal(targetPath, attached.FilePath, ignoreCase: true);
+                Assert.True(service.SessionManager.TryGetFilePath(attachedId, out var reported));
+                Assert.Equal(targetPath, reported, ignoreCase: true);
+                Assert.Throws<InvalidOperationException>(() =>
+                    service.SessionManager.ReserveSessionFilePath(ownedId, targetPath));
+                Assert.Equal("persist selected edits", await ReadMarkerAsync(service, attachedId));
+                Assert.Equal("keep neighboring unsaved edits", await ReadMarkerAsync(service, ownedId));
+                Assert.False(owned.Execute((context, _) => context.Book.Saved));
+
+                await CloseSessionAsync(service, attachedId, save: false);
+                sessions.TryRemove(attachedId, out _);
+                var reopenedId = await OpenSessionAsync(service, targetPath);
+                sessions[reopenedId] = 0;
+                Assert.Equal("persist selected edits", await ReadMarkerAsync(service, reopenedId));
+                Assert.Equal("keep neighboring unsaved edits", await ReadMarkerAsync(service, ownedId));
+                Assert.False(owned.Execute((context, _) => context.Book.Saved));
+            }
+            catch (Exception error) { failure = error; }
+            finally
+            {
+                // Save As can mutate Excel before metadata publication fails.
+                // Locate only this fixture's workbook in its exact owned process,
+                // by either the accepted target path or its original unsaved name.
+                try
+                {
+                    await CloseDiscoveredWorkbooksAsync(service, sessions,
+                        owned.ExcelProcessId!.Value, (targetPath, null), (null, name));
+                }
+                catch (Exception error)
+                {
+                    failure = PersistentServiceCleanupFailures.Combine(failure, error);
+                }
+            }
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        });
+    }
+
+    [Fact]
     public async Task SaveAs_AttachedWorkbook_ImmediatelyReportsNewNameAndPath()
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>
@@ -1381,6 +1451,72 @@ public sealed partial class ServiceWorkbookLifecycleTests
             finally
             {
                 service.SessionManager.ReleaseSessionFilePathReservation(competingId, reservation);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task Close_UnconfirmedNormalProcessExit_RetainsIdentityAndQuarantinesUntilConfirmed()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var ownedId = await CreateSessionAsync(service, Path.Join(directory, "unconfirmed-normal-exit.xlsx"));
+            sessions[ownedId] = 0;
+            var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
+            var identity = Assert.IsType<ExcelProcessIdentity>(owned.ProcessIdentity);
+            using var process = System.Diagnostics.Process.GetProcessById(identity.ProcessId);
+            Assert.NotEqual(IntPtr.Zero, process.Handle);
+            var observed = new System.Collections.Concurrent.ConcurrentQueue<ExcelProcessIdentity>();
+            owned.OwnedProcessExitConfirmationHookForTests = candidate =>
+            {
+                observed.Enqueue(candidate);
+                return false;
+            };
+            try
+            {
+                // Execute the real Close -> STA cleanup -> CompleteDispose path.
+                // Only the final native-exit observation is made inconclusive.
+                var close = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.close",
+                    SessionId = ownedId,
+                    Args = """{"save":false}"""
+                });
+                Assert.False(close.Success);
+                Assert.NotEmpty(observed);
+                Assert.All(observed, candidate => Assert.Equal(identity, candidate));
+                Assert.True(((IExcelBatchCloseState)owned).ShutdownCommitted);
+                Assert.Contains(identity, SessionManager.GetTrackedExcelProcesses());
+                Assert.Contains(ownedId, service.SessionManager.ActiveSessionIds);
+                Assert.True(service.SessionManager.TryGetFilePath(ownedId, out _));
+                Assert.False(service.SessionManager.TryBeginOperation(ownedId,
+                    out var quarantined, out var message, out var admissionError));
+                Assert.Null(quarantined);
+                Assert.Equal(SessionOperationError.Quarantined, admissionError);
+                Assert.Contains("quarantined", message, StringComparison.OrdinalIgnoreCase);
+
+                // Observe this retained native handle's actual exit. No forced
+                // termination or extra Quit/Close is used to satisfy the test.
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.True(OwnedProcessGuard.TryConfirmExited(identity));
+                owned.OwnedProcessExitConfirmationHookForTests = null;
+                var retried = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.close",
+                    SessionId = ownedId,
+                    // A committed teardown must reconcile exit without trying to
+                    // save the already-closed workbook on this retry.
+                    Args = """{"save":true}"""
+                });
+                RequireSuccess(retried);
+                sessions.TryRemove(ownedId, out _);
+                Assert.DoesNotContain(identity, SessionManager.GetTrackedExcelProcesses());
+                Assert.DoesNotContain(ownedId, service.SessionManager.ActiveSessionIds);
+                Assert.False(service.SessionManager.TryGetFilePath(ownedId, out _));
+            }
+            finally
+            {
+                owned.OwnedProcessExitConfirmationHookForTests = null;
             }
         });
     }
