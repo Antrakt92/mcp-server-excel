@@ -685,6 +685,8 @@ public sealed class ExcelMcpServiceErrorTests
         Assert.Equal(sessionId, response.SessionId);
         Assert.Contains("still live", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(error.InnerException!.Message, response.InnerError);
+        var partialState = JsonSerializer.Deserialize<JsonElement>(Assert.IsType<string>(response.PartialState));
+        Assert.Equal("unknown", partialState.GetProperty("outcome").GetString());
         Assert.False(batch.HasTimedOutOperation);
         Assert.True(batch.IsAlive);
         Assert.Equal(1, batch.ExecuteCalls);
@@ -704,6 +706,71 @@ public sealed class ExcelMcpServiceErrorTests
         Assert.False(retryResponse.Success);
         Assert.Equal("ExcelDisconnected", retryResponse.ErrorCategory);
         Assert.Equal(2, batch.ExecuteCalls);
+    }
+
+    [Theory]
+    [InlineData("edit")]
+    [InlineData("protection")]
+    [InlineData("authentication")]
+    public async Task ProcessAsync_DisconnectRetainsObservedVbaStateAndUnknownCompletion(string kind)
+    {
+        using var service = new ExcelMcpService();
+        object state = kind switch
+        {
+            "edit" => new VbaSourceEditState
+            {
+                ModuleName = "Module1",
+                Phase = "verifying",
+                SourceHash = "synthetic-fingerprint",
+                LineCount = 9
+            },
+            "protection" => new VbaProjectProtectionState
+            {
+                Phase = "restoring-visibility",
+                AcceptanceRequested = true,
+                ConfigurationApplied = true,
+                SaveRequired = true,
+                ReopenRequired = true
+            },
+            _ => new VbaProjectAuthenticationState
+            {
+                Phase = "restoring-visibility",
+                ChallengeObserved = true,
+                AuthenticationPerformed = true,
+                PasswordVerified = true,
+                AccessUnlocked = true,
+                CurrentProtection = "None",
+                Saved = false,
+                Reopened = false
+            }
+        };
+#pragma warning disable CA2201 // Synthetic COM failure exercises Service transport without Excel.
+        var cause = new COMException("Synthetic snapshot disconnect.", unchecked((int)0x800706BE));
+#pragma warning restore CA2201
+        Exception error = state switch
+        {
+            VbaSourceEditState edit => new VbaSourceEditException("Source edit failed.", cause, edit),
+            VbaProjectProtectionState protection => new VbaProjectProtectionException("Protection failed.", cause, protection),
+            VbaProjectAuthenticationState authentication => new VbaProjectAuthenticationException("Authentication restoration failed.", cause, authentication),
+            _ => throw new InvalidOperationException("Unknown fixture state.")
+        };
+        var batch = new FakeBatch { ExecuteException = error };
+        const string sessionId = "vba-disconnect-state";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = "sheet.list", SessionId = sessionId });
+
+        Assert.False(response.Success);
+        Assert.Equal("ExcelDisconnected", response.ErrorCategory);
+        Assert.Equal("0x800706BE", response.HResult);
+        var actual = JsonSerializer.Deserialize<JsonElement>(Assert.IsType<string>(response.PartialState));
+        Assert.Equal("unknown", actual.GetProperty("outcome").GetString());
+        var expected = JsonSerializer.SerializeToElement(state, ServiceProtocol.JsonOptions);
+        foreach (var property in expected.EnumerateObject())
+            Assert.True(JsonElement.DeepEquals(property.Value, actual.GetProperty(property.Name)));
+        Assert.Equal(0, batch.SaveCalls);
+        Assert.Equal(0, batch.DisposeCalls);
+        Assert.Same(batch, GetPrivateField<SessionManager>(service, "_sessionManager").GetSession(sessionId));
     }
 
     [Theory]

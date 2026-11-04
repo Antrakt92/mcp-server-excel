@@ -234,6 +234,34 @@ public sealed class ResultJsonTests
         Assert.Single(data.GetProperty("cellErrors").EnumerateArray());
     }
 
+    [Theory]
+    [InlineData("ExcelDisconnected", true)]
+    [InlineData("Timeout", true)]
+    [InlineData("Cancelled", true)]
+    [InlineData("ComInterop", false)]
+    [InlineData("OperationFailed", false)]
+    public void Failure_CategoryOnlyDisconnectRequiresCompletionCheck(string category, bool mayStillBeRunning)
+    {
+        var result = ResultJson.Read(null, "vba.invoke", delivered: false,
+            message: "Completion was not confirmed.", category: category);
+
+        Assert.False(result.Success);
+        Assert.Equal(mayStillBeRunning, result.MayStillBeRunning);
+        Assert.Equal(category, result.Error!["category"]!.GetValue<string>());
+        Assert.Null(result.PartialState);
+    }
+
+    [Fact]
+    public void Failure_DisconnectStopsEvenWhenPartialStateReportsCompletedCallback()
+    {
+        var result = ResultJson.Read(null, "vba.invoke", delivered: false,
+            category: "ExcelDisconnected", partialState: """{"outcome":"completed"}""");
+
+        Assert.False(result.Success);
+        Assert.True(result.MayStillBeRunning);
+        Assert.Equal("completed", result.PartialState!["outcome"]!.GetValue<string>());
+    }
+
     [Fact]
     public void Failure_KeepsOriginalCauseWarningsAndPartialState()
     {

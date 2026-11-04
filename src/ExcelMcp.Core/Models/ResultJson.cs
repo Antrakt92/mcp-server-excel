@@ -34,7 +34,7 @@ public sealed class ResultJson
 
     /// <summary>Whether Excel work may still be running after the reported failure.</summary>
     public bool MayStillBeRunning =>
-        Error?["category"]?.GetValue<string>() is "Timeout" or "Cancelled" ||
+        Error?["category"]?.GetValue<string>() is "Timeout" or "Cancelled" or "ExcelDisconnected" ||
         PartialState is JsonObject state && state["outcome"] is JsonValue value &&
         value.TryGetValue<string>(out var outcome) && outcome == "unknown";
 

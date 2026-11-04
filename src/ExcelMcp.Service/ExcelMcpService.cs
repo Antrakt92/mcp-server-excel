@@ -1174,6 +1174,12 @@ public sealed class ExcelMcpService : IDisposable
         if (_sessionManager.GetSession(sessionId) is { } batch && batch.IsExcelProcessAlive())
         {
             _sessionManager.RevealForRecovery(sessionId);
+            var retainedState = SerializeDisconnectedVbaState(exception);
+            var state = retainedState is null
+                ? new System.Text.Json.Nodes.JsonObject()
+                : System.Text.Json.Nodes.JsonNode.Parse(retainedState)!.AsObject();
+            if (!state.ContainsKey("outcome"))
+                state["outcome"] = "unknown";
             return new ServiceResponse
             {
                 Success = false,
@@ -1185,7 +1191,7 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
-                PartialState = SerializeDisconnectedVbaState(exception)
+                PartialState = state.ToJsonString(ServiceProtocol.JsonOptions)
             };
         }
         CleanupDeadSession(sessionId);

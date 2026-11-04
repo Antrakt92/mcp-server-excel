@@ -268,6 +268,8 @@ public sealed class BatchResultShapeTests
     [InlineData("negative-result", true)]
     [InlineData("communication", false)]
     [InlineData("communication", true)]
+    [InlineData("disconnect", false)]
+    [InlineData("disconnect", true)]
     public async Task Batch_Failures_PreserveDetailsAndStopBehavior(string failure, bool stopOnError)
     {
         var first = failure == "validation"
@@ -287,6 +289,14 @@ public sealed class BatchResultShapeTests
                 {
                     "communication" => throw new IOException("Synthetic pipe failure"),
                     "negative-result" => new ServiceResponse { Success = true, Result = """{"success":false,"errorMessage":"Synthetic operation failure"}""" },
+                    "disconnect" => new ServiceResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "Excel connection failed; completion is not confirmed.",
+                        ErrorCategory = "ExcelDisconnected",
+                        ExceptionType = "COMException",
+                        HResult = "0x800706BE"
+                    },
                     _ => new ServiceResponse
                     {
                         Success = false,
@@ -302,7 +312,7 @@ public sealed class BatchResultShapeTests
             first + "\n" + """{"command":"diag.ping"}""");
 
         Assert.Equal(1, result.ExitCode);
-        var shouldStop = stopOnError || failure == "communication";
+        var shouldStop = stopOnError || failure is "communication" or "disconnect";
         var expectedProgress = new List<(int, string, bool)>();
         if (failure != "validation")
             expectedProgress.Add((1, "range.get-values", false));
@@ -327,6 +337,13 @@ public sealed class BatchResultShapeTests
             Assert.Equal("0x800A03EC", error.GetProperty("hresult").GetString());
             Assert.Equal("Synthetic cause", error.GetProperty("innerError").GetString());
             Assert.True(item.GetProperty("partialState").GetProperty("changed").GetBoolean());
+        }
+        if (failure == "disconnect")
+        {
+            Assert.Equal("ExcelDisconnected", error.GetProperty("category").GetString());
+            Assert.Equal("COMException", error.GetProperty("exceptionType").GetString());
+            Assert.Equal("0x800706BE", error.GetProperty("hresult").GetString());
+            Assert.False(item.TryGetProperty("partialState", out _));
         }
         if (failure == "communication")
         {
