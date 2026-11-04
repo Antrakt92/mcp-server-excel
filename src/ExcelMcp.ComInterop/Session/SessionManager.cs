@@ -50,6 +50,11 @@ public sealed class SessionManager : IDisposable
     internal static event Action<ExcelProcessIdentity>? ExcelProcessIdentityTracked;
     internal static event Action<ExcelProcessIdentity>? ExcelProcessIdentityPreserved;
     internal static event Action<ExcelProcessIdentity>? ExcelProcessIdentityReleased;
+    internal static event Action<ExcelNativeProcessObservation>? ExcelProcessObservationRecorded;
+
+    // Persist diagnostics before releasing ownership; a failed write must leave teardown retryable.
+    internal static void RecordExcelProcessObservation(ExcelNativeProcessObservation observation) =>
+        ExcelProcessObservationRecorded?.Invoke(observation);
 
     /// <summary>
     /// Registers an Excel process ID for cleanup on unexpected process exit.
@@ -1306,6 +1311,10 @@ public sealed class SessionManager : IDisposable
 
 
 
+    // Diagnostic reads must not consume teardown retries or remove dead-session tracking.
+    internal IExcelBatch? GetSessionForDiagnostics(string sessionId) =>
+        _activeSessions.TryGetValue(sessionId, out var batch) ? batch : null;
+
     /// <summary>
     /// Gets an active session by ID.
     /// If the session exists but Excel has died, it is automatically cleaned up and null is returned.
@@ -1729,7 +1738,8 @@ public sealed class SessionManager : IDisposable
                 return false;
             }
 
-            if (batch is ExcelBatch { HasFailedStartup: true } && !batch.IsExcelProcessAlive()
+            // A confirmed native exit needs no COM readiness probe. Never treat this as a successful save.
+            if (!batch.IsExcelProcessAlive() && (!save || batch is ExcelBatch { HasFailedStartup: true })
                 && TryConfirmFailedTeardown(batch))
             {
                 RemoveSessionTracking(sessionId, removeSessionLock: false);

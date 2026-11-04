@@ -13,7 +13,7 @@ internal sealed class ExcelWorkerHost : IDisposable
 {
     internal const string Mode = "--excelmcp-private-worker";
     private readonly ExcelMcpService _service;
-    private readonly WorkerRegistry _registry = new();
+    private readonly WorkerRegistry _registry;
     private readonly Lock _stateLock = new();
     private readonly Lock _snapshotLock = new();
     private long _snapshotRevision;
@@ -30,8 +30,10 @@ internal sealed class ExcelWorkerHost : IDisposable
 
     internal Action? AfterOperationStatusCaptureForTests { get; set; }
 
-    internal ExcelWorkerHost(WorkerRegistration registration, ExcelMcpService? service = null)
+    internal ExcelWorkerHost(WorkerRegistration registration, ExcelMcpService? service = null,
+        WorkerRegistry? registry = null)
     {
+        _registry = registry ?? new WorkerRegistry();
         _service = service ?? new ExcelMcpService();
         _registration = registration;
         _snapshot = new(registration, [], EmptySessionList(), null, null,
@@ -81,6 +83,7 @@ internal sealed class ExcelWorkerHost : IDisposable
         SessionManager.ExcelProcessIdentityTracked += RecordExcel;
         SessionManager.ExcelProcessIdentityPreserved += RecordPreservation;
         SessionManager.ExcelProcessIdentityReleased += RecordRelease;
+        SessionManager.ExcelProcessObservationRecorded += RecordObservation;
         using var application = new HostBuilder()
             .ConfigureServices(services => services.AddSingleton<IHostedService>(_server))
             .Build();
@@ -98,6 +101,7 @@ internal sealed class ExcelWorkerHost : IDisposable
             SessionManager.ExcelProcessIdentityTracked -= RecordExcel;
             SessionManager.ExcelProcessIdentityPreserved -= RecordPreservation;
             SessionManager.ExcelProcessIdentityReleased -= RecordRelease;
+            SessionManager.ExcelProcessObservationRecorded -= RecordObservation;
         }
         if (!_registration.ReleaseConfirmed)
             _registry.Remove(_registration.PipeName);
@@ -124,6 +128,18 @@ internal sealed class ExcelWorkerHost : IDisposable
             _registry.Write(_registration);
         }
 
+    }
+
+    private void RecordObservation(ExcelNativeProcessObservation observation)
+    {
+        lock (_stateLock)
+        {
+            if (_registration.Excel != observation.Identity && _registration.ReleasedExcel != observation.Identity)
+                throw new InvalidOperationException("The observed Excel application does not match this worker.");
+            var observed = _registration with { LastExcelObservation = observation };
+            _registry.Write(observed);
+            _registration = observed;
+        }
     }
 
     private void RecordRelease(ExcelProcessIdentity identity)

@@ -683,7 +683,7 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Equal(error.GetType().Name, response.ExceptionType);
         Assert.Equal("sheet.list", response.Command);
         Assert.Equal(sessionId, response.SessionId);
-        Assert.Contains("still live", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("process exit is not confirmed", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(error.InnerException!.Message, response.InnerError);
         var partialState = JsonSerializer.Deserialize<JsonElement>(Assert.IsType<string>(response.PartialState));
         Assert.Equal("unknown", partialState.GetProperty("outcome").GetString());
@@ -949,7 +949,7 @@ public sealed partial class ExcelMcpServiceErrorTests
         return (T)field!.GetValue(instance)!;
     }
 
-    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState
+    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState, IExcelBatchProcessObservation
     {
         public WorkbookRefreshState GetRefreshState() =>
             HasTimedOutOperation ? WorkbookRefreshState.Busy : WorkbookRefreshState.Ready;
@@ -959,6 +959,8 @@ public sealed partial class ExcelMcpServiceErrorTests
         public bool HasTimedOutOperation { get; set; }
         public bool IsAlive { get; private set; } = true;
         public bool IsAliveAfterSaveException { get; init; } = true;
+        public bool IsAliveAfterExecuteException { get; init; } = true;
+        public ExcelNativeProcessObservation? ProcessObservation { get; init; }
         public Exception? ExecuteException { get; init; }
         public Exception? SaveException { get; init; }
         public int ExecuteCalls { get; private set; }
@@ -977,6 +979,7 @@ public sealed partial class ExcelMcpServiceErrorTests
             ExecuteCalls++;
             if (ExecuteException != null)
             {
+                IsAlive = IsAliveAfterExecuteException;
                 throw ExecuteException;
             }
 
@@ -988,6 +991,7 @@ public sealed partial class ExcelMcpServiceErrorTests
             ExecuteCalls++;
             if (ExecuteException != null)
             {
+                IsAlive = IsAliveAfterExecuteException;
                 throw ExecuteException;
             }
 

@@ -36,6 +36,8 @@ internal sealed class ExcelController : IDisposable
     private readonly DaemonHost _host;
     private readonly DaemonHost _controlHost;
     private readonly Lock _shutdownLock = new();
+    private readonly Lock _recentExcelExitLock = new();
+    private readonly LinkedList<ExcelNativeProcessObservation> _recentExcelExits = new();
     private Task<string?>? _shutdown;
     private readonly Task _poll;
     private readonly Lock _utilityLock = new();
@@ -540,6 +542,26 @@ internal sealed class ExcelController : IDisposable
 
     private void PublishProcessIdentity(WorkerRegistration registration)
     {
+        if (registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation
+            && (registration.Excel == observation.Identity || registration.ReleasedExcel == observation.Identity))
+        {
+            lock (_recentExcelExitLock)
+            {
+                var recorded = _recentExcelExits.First;
+                while (recorded is not null && recorded.Value.Identity != observation.Identity)
+                    recorded = recorded.Next;
+                if (recorded is null)
+                {
+                    _recentExcelExits.AddLast(observation);
+                    if (_recentExcelExits.Count > 16)
+                        _recentExcelExits.RemoveFirst();
+                }
+                else if (recorded.Value.ExitCode is null)
+                {
+                    recorded.Value = observation;
+                }
+            }
+        }
         if (registration.ReleasedExcel is { } finished)
             ExcelProcessReleased?.Invoke(finished);
         if (registration is { OwnsExcel: true, Excel: { } excel })
@@ -547,6 +569,21 @@ internal sealed class ExcelController : IDisposable
             ExcelProcessObserved?.Invoke(excel);
             if (registration.ExcelPreserved)
                 ExcelProcessPreserved?.Invoke(excel);
+        }
+    }
+
+    private JsonArray RecentExcelExitSnapshot()
+    {
+        lock (_recentExcelExitLock)
+        {
+            return new JsonArray(_recentExcelExits.Select(observation => (JsonNode)new JsonObject
+            {
+                ["processId"] = observation.Identity.ProcessId,
+                ["startedAtUtcFileTime"] = observation.Identity.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["state"] = observation.State.ToString(),
+                ["exitCode"] = observation.ExitCode is { } exitCode ? JsonValue.Create(exitCode) : null,
+                ["nativeError"] = observation.NativeError is { } nativeError ? JsonValue.Create(nativeError) : null
+            }).ToArray());
         }
     }
 
@@ -596,13 +633,13 @@ internal sealed class ExcelController : IDisposable
                 Success = false,
                 ErrorCategory = "ServiceUnavailable",
                 ErrorMessage = string.Join(Environment.NewLine, unavailableWorkers),
-                PartialState = JsonSerializer.Serialize(new { complete = false, sessions, count = sessions.Count },
+                PartialState = JsonSerializer.Serialize(new { complete = false, sessions, count = sessions.Count, recentExcelExits = RecentExcelExitSnapshot() },
                     ServiceProtocol.JsonOptions)
             };
         return new ServiceResponse
         {
             Success = true,
-            Result = JsonSerializer.Serialize(new { success = true, sessions, count = sessions.Count }, ServiceProtocol.JsonOptions)
+            Result = JsonSerializer.Serialize(new { success = true, sessions, count = sessions.Count, recentExcelExits = RecentExcelExitSnapshot() }, ServiceProtocol.JsonOptions)
         };
     }
 

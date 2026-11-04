@@ -617,6 +617,7 @@ public sealed class ExcelMcpService : IDisposable
             };
         }
 
+        var closingBatch = _sessionManager.GetSessionForDiagnostics(request.SessionId);
         bool closed;
         try
         {
@@ -626,7 +627,7 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return HandleExcelDisconnect(request.SessionId, ex);
+            return HandleExcelDisconnect(request.SessionId, ex, GetNativeProcessObservation(closingBatch));
         }
 
         if (closed)
@@ -1149,16 +1150,17 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return Task.FromResult(HandleExcelDisconnect(sessionId, ex));
+            return Task.FromResult(HandleExcelDisconnect(sessionId, ex, GetNativeProcessObservation(batch)));
         }
         catch (Exception ex)
         {
             // Check if Excel died with a non-COM exception — clean up dead session
             if (batch != null && !batch.IsExcelProcessAlive())
             {
+                var observation = GetNativeProcessObservation(batch);
                 CleanupDeadSession(sessionId);
                 return Task.FromResult(CreateExcelDisconnectedResponse(sessionId, ex,
-                    $"Excel process for session '{sessionId}' is no longer running. Session has been cleaned up. Please reopen the file with a new session."));
+                    $"Excel process for session '{sessionId}' is no longer running. Session has been cleaned up. Please reopen the file with a new session.", observation));
             }
 
             return Task.FromResult(CreateErrorResponse(ex, request.Command, sessionId));
@@ -1169,9 +1171,12 @@ public sealed class ExcelMcpService : IDisposable
         }
     }
 
-    private ServiceResponse HandleExcelDisconnect(string sessionId, Exception exception)
+    private ServiceResponse HandleExcelDisconnect(string sessionId, Exception exception,
+        ExcelNativeProcessObservation? observation = null)
     {
-        if (_sessionManager.GetSession(sessionId) is { } batch && batch.IsExcelProcessAlive())
+        var batch = _sessionManager.GetSession(sessionId);
+        observation ??= GetNativeProcessObservation(batch);
+        if (batch is not null && batch.IsExcelProcessAlive())
         {
             _sessionManager.RevealForRecovery(sessionId);
             var retainedState = SerializeDisconnectedVbaState(exception);
@@ -1185,18 +1190,25 @@ public sealed class ExcelMcpService : IDisposable
                 Success = false,
                 SessionId = sessionId,
                 ErrorCategory = "ExcelDisconnected",
-                ErrorMessage = "Excel disconnected from automation, but its process is still live. " +
-                    "The session and workbook remain owned; the operation's outcome is not confirmed. " +
+                ErrorMessage = "Excel disconnected from automation. " +
+                    (observation?.State switch
+                    {
+                        ExcelNativeProcessState.Alive => "Its process is still live. ",
+                        ExcelNativeProcessState.Exited => "Native process exit was observed; session cleanup is not confirmed. ",
+                        _ => "Native process exit is not confirmed. "
+                    }) +
+                    "The session remains owned; the operation's outcome is not confirmed. " +
                     exception.Message,
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
-                PartialState = MergeExecutionDiagnostics(state.ToJsonString(ServiceProtocol.JsonOptions), exception)
+                PartialState = MergeNativeProcessDiagnostics(
+                    MergeExecutionDiagnostics(state.ToJsonString(ServiceProtocol.JsonOptions), exception), observation)
             };
         }
         CleanupDeadSession(sessionId);
         return CreateExcelDisconnectedResponse(sessionId, exception,
-            "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.");
+            "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.", observation);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
@@ -1220,7 +1232,8 @@ public sealed class ExcelMcpService : IDisposable
             : null;
     }
 
-    private static ServiceResponse CreateExcelDisconnectedResponse(string sessionId, Exception ex, string message)
+    private static ServiceResponse CreateExcelDisconnectedResponse(string sessionId, Exception ex, string message,
+        ExcelNativeProcessObservation? observation = null)
     {
         return new ServiceResponse
         {
@@ -1231,8 +1244,37 @@ public sealed class ExcelMcpService : IDisposable
             ExceptionType = ex.GetType().Name,
             HResult = TryGetFatalComHResult(ex) is { } hresult ? $"0x{hresult:X8}" : null,
             InnerError = DescribeDisconnectedInnerErrors(ex),
-            PartialState = MergeExecutionDiagnostics(SerializeDisconnectedVbaState(ex), ex)
+            PartialState = MergeNativeProcessDiagnostics(
+                MergeExecutionDiagnostics(SerializeDisconnectedVbaState(ex), ex), observation)
         };
+    }
+
+    private static ExcelNativeProcessObservation? GetNativeProcessObservation(IExcelBatch? batch) =>
+        (batch as IExcelBatchProcessObservation)?.ProcessObservation;
+
+    private static string? MergeNativeProcessDiagnostics(string? partialState, ExcelNativeProcessObservation? observation)
+    {
+        if (observation is null)
+            return partialState;
+
+        var state = partialState is null
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+        var diagnostics = state["diagnostics"] as System.Text.Json.Nodes.JsonObject;
+        if (diagnostics is null)
+        {
+            diagnostics = new System.Text.Json.Nodes.JsonObject();
+            state["diagnostics"] = diagnostics;
+        }
+        diagnostics["nativeProcess"] = new System.Text.Json.Nodes.JsonObject
+        {
+            ["processId"] = observation.Identity.ProcessId,
+            ["startedAtUtcFileTime"] = observation.Identity.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["state"] = observation.State.ToString(),
+            ["exitCode"] = observation.ExitCode is { } exitCode ? System.Text.Json.Nodes.JsonValue.Create(exitCode) : null,
+            ["nativeError"] = observation.NativeError is { } error ? System.Text.Json.Nodes.JsonValue.Create(error) : null
+        };
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
     private static string? SerializeDisconnectedVbaState(Exception error) =>

@@ -153,7 +153,7 @@ public sealed class VbaProjectProtectionFailureTransportTests
         var create = typeof(ExcelMcpService).GetMethod("CreateExcelDisconnectedResponse",
             BindingFlags.Static | BindingFlags.NonPublic)!;
         var response = Assert.IsType<ServiceResponse>(create.Invoke(null,
-            ["lost-session", Wrap(failure, wrapping), "Excel process died."]));
+            ["lost-session", Wrap(failure, wrapping), "Excel process died.", null]));
         Assert.False(response.Success);
         Assert.Equal("ExcelProcessDied", response.ErrorCategory);
         Assert.Equal("0x80010108", response.HResult);
