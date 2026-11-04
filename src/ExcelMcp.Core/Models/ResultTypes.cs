@@ -368,42 +368,6 @@ public class SheetPageSetupResult : ResultBase
 }
 
 /// <summary>
-/// Result for reading worksheet data
-/// </summary>
-public class WorksheetDataResult : ResultBase
-{
-    /// <summary>
-    /// Name of the worksheet
-    /// </summary>
-    public string SheetName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Range that was read
-    /// </summary>
-    public string Range { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Data rows and columns
-    /// </summary>
-    public List<List<object?>> Data { get; set; } = [];
-
-    /// <summary>
-    /// Column headers
-    /// </summary>
-    public List<string> Headers { get; set; } = [];
-
-    /// <summary>
-    /// Number of rows
-    /// </summary>
-    public int RowCount { get; set; }
-
-    /// <summary>
-    /// Number of columns
-    /// </summary>
-    public int ColumnCount { get; set; }
-}
-
-/// <summary>
 /// Result for listing Power Queries
 /// </summary>
 public class PowerQueryListResult : ResultBase
@@ -593,132 +557,6 @@ public class PowerQueryPrivacySettingsResult : ResultBase
 }
 
 /// <summary>
-/// Result for Power Query load-to-data-model operations with verification
-/// Extends OperationResult to provide detailed verification of atomic operation
-/// </summary>
-public class PowerQueryLoadToDataModelResult : OperationResult
-{
-    /// <summary>
-    /// Name of the query
-    /// </summary>
-    public string QueryName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Whether the load configuration was successfully applied
-    /// </summary>
-    public bool ConfigurationApplied { get; set; }
-
-    /// <summary>
-    /// Whether data was actually loaded to the Data Model
-    /// </summary>
-    public bool DataLoadedToModel { get; set; }
-
-    /// <summary>
-    /// Number of rows loaded to the Data Model (0 if not loaded)
-    /// </summary>
-    public int RowsLoaded { get; set; }
-
-    /// <summary>
-    /// Total number of tables in the Data Model after operation
-    /// </summary>
-    public int TablesInDataModel { get; set; }
-
-    /// <summary>
-    /// Overall workflow status: "Complete" | "Failed" | "Partial"
-    /// </summary>
-    public string WorkflowStatus { get; set; } = "Failed";
-}
-
-/// <summary>
-/// Result for Power Query load-to-table operations with verification
-/// Extends OperationResult to provide detailed verification of atomic operation
-/// </summary>
-public class PowerQueryLoadToTableResult : OperationResult
-{
-    /// <summary>
-    /// Name of the query
-    /// </summary>
-    public string QueryName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Name of the target worksheet
-    /// </summary>
-    public string SheetName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Whether the load configuration was successfully applied
-    /// </summary>
-    public bool ConfigurationApplied { get; set; }
-
-    /// <summary>
-    /// Whether data was actually loaded to the worksheet table
-    /// </summary>
-    public bool DataLoadedToTable { get; set; }
-
-    /// <summary>
-    /// Number of rows loaded to the worksheet table (0 if not loaded)
-    /// </summary>
-    public int RowsLoaded { get; set; }
-
-    /// <summary>
-    /// Overall workflow status: "Complete" | "Failed" | "Partial"
-    /// </summary>
-    public string WorkflowStatus { get; set; } = "Failed";
-}
-
-/// <summary>
-/// Result for Power Query load-to-both operations with verification
-/// Extends OperationResult to provide detailed verification of atomic operation
-/// </summary>
-public class PowerQueryLoadToBothResult : OperationResult
-{
-    /// <summary>
-    /// Name of the query
-    /// </summary>
-    public string QueryName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Name of the target worksheet
-    /// </summary>
-    public string SheetName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Whether the load configuration was successfully applied
-    /// </summary>
-    public bool ConfigurationApplied { get; set; }
-
-    /// <summary>
-    /// Whether data was actually loaded to the worksheet table
-    /// </summary>
-    public bool DataLoadedToTable { get; set; }
-
-    /// <summary>
-    /// Whether data was actually loaded to the Data Model
-    /// </summary>
-    public bool DataLoadedToModel { get; set; }
-
-    /// <summary>
-    /// Number of rows loaded to the worksheet table (0 if not loaded)
-    /// </summary>
-    public int RowsLoadedToTable { get; set; }
-
-    /// <summary>
-    /// Number of rows loaded to the Data Model (0 if not loaded)
-    /// </summary>
-    public int RowsLoadedToModel { get; set; }
-
-    /// <summary>
-    /// Total number of tables in the Data Model after operation
-    /// </summary>
-    public int TablesInDataModel { get; set; }
-
-    /// <summary>
-    /// Overall workflow status: "Complete" | "Failed" | "Partial"
-    /// </summary>
-    public string WorkflowStatus { get; set; } = "Failed";
-}
-
-/// <summary>
 /// Result for Power Query create operations
 /// Atomic operation: Import M code + Load data to destination in ONE call
 /// </summary>
@@ -786,29 +624,6 @@ public class PowerQueryLoadResult : PowerQueryOperationResult
     /// </summary>
     public bool DataRefreshed { get; set; }
 
-}
-
-/// <summary>
-/// Result for Power Query syntax validation
-/// Pre-flight syntax check before creating permanent query
-/// </summary>
-public class PowerQueryValidationResult : ResultBase
-{
-    /// <summary>
-    /// Whether the M code syntax is valid
-    /// </summary>
-    public bool IsValid { get; set; }
-
-    /// <summary>
-    /// Validation errors (if any)
-    /// </summary>
-    public List<string> ValidationErrors { get; set; } = [];
-
-    /// <summary>
-    /// M code expression that was validated
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? MCodeExpression { get; set; }
 }
 
 /// <summary>
@@ -886,33 +701,6 @@ public class NamedRangeValue
     /// Type of the value
     /// </summary>
     public string ValueType { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Result for getting parameter value
-/// </summary>
-public class NamedRangeValueResult : ResultBase
-{
-    /// <summary>
-    /// Name of the named range
-    /// </summary>
-    public string NamedRangeName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Current value
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public object? Value { get; set; }
-
-    /// <summary>
-    /// Type of the value
-    /// </summary>
-    public string ValueType { get; set; } = string.Empty;
-
-    /// <summary>
-    /// What the named range refers to
-    /// </summary>
-    public string RefersTo { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -1194,34 +982,6 @@ public class FileValidationInfo
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
 
-}
-
-/// <summary>
-/// Result for cell operations
-/// </summary>
-public class CellValueResult : ResultBase
-{
-    /// <summary>
-    /// Address of the cell (e.g., A1)
-    /// </summary>
-    public string CellAddress { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Current value of the cell
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public object? Value { get; set; }
-
-    /// <summary>
-    /// Type of the value
-    /// </summary>
-    public string ValueType { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Formula in the cell, if any
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Formula { get; set; }
 }
 
 /// <summary>
@@ -1672,62 +1432,6 @@ public class RangeStyleResult : ResultBase
 }
 
 /// <summary>
-/// Result for VBA trust operations
-/// </summary>
-public class VbaTrustResult : ResultBase
-{
-    /// <summary>
-    /// Whether VBA project access is trusted
-    /// </summary>
-    public bool IsTrusted { get; set; }
-
-    /// <summary>
-    /// Number of VBA components found (when checking trust)
-    /// </summary>
-    public int ComponentCount { get; set; }
-
-    /// <summary>
-    /// Registry paths where trust was set
-    /// </summary>
-    public List<string> RegistryPathsSet { get; set; } = [];
-
-    /// <summary>
-    /// Manual setup instructions if automated setup failed
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ManualInstructions { get; set; }
-}
-
-/// <summary>
-/// Per-source Power Query privacy levels for data combining.
-/// Individual source privacy levels cannot be set programmatically; the workbook-level
-/// FastCombine setting controls whether Excel applies those levels when combining sources.
-/// </summary>
-[Obsolete("Individual source privacy levels cannot be set programmatically.")]
-public enum PowerQueryPrivacyLevel
-{
-    /// <summary>
-    /// Ignores privacy levels, allows combining any data sources (least secure)
-    /// </summary>
-    None,
-
-    /// <summary>
-    /// Prevents sharing data with other sources (most secure, recommended for sensitive data)
-    /// </summary>
-    Private,
-
-    /// <summary>
-    /// Data can be shared within organization (recommended for internal data)
-    /// </summary>
-    Organizational,
-
-    /// <summary>
-    /// Publicly available data sources (appropriate for public APIs)
-    /// </summary>
-    Public
-}
-
-/// <summary>
 /// Result for Power Query refresh operations with error detection
 /// </summary>
 public class PowerQueryRefreshResult : PowerQueryOperationResult
@@ -1967,44 +1671,6 @@ public class PowerQueryRefreshFailure
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("hresult")]
     public string? HResult { get; set; }
-}
-
-/// <summary>
-/// Result for Power Query error checking
-/// </summary>
-public class PowerQueryErrorCheckResult : ResultBase
-{
-    /// <summary>
-    /// Name of the query checked
-    /// </summary>
-    public string QueryName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Whether errors were detected
-    /// </summary>
-    public bool HasErrors { get; set; }
-
-    /// <summary>
-    /// List of error messages
-    /// </summary>
-    public List<string> ErrorMessages { get; set; } = [];
-
-    /// <summary>
-    /// Category of error (Authentication, Connectivity, Privacy, PrivacyFirewall, Syntax, Permissions, Unknown)
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ErrorCategory { get; set; }
-
-    /// <summary>
-    /// Whether this is a connection-only query
-    /// </summary>
-    public bool IsConnectionOnly { get; set; }
-
-    /// <summary>
-    /// Additional message
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Message { get; set; }
 }
 
 /// <summary>
@@ -2412,108 +2078,6 @@ public class DataModelRelationshipInfo
 }
 
 /// <summary>
-/// Result for DAX formula validation
-/// </summary>
-public class DataModelValidationResult : ResultBase
-{
-    /// <summary>
-    /// Whether the DAX formula is valid
-    /// </summary>
-    public bool IsValid { get; set; }
-
-    /// <summary>
-    /// Validation error message (if not valid)
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? ValidationError { get; set; }
-
-    /// <summary>
-    /// DAX formula that was validated
-    /// </summary>
-    public string DaxFormula { get; set; } = "";
-}
-
-/// <summary>
-/// Result for listing calculated columns
-/// </summary>
-public class DataModelCalculatedColumnListResult : ResultBase
-{
-    /// <summary>
-    /// List of calculated columns in the model
-    /// </summary>
-    public List<DataModelCalculatedColumnInfo> CalculatedColumns { get; set; } = [];
-}
-
-/// <summary>
-/// Information about a calculated column
-/// </summary>
-public class DataModelCalculatedColumnInfo
-{
-    /// <summary>
-    /// Column name
-    /// </summary>
-    public string Name { get; init; } = "";
-
-    /// <summary>
-    /// Table name where column is defined
-    /// </summary>
-    public string Table { get; init; } = "";
-
-    /// <summary>
-    /// DAX formula preview (truncated for display)
-    /// </summary>
-    public string FormulaPreview { get; init; } = "";
-
-    /// <summary>
-    /// Data type of the column
-    /// </summary>
-    public string DataType { get; init; } = "";
-
-    /// <summary>
-    /// Column description (if available)
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Description { get; init; }
-}
-
-/// <summary>
-/// Result for viewing calculated column details
-/// </summary>
-public class DataModelCalculatedColumnViewResult : ResultBase
-{
-    /// <summary>
-    /// Column name
-    /// </summary>
-    public string ColumnName { get; set; } = "";
-
-    /// <summary>
-    /// Table name where column is defined
-    /// </summary>
-    public string TableName { get; set; } = "";
-
-    /// <summary>
-    /// Complete DAX formula
-    /// </summary>
-    public string DaxFormula { get; set; } = "";
-
-    /// <summary>
-    /// Column description
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string? Description { get; set; }
-
-    /// <summary>
-    /// Data type of the column
-    /// </summary>
-    public string DataType { get; set; } = "";
-
-    /// <summary>
-    /// Number of characters in DAX formula
-    /// </summary>
-    public int CharacterCount { get; set; }
-}
-
-/// <summary>
 /// Result for DAX EVALUATE query execution
 /// </summary>
 public class DaxEvaluateResult : ResultBase
@@ -2903,54 +2467,6 @@ public class HyperlinkInfo
     /// Whether the hyperlink points to another location in the workbook
     /// </summary>
     public bool IsInternal { get; set; }
-}
-
-/// <summary>
-/// Result for listing hyperlinks in a worksheet
-/// </summary>
-public class HyperlinkListResult : ResultBase
-{
-    /// <summary>
-    /// List of hyperlinks in the worksheet
-    /// </summary>
-    public List<HyperlinkInfo> Hyperlinks { get; set; } = [];
-
-    /// <summary>
-    /// Total count of hyperlinks
-    /// </summary>
-    public int Count { get; set; }
-
-    /// <summary>
-    /// Sheet name
-    /// </summary>
-    public string SheetName { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Result for getting hyperlink information from a specific cell
-/// </summary>
-public class HyperlinkInfoResult : ResultBase
-{
-    /// <summary>
-    /// Hyperlink information (null if no hyperlink exists)
-    /// </summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public HyperlinkInfo? Hyperlink { get; set; }
-
-    /// <summary>
-    /// Whether a hyperlink exists at the specified cell
-    /// </summary>
-    public bool HasHyperlink { get; set; }
-
-    /// <summary>
-    /// Sheet name
-    /// </summary>
-    public string SheetName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Cell address
-    /// </summary>
-    public string CellAddress { get; set; } = string.Empty;
 }
 
 #endregion

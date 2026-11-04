@@ -280,32 +280,6 @@ public static class XlPivotFieldDataType
 }
 
 /// <summary>
-/// Excel time unit constants for date grouping
-/// </summary>
-public static class XlTimeUnit
-{
-    /// <summary>
-    /// Days grouping
-    /// </summary>
-    public const int xlDays = 4;
-
-    /// <summary>
-    /// Months grouping
-    /// </summary>
-    public const int xlMonths = 5;
-
-    /// <summary>
-    /// Quarters grouping
-    /// </summary>
-    public const int xlQuarters = 6;
-
-    /// <summary>
-    /// Years grouping
-    /// </summary>
-    public const int xlYears = 7;
-}
-
-/// <summary>
 /// Result for PivotTable creation operations
 /// </summary>
 public class PivotTableCreateResult : ResultBase
