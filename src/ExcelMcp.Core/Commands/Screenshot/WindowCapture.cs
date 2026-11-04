@@ -53,8 +53,11 @@ internal static class WindowCapture
     /// Renders the window into a bitmap.
     /// </summary>
     /// <param name="hwnd">Top-level window handle.</param>
+    /// <param name="useFullContent">Use the full-content renderer for the normal zoom/tiling path.
+    /// Pane captures retain their zoom and use standard rendering because full-content rendering
+    /// can return the pre-scroll viewport for frozen or split panes.</param>
     /// <returns>Bitmap of the whole window, in physical pixels. Caller owns the bitmap.</returns>
-    public static Bitmap CaptureWindow(IntPtr hwnd)
+    public static Bitmap CaptureWindow(IntPtr hwnd, bool useFullContent = true)
     {
         Rectangle bounds = GetWindowBounds(hwnd);
 
@@ -75,7 +78,7 @@ internal static class WindowCapture
             bool captured;
             try
             {
-                captured = PrintWindow(hwnd, hdc, PwRenderFullContent);
+                captured = PrintWindow(hwnd, hdc, useFullContent ? PwRenderFullContent : 0);
             }
             finally
             {

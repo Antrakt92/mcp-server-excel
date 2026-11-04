@@ -119,9 +119,11 @@ public sealed partial class IsolatedServiceScreenshotTests
     }
 
     private void AssertGeometryCapture(bool maximized, bool initiallyHidden, string address,
-        string topAddress, string bottomAddress, string expectedAddress, string paneMode = "none")
+        string topAddress, string bottomAddress, string expectedAddress, string paneMode = "none",
+        string? initiallyActiveOtherSheet = null)
     {
         PrepareGeometryMarkers(maximized, initiallyHidden, address, topAddress, bottomAddress, paneMode);
+        if (initiallyActiveOtherSheet is not null) PrepareInactiveGeometryTargetPose();
         var saved = _fixture.Send("session.save", new { });
         Assert.True(saved.Success, saved.ErrorMessage);
         var before = ReadGeometryView();
@@ -129,10 +131,23 @@ public sealed partial class IsolatedServiceScreenshotTests
 
         ScreenshotResult? result = null;
         GeometryFrozenDivider? frozenDivider = MeasureGeometryFrozenDivider(address);
+        var inactiveTarget = initiallyActiveOtherSheet is null
+            ? null : PrepareInactiveGeometryCapture(initiallyActiveOtherSheet, address);
         var captureFailure = Record.Exception(() => result = _screenshotCommands.CaptureRange(
             _fixture.BatchToken, "Sheet1", address, ScreenshotQuality.High));
 
-        var after = ReadGeometryView();
+        (GeometryView View, string Diagnostic) after;
+        if (inactiveTarget is null)
+            after = ReadGeometryView();
+        else
+        {
+            try { after = ReadInactiveGeometryTargetAndRestoreOther(inactiveTarget); }
+            catch (Exception verificationFailure) when (captureFailure is not null)
+            {
+                throw new AggregateException("Screenshot capture and non-active target verification failed.",
+                    captureFailure, verificationFailure);
+            }
+        }
         string diagnostic = $"maximized={maximized}; initiallyHidden={initiallyHidden}; paneMode={paneMode}; range={address}; before={before.Diagnostic}; after={after.Diagnostic}";
         Assert.True(captureFailure is null, $"Capture failed: {captureFailure}; {diagnostic}");
         Assert.NotNull(result);
