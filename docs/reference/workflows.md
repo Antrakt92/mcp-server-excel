@@ -61,6 +61,19 @@ An entry's `sessionId` overrides the default. Without a default, a successful
 commands. Closing the default session clears it. Other returned values are
 not substituted into later inputs.
 
+The server's `vba` schema accepts native JSON values in `arguments[].value`.
+If a client presents that field as string-only, do not quote numbers or Booleans
+to satisfy it. Use `batch` action `run` with the same `workbook_session_id` and
+an entry such as:
+
+```json
+{"command":"vba.invoke","args":{"procedureName":"ScalarProbe","arguments":[{"type":"number","value":2.5},{"type":"boolean","value":false}]}}
+```
+
+Nested batch arguments use camelCase; the direct `vba` tool uses
+`procedure_name`. This preserves scalar types without changing macro security
+or Core validation.
+
 The reply contains `results`, `totalCount`, `executedCount`, and `stoppedEarly`.
 Each result retains the normal MCP JSON fields plus `index` (zero-based) and
 `command`. File/session results use `workbook_session_id`, including successful
