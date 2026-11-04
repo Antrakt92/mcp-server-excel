@@ -7,7 +7,7 @@ using Vbe = Microsoft.Vbe.Interop;
 namespace Sbroenne.ExcelMcp.ComInterop.Session;
 
 /// <summary>Drives only the selected project's standard, process-owned protection dialog.</summary>
-internal static class ExcelVbaProjectProtection
+internal static partial class ExcelVbaProjectProtection
 {
     internal readonly record struct AppliedProtection(string ProjectName, string CurrentProtection);
 
@@ -101,7 +101,7 @@ internal static class ExcelVbaProjectProtection
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002", Justification = "Drains the dedicated native helper and rethrows command and helper failures together before releasing ownership.")]
-    private static void ExecuteDialog(ProtectionDialog driver, Office.CommandBarControl command,
+    private static void ExecuteDialog(IProjectDialogInteraction driver, Office.CommandBarControl command,
         Vbe.VBE editor, Vbe.VBProject target, ref bool commandAttempted)
     {
         var interaction = driver.Start();
@@ -142,15 +142,15 @@ internal static class ExcelVbaProjectProtection
             selected = editor.ActiveVBProject;
             if (string.IsNullOrEmpty(expectedFile) || selected.Name != expectedName ||
                 !string.Equals(selected.FileName, expectedFile, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Excel did not select the requested VBA project; no protection dialog was requested.");
+                throw new InvalidOperationException("Excel did not select the requested VBA project; no project dialog was requested.");
         }
         finally { ComUtilities.Release(ref selected); }
     }
 
     private static Exception Combine(Exception? primary, Exception cleanup) => primary is null ? cleanup :
-        new AggregateException("VBA protection and restoration failed.", primary, cleanup);
+        new AggregateException("VBA project dialog operation and restoration failed.", primary, cleanup);
 
-    private sealed class ProtectionDialog : IDisposable
+    private sealed class ProtectionDialog : IProjectDialogInteraction
     {
         private readonly Process process;
         private readonly ExcelProcessIdentity identity;
@@ -194,9 +194,9 @@ internal static class ExcelVbaProjectProtection
             catch { process.Dispose(); throw; }
         }
 
-        internal void StopWaitingForDialog() => stopWaiting.Cancel();
+        public void StopWaitingForDialog() => stopWaiting.Cancel();
 
-        internal Task Start()
+        public Task Start()
         {
             if (worker is not null) throw new InvalidOperationException("The native protection helper cannot be started twice.");
             worker = new Thread(RunWorker) { IsBackground = true, Name = "ExcelMCP VBA protection" };
@@ -213,18 +213,18 @@ internal static class ExcelVbaProjectProtection
             catch (Exception error) { ready.TrySetException(error); completed.TrySetException(error); }
         }
 
-        internal void WaitUntilReady() => ready.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        public void WaitUntilReady() => ready.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
 
-        internal void MarkCommandRequested()
+        public void MarkCommandRequested()
         {
             if (completed.Task.IsCompleted) throw new InvalidOperationException("The native protection helper ended before the command was requested.");
             progress.State = progress.State with { DialogCleanupConfirmed = false };
             commandCommitted.Set();
         }
 
-        internal void MarkCommandReturned() => commandReturned = true;
+        public void MarkCommandReturned() => commandReturned = true;
 
-        internal void ReconcileAfterCommand()
+        public void ReconcileAfterCommand()
         {
             if (commandCommitted.IsSet) CloseIntroducedDialog();
             ConfirmDialogCleanup();

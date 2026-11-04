@@ -87,7 +87,8 @@ excelcli.exe range set-values --help
 `list-actions <command>` returns only the exact action names as compact JSON,
 without starting the service or connecting to Excel. Omit `<command>` to list
 the workbook command categories and their actions. Use action-specific help for
-inputs and defaults; category-only help includes options for every action.
+inputs and defaults; category-only help includes options for directly callable
+actions.
 Reuse help already read for the same CLI version unless a detail is unresolved.
 
 Batch help includes runnable PowerShell examples, input fields, session rules,
@@ -97,9 +98,18 @@ batch argument names. For example, `--sheet-name` maps to `sheetName`, and
 The entry's `sessionId` stays outside `args`. Arrays and objects are supplied
 directly as JSON values, not strings containing JSON.
 
-Both `--input <file>` and stdin accept a JSON array or one command per line.
-Omitting `--input` or passing `--input -` reads stdin. For example, this
-PowerShell check needs no workbook:
+Batch input accepts a JSON array or one command per line.
+VBA `protect-project`, `unlock-project`, and `verify-password` are stdin-only
+CLI actions: direct options are unavailable, and any file batch containing one
+is refused before its first command runs. Send these entries through
+`excelcli batch --input -` or omit `--input`. Put `password` inside `args` and
+`sessionId` outside it; serialize the exact password without trimming it or
+putting it in process arguments, files or logs. MCP `vba` accepts the same
+actions through its tool inputs. See
+[VBA project passwords](../fork/AGENT-WORKFLOWS.md#vba-project-passwords).
+
+Other actions also accept `--input <file>`. Omitting `--input` or passing
+`--input -` reads stdin. For example, this PowerShell check needs no workbook:
 
 ```cli
 @'

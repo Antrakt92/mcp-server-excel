@@ -1231,7 +1231,8 @@ public sealed class ExcelMcpService : IDisposable
 
     private static string? SerializeDisconnectedVbaState(Exception error) =>
         FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) :
-        FindVbaProjectProtection(error) is { } protection ? SerializeVbaProtectionState(protection.State, null, null, null) : null;
+        FindVbaProjectProtection(error) is { } protection ? SerializeVbaProtectionState(protection.State, null, null, null) :
+        FindVbaProjectAuthentication(error) is { } authentication ? SerializeVbaAuthenticationState(authentication.State, null, null, null) : null;
 
     private static Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException? FindVbaSourceEdit(Exception error)
     {
@@ -1261,9 +1262,23 @@ public sealed class ExcelMcpService : IDisposable
         return null;
     }
 
+    private static Sbroenne.ExcelMcp.Core.Models.VbaProjectAuthenticationException? FindVbaProjectAuthentication(Exception error)
+    {
+        for (var current = error; current is not null; current = current.InnerException)
+        {
+            if (current is Sbroenne.ExcelMcp.Core.Models.VbaProjectAuthenticationException authentication)
+                return authentication;
+            if (current is AggregateException aggregate)
+                foreach (var cause in aggregate.InnerExceptions)
+                    if (FindVbaProjectAuthentication(cause) is { } nested)
+                        return nested;
+        }
+        return null;
+    }
+
     private static string? DescribeDisconnectedInnerErrors(Exception error)
     {
-        if (FindVbaSourceEdit(error) is null && FindVbaProjectProtection(error) is null)
+        if (FindVbaSourceEdit(error) is null && FindVbaProjectProtection(error) is null && FindVbaProjectAuthentication(error) is null)
             return error.InnerException?.Message;
 
         var messages = new List<string>();
@@ -1377,7 +1392,7 @@ public sealed class ExcelMcpService : IDisposable
                 innerError += $" [COM: 0x{innerComEx.HResult:X8}]";
             }
         }
-        if (FindVbaSourceEdit(ex) is null && FindVbaProjectProtection(ex) is not null)
+        if (FindVbaSourceEdit(ex) is null && (FindVbaProjectProtection(ex) is not null || FindVbaProjectAuthentication(ex) is not null))
             innerError = DescribeDisconnectedInnerErrors(ex);
         if (recoveryFailure is not null)
         {
@@ -1412,6 +1427,20 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = innerError,
                 PartialState = SerializeVbaProtectionState(protection.State,
+                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    sessionId, retainedFiles)
+            },
+            _ when FindVbaProjectAuthentication(ex) is { } authentication => new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = errorCategory,
+                ErrorMessage = $"{exceptionType}: {authentication.Message}",
+                ExceptionType = exceptionType,
+                HResult = hresult,
+                InnerError = innerError,
+                PartialState = SerializeVbaAuthenticationState(authentication.State,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
                     sessionId, retainedFiles)
             },
@@ -1463,6 +1492,18 @@ public sealed class ExcelMcpService : IDisposable
         string? sessionId, IReadOnlyList<string>? retainedFiles)
     {
         var state = JsonSerializer.SerializeToNode(protection, ServiceProtocol.JsonOptions)!.AsObject();
+        var execution = SerializePartialState(null, operation, sessionId, retainedFiles);
+        if (execution is not null)
+            foreach (var property in System.Text.Json.Nodes.JsonNode.Parse(execution)!.AsObject())
+                state[property.Key] = property.Value?.DeepClone();
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
+    }
+
+    private static string SerializeVbaAuthenticationState(
+        Sbroenne.ExcelMcp.Core.Models.VbaProjectAuthenticationState authentication, ExcelOperationStatus? operation,
+        string? sessionId, IReadOnlyList<string>? retainedFiles)
+    {
+        var state = JsonSerializer.SerializeToNode(authentication, ServiceProtocol.JsonOptions)!.AsObject();
         var execution = SerializePartialState(null, operation, sessionId, retainedFiles);
         if (execution is not null)
             foreach (var property in System.Text.Json.Nodes.JsonNode.Parse(execution)!.AsObject())

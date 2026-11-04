@@ -591,7 +591,9 @@
         "run": "heavy",
         "search": "light",
         "status": "light",
+        "unlock-project": "medium",
         "update": "medium",
+        "verify-password": "medium",
         "view": "light"
       }
     },

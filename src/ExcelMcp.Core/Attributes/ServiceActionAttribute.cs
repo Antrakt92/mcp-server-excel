@@ -17,6 +17,9 @@ public sealed class ServiceActionAttribute : Attribute
     /// </summary>
     public string Action { get; }
 
+    /// <summary>Requires CLI invocation through batch JSON supplied on stdin; direct options and batch files are refused.</summary>
+    public bool CliBatchStdinOnly { get; set; }
+
     /// <summary>
     /// Creates a new ServiceActionAttribute.
     /// </summary>

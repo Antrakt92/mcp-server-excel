@@ -67,10 +67,11 @@ public sealed class MethodInfo
 
     /// <summary>Whether the original interface method has an IProgress&lt;T&gt; parameter.</summary>
     public bool HasProgressParameter { get; }
+    public bool CliBatchStdinOnly { get; }
 
     public MethodInfo(string methodName, string actionName, string returnType, ITypeSymbol returnTypeSymbol, string mcpTool,
         List<ParameterInfo> parameters, string? xmlDocSummary = null, bool hasBatchParameter = true,
-        bool hasProgressParameter = false, bool mcpToolReadOnly = false)
+        bool hasProgressParameter = false, bool mcpToolReadOnly = false, bool cliBatchStdinOnly = false)
     {
         MethodName = methodName;
         ActionName = actionName;
@@ -82,6 +83,7 @@ public sealed class MethodInfo
         XmlDocSummary = xmlDocSummary;
         HasBatchParameter = hasBatchParameter;
         HasProgressParameter = hasProgressParameter;
+        CliBatchStdinOnly = cliBatchStdinOnly;
     }
 }
 

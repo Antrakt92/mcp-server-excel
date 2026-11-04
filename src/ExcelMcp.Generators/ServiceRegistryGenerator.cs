@@ -451,6 +451,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
 
         sb.AppendLine("        {");
         sb.AppendLine($"            var command = $\"{info.Category}.{{action}}\";");
+        sb.AppendLine("            if (_CliCategoryMetadata.RequiresBatchStdin(command))");
+        sb.AppendLine("                throw new System.ArgumentException(_CliCategoryMetadata.BatchStdinOnlyMessage);");
         sb.AppendLine();
         GenerateSuppliedParameterValidationCall(sb, info, allExposedParams, "            ", actionExpression: "action");
         GenerateFileOrValuePairValidation(sb, info, "            ");
@@ -827,21 +829,24 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
 
     private static void GenerateRouteFromSettings(StringBuilder sb, ServiceInfo info, List<ExposedParameter> allExposedParams)
     {
+        var cliParameters = DirectCliParameters(info, allExposedParams);
         sb.AppendLine("        /// <summary>");
         sb.AppendLine("        /// Routes a CLI action using CliSettings (bridges Settings → RouteCliArgs).");
         sb.AppendLine("        /// Used by generated CLI command classes.");
         sb.AppendLine("        /// </summary>");
         sb.AppendLine("        public static (string Command, object? Args) RouteFromSettings(string action, CliSettings settings)");
         sb.AppendLine("        {");
-        if (allExposedParams.Count > 0)
+        sb.AppendLine($"            if (_CliCategoryMetadata.RequiresBatchStdin(\"{info.Category}.\" + action))");
+        sb.AppendLine("                throw new System.ArgumentException(_CliCategoryMetadata.BatchStdinOnlyMessage);");
+        if (cliParameters.Count > 0)
         {
             sb.AppendLine("            ValidateActionParameters(");
             sb.AppendLine("                action,");
             sb.AppendLine("                ServiceRegistry.GetSuppliedParameterNames(");
-            for (int i = 0; i < allExposedParams.Count; i++)
+            for (int i = 0; i < cliParameters.Count; i++)
             {
-                var parameter = allExposedParams[i];
-                var comma = i < allExposedParams.Count - 1 ? "," : "),";
+                var parameter = cliParameters[i];
+                var comma = i < cliParameters.Count - 1 ? "," : "),";
                 sb.AppendLine(
                     $"                    (\"{parameter.Name}\", settings.{StringHelper.ToPascalCase(parameter.Name)}){comma}");
             }
@@ -856,7 +861,11 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             var comma = i < allExposedParams.Count - 1 ? "," : ");";
             var parameterInfo = FindParameterInfo(info, p.Name);
 
-            if (parameterInfo is { IsEnum: true, IsFromString: false })
+            if (!cliParameters.Contains(p))
+            {
+                sb.AppendLine($"                {p.Name}: null{comma}");
+            }
+            else if (parameterInfo is { IsEnum: true, IsFromString: false })
             {
                 var enumType = parameterInfo.EnumTypeName ?? parameterInfo.TypeName.TrimEnd('?');
                 sb.AppendLine(
@@ -952,7 +961,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
         }
 
         // Generate all exposed parameters
-        foreach (var p in allParams)
+        foreach (var p in DirectCliParameters(info, allParams))
         {
             var optionName = StringHelper.ToKebabCase(p.Name);
             var description = p.DescriptionWithRequired ?? StringHelper.GetParameterDescription(p.Name);
@@ -1295,6 +1304,10 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
     private static List<ExposedParameter> GetAllExposedParameters(ServiceInfo info)
         => ServiceInfoExtractor.GetAllExposedParameters(info);
 
+    private static List<ExposedParameter> DirectCliParameters(ServiceInfo info, List<ExposedParameter> parameters) =>
+        parameters.Where(parameter => parameter.ApplicableByActions.Any(action =>
+            info.Methods.Any(method => method.ActionName == action && !method.CliBatchStdinOnly))).ToList();
+
     private static string BuildForwardArgs(MethodInfo method, List<ExposedParameter> allParams)
     {
         if (method.Parameters.Count == 0)
@@ -1536,6 +1549,16 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
         sb.AppendLine("/// </summary>");
         sb.AppendLine("public static class _CliCategoryMetadata");
         sb.AppendLine("{");
+        sb.AppendLine("    /// <summary>CLI input policy for sensitive actions, derived from ServiceAction metadata.</summary>");
+        sb.AppendLine("    public const string BatchStdinOnlyMessage = \"This action requires batch JSON on stdin. Direct arguments and batch input files are not accepted. Use: excelcli batch --input - (or omit --input).\";");
+        sb.AppendLine("    private static readonly System.Collections.Generic.HashSet<string> BatchStdinOnlyCommands = new(System.StringComparer.OrdinalIgnoreCase)");
+        sb.AppendLine("    {");
+        foreach (var category in categories)
+            foreach (var method in category.Methods.Where(method => method.CliBatchStdinOnly))
+                sb.AppendLine($"        \"{category.Category}.{method.ActionName}\",");
+        sb.AppendLine("    };");
+        sb.AppendLine("    /// <summary>Whether the canonical Service command requires CLI batch stdin.</summary>");
+        sb.AppendLine("    public static bool RequiresBatchStdin(string? command) => command is not null && BatchStdinOnlyCommands.Contains(command.Trim());");
         sb.AppendLine("    /// <summary>List of all CLI command categories and their ServiceRegistry type names.</summary>");
         sb.AppendLine("    public static readonly (string CliCommandName, string RegistryTypeName, bool RequiresSession)[] Categories = new[]");
         sb.AppendLine("    {");

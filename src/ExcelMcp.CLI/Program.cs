@@ -4,6 +4,7 @@ using Sbroenne.ExcelMcp.CLI.Commands;
 using Sbroenne.ExcelMcp.CLI.Generated;
 using Sbroenne.ExcelMcp.CLI.Infrastructure;
 using Sbroenne.ExcelMcp.CLI.Telemetry;
+using Sbroenne.ExcelMcp.Generated;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -81,6 +82,17 @@ internal sealed class Program
             if (showBanner) RenderHeader();
             WriteDiagnosticMarkupLine("[dim]No command supplied. Use [green]--help[/] for commands. For a known sequence in one call, use [green]batch --help[/].[/]");
             return 0;
+        }
+
+        if (CliInputPolicy.FindStdinOnlyCommand(filteredArgs) is { } stdinCommand)
+        {
+            CliCommandRuntime.Current.CommandName = stdinCommand;
+            if (filteredArgs.Any(argument => argument is "--help" or "-h"))
+            {
+                ActionHelp.WriteStdinOnly(stdinCommand);
+                return 0;
+            }
+            return CliErrorOutput.WriteError(_CliCategoryMetadata.BatchStdinOnlyMessage);
         }
 
         if (filteredArgs.Any(arg => VersionFlags.Contains(arg, StringComparer.OrdinalIgnoreCase)))

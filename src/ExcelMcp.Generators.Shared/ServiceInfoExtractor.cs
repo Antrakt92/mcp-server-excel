@@ -132,7 +132,10 @@ public static class ServiceInfoExtractor
                     xmlDoc?.Summary,
                     hasBatchParameter,
                     hasProgressParameter,
-                    methodMcpToolReadOnly));
+                    methodMcpToolReadOnly,
+                    method.GetAttributes().Any(attribute => attribute.AttributeClass?.Name == "ServiceActionAttribute"
+                        && attribute.NamedArguments.Any(argument => argument.Key == "CliBatchStdinOnly"
+                            && argument.Value.Value is true))));
             }
         }
 

@@ -901,7 +901,19 @@ public sealed class InProcessCliCommandTests
             Assert.DoesNotContain("--output", batchHelp, StringComparison.Ordinal);
             var category = _CliCategoryMetadata.Categories.Single(item => item.CliCommandName == command);
             if (category.RequiresSession)
-                Assert.Contains("--session", batchHelp, StringComparison.Ordinal);
+            {
+                if (_CliCategoryMetadata.RequiresBatchStdin(command + "." + action))
+                {
+                    Assert.Contains("top-level sessionId", batchHelp, StringComparison.Ordinal);
+                    var example = batchHelp.Split('\n').Single(line => line.StartsWith('{'));
+                    using var entry = JsonDocument.Parse(example);
+                    Assert.Equal("<session-id>", entry.RootElement.GetProperty("sessionId").GetString());
+                    Assert.Contains("batch --input -", text, StringComparison.Ordinal);
+                    Assert.DoesNotContain("--password", text, StringComparison.Ordinal);
+                }
+                else
+                    Assert.Contains("--session", batchHelp, StringComparison.Ordinal);
+            }
         }
     }
 
@@ -965,7 +977,7 @@ public sealed class InProcessCliCommandTests
     [InlineData("[]", "No commands provided")]
     [InlineData("[", "BytePositionInLine")]
     [InlineData("""{"args":{}}""", "missing the 'command' field")]
-    [InlineData("""{"command":"diag.ping","unexpected":true}""", "unexpected")]
+    [InlineData("""{"command":"diag.ping","unexpected":true}""", "not valid JSON command data")]
     public async Task BatchDiscovery_InputErrorsKeepDetailsAndPointToHelp(string input, string originalError)
     {
         var factory = new RecordingClientFactory();
@@ -983,7 +995,12 @@ public sealed class InProcessCliCommandTests
         Assert.Contains(originalError, message, StringComparison.Ordinal);
         Assert.Contains("batch --help", message + error.ToString(), StringComparison.Ordinal);
         if (input == "[" || input.Contains("unexpected", StringComparison.Ordinal))
+        {
             Assert.Equal(nameof(JsonException), failure.GetProperty("exceptionType").GetString());
+            Assert.Contains("LineNumber:", message, StringComparison.Ordinal);
+            Assert.Contains("BytePositionInLine:", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("unexpected", message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

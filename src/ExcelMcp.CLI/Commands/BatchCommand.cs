@@ -37,7 +37,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "CLI batch boundary writes explicit failed NDJSON items or input errors and exits nonzero; communication/validation exceptions are surfaced with their original messages, not converted into successful operations.")]
+        Justification = "CLI batch boundary reports input and execution failures and exits nonzero. JSON parse diagnostics retain type and numeric positions without exposing token-bearing parser messages.")]
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
         // Read commands from file or stdin
@@ -45,6 +45,13 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         try
         {
             commands = await ReadCommandsAsync(settings.InputFile, cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            var safeMessage = "Batch input is not valid JSON command data. " +
+                $"LineNumber: {ex.LineNumber}; BytePositionInLine: {ex.BytePositionInLine}. {BatchHelp.InputHint}";
+            return CliErrorOutput.WriteException(new JsonException(safeMessage,
+                path: null, lineNumber: ex.LineNumber, bytePositionInLine: ex.BytePositionInLine), "InvalidInput");
         }
         catch (Exception ex)
         {
@@ -55,6 +62,15 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         if (commands.Count == 0)
         {
             WriteError($"No commands provided. {BatchHelp.InputHint}");
+            return 1;
+        }
+
+        // Admit the complete batch before validation or connection: a later sensitive
+        // command must not allow earlier file-based commands to run first.
+        if (!string.IsNullOrEmpty(settings.InputFile) && settings.InputFile != "-"
+            && commands.Any(command => command is not null && _CliCategoryMetadata.RequiresBatchStdin(command.Command)))
+        {
+            WriteError(_CliCategoryMetadata.BatchStdinOnlyMessage);
             return 1;
         }
 
