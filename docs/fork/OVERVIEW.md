@@ -4,6 +4,11 @@ ExcelMCP — Antrakt Fork is maintained at [Antrakt92/mcp-server-excel](https://
 
 Fork 3.0.1 integrates upstream 2.6.1 and the subsequent chart-label maintenance fix (`efd33740`) while preserving fork lifecycle and workbook fixes. It is a patch release for fixes, dependency updates and guidance; it introduces no new public capability or migration. Published 3.0.0 packages and their verification receipts identify their original 2.6.0 source base.
 
+Fork 4.1.0 retains upstream 2.6.11, MCP SDK 2.3.1 and the existing 445-operation
+catalogue. It adds structured operation/snapshot and native-process diagnostics,
+bounded controller exit history and safer batch stopping after a disconnect.
+Existing 4.0.0 inputs remain supported; see [4.1.0 verification](VERIFICATION-4.1.0.md).
+
 Fork 4.0.0 retains upstream 2.6.11 and MCP SDK 2.3.1. It adds known-password
 VBA project unlocking and verification, exact whitespace-preserving password
 validation, and screenshot fixes for normal, frozen and split views. The
@@ -67,7 +72,7 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
-Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [4.0.0 verification](VERIFICATION-4.0.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
+Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [4.1.0 verification](VERIFICATION-4.1.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 

@@ -36,6 +36,33 @@ Cancellation and timeout stop waiting; Excel's work may continue. Check the Exce
 
 If recovery requires a process-level action, establish the exact owned process identity and current workbook state first. A process name alone does not establish ownership. Unrelated Excel instances must remain untouched.
 
+When a visibility snapshot fails, `partialState.diagnostics.execution` separates
+its exception type and HRESULT from the operation's failure. `callbackReturned`
+means the callback returned normally; it does not prove saving or verify workbook
+contents. `complete:false` means the available chain cannot establish one
+unambiguous boundary. Original error fields and observed VBA state remain in
+the response. A retained `ExcelDisconnected` session stops later batch commands
+even if a partial state reports that an individual callback completed.
+
+Disconnect errors also include `partialState.diagnostics.nativeProcess` when
+the execution owner retained a native observation. Check `state` (`Alive`,
+`Exited` or `Indeterminate`), `exitCode` and `nativeError` separately. An unknown
+exit code is null, not zero. `startedAtUtcFileTime` is an exact decimal string;
+keep those digits intact when comparing process identities.
+
+`session.list` includes `recentExcelExits`, capped at 16 exact PID/creation-time
+identities. This is diagnostic history held by that controller; it does not
+survive a controller restart, recreate sessions or grant ownership of recovery
+processes. Exit code zero confirms normal native exit, not saved workbook edits
+or the cause of an earlier automation error. An unconfirmed exit never releases
+ownership merely because a COM call or Quit returned.
+
+If a known worker dies before acknowledging release, the controller can retain
+its newer persisted exit observation after validating both process identities,
+controller generation and build. This recovers diagnostic evidence for an
+already-known Excel identity; it does not adopt an unseen process or confirm an
+unacknowledged workbook operation.
+
 ## Rebuild or report a problem
 
 The separately labeled [historical 2.4.1 patch](LEGACY.md) preserves the earlier

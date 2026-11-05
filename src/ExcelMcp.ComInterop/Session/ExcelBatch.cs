@@ -21,7 +21,7 @@ namespace Sbroenne.ExcelMcp.ComInterop.Session;
 /// </list>
 /// <para><b>Resource Cost:</b> Each ExcelBatch = one Excel.Application process (~50-100MB+ memory)</para>
 /// </remarks>
-internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState, IExcelBatchRefreshState, IExcelBatchCloseState, IExcelBatchWindowControl
+internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState, IExcelBatchRefreshState, IExcelBatchCloseState, IExcelBatchWindowControl, IExcelBatchProcessObservation
 {
     // P/Invoke for getting process ID from window handle
     [DllImport("user32.dll")]
@@ -50,6 +50,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     private int _disposed; // 0 = not disposed, 1 = disposed (using int for Interlocked.CompareExchange)
     private int? _excelProcessId;
     private ExcelProcessIdentity? _excelProcessIdentity;
+    private ExcelNativeProcessObserver? _nativeProcessObserver;
     private volatile bool _isExcelVisible;
     private volatile bool _operationTimedOut;
     private volatile bool _revealRequested;
@@ -620,6 +621,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 {
                     _excelProcessIdentity = attached.Process;
                     _excelProcessId = attached.Process.ProcessId;
+                    CaptureNativeProcessObserver(attached.Process);
                     _applicationLease = new ExcelApplicationLease(attached.Process);
                     using var startupExecution = _applicationLease.EnterExecution();
                     startupExcel = RunningExcelWindows.Connect(attached);
@@ -673,6 +675,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
                     // Readiness probes and teardown require both PID and start time.
                     // Retry when Excel's window or process identity is not available yet.
+                    var processIdentityAccepted = false;
                     try
                     {
                         const int maxRetries = 3;
@@ -688,11 +691,28 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                                 if (processId != 0)
                                 {
                                     _excelProcessId = (int)processId;
-                                    _excelProcessIdentity =
-                                        TrackProcessIdentityHookForTests is { } trackIdentity
-                                            ? trackIdentity(_excelProcessId.Value)
-                                            : SessionManager.TrackExcelProcessIdentity(_excelProcessId.Value);
-                                    if (_excelProcessIdentity.HasValue)
+                                    var observer = Volatile.Read(ref _nativeProcessObserver);
+                                    if (observer is null)
+                                    {
+                                        observer = ExcelNativeProcessObserver.Capture(_excelProcessId.Value);
+                                        Volatile.Write(ref _nativeProcessObserver, observer);
+                                    }
+                                    if (observer.Identity.ProcessId != _excelProcessId.Value)
+                                        throw new InvalidOperationException("Excel's process identity changed during startup.");
+                                    _excelProcessIdentity = observer.Identity;
+                                    if (TrackProcessIdentityHookForTests is { } trackIdentity)
+                                    {
+                                        var tracked = trackIdentity(_excelProcessId.Value);
+                                        if (tracked is { } accepted && accepted != observer.Identity)
+                                            throw new InvalidOperationException("The tracked Excel identity does not match the retained process handle.");
+                                        processIdentityAccepted = tracked.HasValue;
+                                    }
+                                    else
+                                    {
+                                        SessionManager.TrackExcelProcess(observer.Identity);
+                                        processIdentityAccepted = true;
+                                    }
+                                    if (processIdentityAccepted)
                                     {
                                         _logger.LogDebug("Captured Excel process identity via Hwnd: {ProcessId} (attempt {Attempt})",
                                             _excelProcessId, attempt);
@@ -712,14 +732,19 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                     }
                     catch (ExcelProcessPersistenceException ex)
                     {
-                        _excelProcessIdentity = ex.Identity;
+                        if (_excelProcessIdentity != ex.Identity)
+                        {
+                            throw new AggregateException(
+                                "Excel ownership persistence failed with an identity that does not match the retained process handle.",
+                                ex, new InvalidOperationException("The persisted Excel identity changed during startup."));
+                        }
                         throw;
                     }
                     catch (Exception ex)
                     {
                         throw new InvalidOperationException("Failed to capture Excel process identity during startup.", ex);
                     }
-                    if (!_excelProcessIdentity.HasValue)
+                    if (!processIdentityAccepted || !_excelProcessIdentity.HasValue)
                     {
                         _logger.LogError("Excel startup cannot continue without a confirmed process identity.");
                         throw new InvalidOperationException(
@@ -906,48 +931,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                         ?? cleanupWorkbooks?.Values.FirstOrDefault()
                         ?? (_workbooks is null ? startupPrimaryWorkbook : null);
 
-                    // INSTRUMENTATION: Check if Excel process is alive BEFORE entering shutdown
-                    if (_excelProcessId.HasValue)
-                    {
-                        try
-                        {
-                            using var beforeProc = System.Diagnostics.Process.GetProcessById(_excelProcessId.Value);
-                            bool beforeAlive = !beforeProc.HasExited;
-                            SessionDiagnostics.WriteStdErr(
-                                $"[DIAG-SHUTDOWN-ENTER-PROCESS-CHECK] Excel PID {_excelProcessId.Value} alive={beforeAlive} file={Path.GetFileName(_workbookPath)}");
-                            _logger.LogDebug(
-                                "[DIAG-SHUTDOWN-ENTER-PROCESS-CHECK] Excel PID {ProcessId} alive={Alive} file={FileName}",
-                                _excelProcessId.Value, beforeAlive, Path.GetFileName(_workbookPath));
-                        }
-                        catch (ArgumentException)
-                        {
-                            SessionDiagnostics.WriteStdErr(
-                                $"[DIAG-SHUTDOWN-ENTER-PROCESS-DEAD] Excel PID {_excelProcessId.Value} already dead BEFORE shutdown file={Path.GetFileName(_workbookPath)}");
-                            _logger.LogWarning(
-                                "[DIAG-SHUTDOWN-ENTER-PROCESS-DEAD] Excel PID {ProcessId} already dead BEFORE shutdown for {FileName}",
-                                _excelProcessId.Value, Path.GetFileName(_workbookPath));
-                        }
-                        catch (System.ComponentModel.Win32Exception ex)
-                        {
-                            SessionDiagnostics.WriteStdErr(
-                                $"[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {_excelProcessId.Value} could not be queried before shutdown: {ex.Message}");
-                            _logger.LogWarning(
-                                ex,
-                                "[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {ProcessId} could not be queried before shutdown for {FileName}",
-                                _excelProcessId.Value,
-                                Path.GetFileName(_workbookPath));
-                        }
-                        catch (InvalidOperationException ex)
-                        {
-                            SessionDiagnostics.WriteStdErr(
-                                $"[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {_excelProcessId.Value} state was unavailable before shutdown: {ex.Message}");
-                            _logger.LogWarning(
-                                ex,
-                                "[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {ProcessId} state was unavailable before shutdown for {FileName}",
-                                _excelProcessId.Value,
-                                Path.GetFileName(_workbookPath));
-                        }
-                    }
+                    WriteNativeProcessShutdownObservation();
 
                     if (_attachedApplication is null && !_leaveOwnedApplicationOpen)
                     {
@@ -1104,7 +1088,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                     FinalizeOwnedProcessTeardown(
                         failedStartupIdentity,
                         FailedStartupExitConfirmationHook
-                        ?? WaitForOwnedProcessExit);
+                        ?? WaitForOwnedProcessExit,
+                        RecordNativeProcessObservation);
+                    RetireNativeProcessObserver();
                 }
                 catch (Exception teardownFailure)
                 {
@@ -1120,6 +1106,10 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 {
                     _ = _staThread.Join(TimeSpan.FromSeconds(5));
                 }
+            }
+            else if (_attachedApplication is not null && !_staThread.IsAlive)
+            {
+                RetireNativeProcessObserver();
             }
 
             throw;
@@ -1187,6 +1177,64 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     public int? ExcelProcessId => _excelProcessId;
 
     internal ExcelProcessIdentity? ProcessIdentity => _excelProcessIdentity;
+
+    // Observation is diagnostic only; the ownership guard still controls teardown.
+    internal ExcelNativeProcessObservation? ProcessObservation =>
+        Volatile.Read(ref _nativeProcessObserver)?.Observe();
+
+    ExcelNativeProcessObservation? IExcelBatchProcessObservation.ProcessObservation => ProcessObservation;
+
+    private void CaptureNativeProcessObserver(ExcelProcessIdentity identity)
+    {
+        Volatile.Write(ref _nativeProcessObserver, ExcelNativeProcessObserver.Capture(identity));
+    }
+
+    private void RecordNativeProcessObservation()
+    {
+        if (ProcessObservation is { } observation)
+            SessionManager.RecordExcelProcessObservation(observation);
+    }
+
+    private void RetireNativeProcessObserver()
+    {
+        var observer = Volatile.Read(ref _nativeProcessObserver);
+        if (observer is null)
+            return;
+
+        observer.Dispose();
+    }
+
+    private void WriteNativeProcessShutdownObservation()
+    {
+        if (ProcessObservation is not { } observation)
+            return;
+
+        var fileName = Path.GetFileName(_workbookPath);
+        if (observation.State == ExcelNativeProcessState.Alive)
+        {
+            SessionDiagnostics.WriteStdErr(
+                $"[DIAG-SHUTDOWN-ENTER-PROCESS-CHECK] Excel PID {observation.Identity.ProcessId} alive=True file={fileName}");
+            _logger.LogDebug(
+                "[DIAG-SHUTDOWN-ENTER-PROCESS-CHECK] Excel PID {ProcessId} alive={Alive} file={FileName}",
+                observation.Identity.ProcessId, true, fileName);
+        }
+        else if (observation.State == ExcelNativeProcessState.Exited)
+        {
+            SessionDiagnostics.WriteStdErr(
+                $"[DIAG-SHUTDOWN-ENTER-PROCESS-DEAD] Excel PID {observation.Identity.ProcessId} already dead BEFORE shutdown exitCode={observation.ExitCode} nativeError={observation.NativeError} file={fileName}");
+            _logger.LogWarning(
+                "[DIAG-SHUTDOWN-ENTER-PROCESS-DEAD] Excel PID {ProcessId} already dead BEFORE shutdown exitCode={ExitCode} nativeError={NativeError} file={FileName}",
+                observation.Identity.ProcessId, observation.ExitCode, observation.NativeError, fileName);
+        }
+        else
+        {
+            SessionDiagnostics.WriteStdErr(
+                $"[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {observation.Identity.ProcessId} native state unavailable error={observation.NativeError} file={fileName}");
+            _logger.LogWarning(
+                "[DIAG-SHUTDOWN-ENTER-PROCESS-INACCESSIBLE] Excel PID {ProcessId} native state unavailable error={NativeError} file={FileName}",
+                observation.Identity.ProcessId, observation.NativeError, fileName);
+        }
+    }
 
     public TimeSpan OperationTimeout => _operationTimeout;
 
@@ -1395,9 +1443,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             using var writeGuard = new ExcelWriteGuard(application, _logger);
 
             Exception? operationFailure = null;
+            var callbackReturned = false;
             try
             {
-                return operation(_context!, CancellationToken.None);
+                var result = operation(_context!, CancellationToken.None);
+                callbackReturned = true;
+                return result;
             }
             catch (Exception ex)
             {
@@ -1406,7 +1457,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
             finally
             {
-                UpdateVisibilitySnapshot(operationFailure);
+                UpdateVisibilitySnapshot(operationFailure, callbackReturned);
             }
         }, completion, error =>
         {
@@ -1567,7 +1618,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Restoring an explicit hide after a deferred recovery reveal is cosmetic; failures are logged with cause and the following Visible read reports the window as shown, so the operation result is never misrepresented.")]
-    private void UpdateVisibilitySnapshot(Exception? operationFailure)
+    private void UpdateVisibilitySnapshot(Exception? operationFailure, bool callbackReturned = false)
     {
         var revision = _applicationLease?.VisibilityRevision;
         try
@@ -1616,16 +1667,24 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         {
             UpdateConfirmedVisibility(false, revision);
         }
-        catch (Exception snapshotFailure) when (operationFailure is not null)
+        catch (Exception snapshotFailure)
         {
+            if (operationFailure is null)
+            {
+                ExcelExecutionFailureContext.Attach(snapshotFailure, null, snapshotFailure, callbackReturned);
+                throw;
+            }
             var failure = new AggregateException(
                 "The Excel operation and updating its visibility snapshot both failed.",
                 operationFailure, snapshotFailure);
             if (operationFailure is OperationCanceledException canceled)
             {
-                throw new OperationCanceledException(canceled.Message, failure, canceled.CancellationToken);
+                var cancellation = new OperationCanceledException(canceled.Message, failure, canceled.CancellationToken);
+                ExcelExecutionFailureContext.Attach(cancellation, operationFailure, snapshotFailure, callbackReturned);
+                throw cancellation;
             }
 
+            ExcelExecutionFailureContext.Attach(failure, operationFailure, snapshotFailure, callbackReturned);
             throw failure;
         }
     }
@@ -2177,9 +2236,14 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 // Quit returning does not establish native process exit. Keep
                 // ownership and recoverable teardown state until exit is known.
                 FinalizeOwnedProcessTeardown(identity,
-                    OwnedProcessExitConfirmationHookForTests ?? WaitForOwnedProcessExit);
+                    OwnedProcessExitConfirmationHookForTests ?? WaitForOwnedProcessExit,
+                    RecordNativeProcessObservation);
             }
         }
+        // Intentional detach/preservation ends observation without claiming native exit.
+        if (_ownedProcessLeftOpen || (_attachedApplication is not null && !_quitEmptyOwnedApplication))
+            RecordNativeProcessObservation();
+        RetireNativeProcessObserver();
         FinishOperation(null);
         _teardownConfirmed = true;
         _shutdownCts.Dispose();
@@ -2198,7 +2262,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
     internal static void FinalizeOwnedProcessTeardown(
         ExcelProcessIdentity identity,
-        Func<ExcelProcessIdentity, bool> confirmExit)
+        Func<ExcelProcessIdentity, bool> confirmExit,
+        Action? beforeUntrack = null)
     {
         ArgumentNullException.ThrowIfNull(confirmExit);
         if (!confirmExit(identity))
@@ -2208,6 +2273,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 "Its exact process number and start time remain recorded. Inspect that Excel copy before deciding how to proceed.");
         }
 
+        beforeUntrack?.Invoke();
         SessionManager.UntrackExcelProcess(identity);
     }
 
@@ -2234,7 +2300,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
             _applicationLease?.Dispose();
             _applicationLease = null;
+            RecordNativeProcessObservation();
             SessionManager.UntrackExcelProcess(identity);
+            RetireNativeProcessObserver();
             return true;
         }
     }

@@ -122,6 +122,9 @@ Returned arrays are limited to 10,000 elements and results have a conservative
 4 MiB transport budget. If return conversion is refused, execution has already
 completed: inspect its workbook effects before considering another invocation.
 
+If a client presents `arguments[].value` as string-only, use the
+[MCP batch route](../reference/workflows.md#mcp-batch) to preserve scalar types.
+
 ## Bounded workbook reads
 
 Use `range_read` action `get-used-range-info` for native bounds without values;

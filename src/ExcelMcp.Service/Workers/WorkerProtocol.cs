@@ -63,7 +63,8 @@ internal sealed record WorkerRegistration(
     bool OwnsExcel = false,
     bool ExcelPreserved = false,
     bool ReleaseConfirmed = false,
-    ExcelProcessIdentity? ReleasedExcel = null);
+    ExcelProcessIdentity? ReleasedExcel = null,
+    ExcelNativeProcessObservation? LastExcelObservation = null);
 
 internal sealed record WorkerClaim(WorkerProcess Controller, string Generation, string Build);
 internal sealed record WorkerCall(string OperationId, string Generation, ServiceRequest Request);

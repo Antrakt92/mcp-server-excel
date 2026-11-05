@@ -111,6 +111,8 @@ public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixt
     [Theory]
     [InlineData("Timeout", null)]
     [InlineData("Cancelled", null)]
+    [InlineData("ExcelDisconnected", null)]
+    [InlineData("ExcelDisconnected", """{"outcome":"completed"}""")]
     [InlineData("ServiceUnavailable", """{"outcome":"unknown","message":"Work may still be running."}""")]
     [InlineData("ComInterop", """{"outcome":"unknown","retained":true}""")]
     public async Task UnconfirmedCompletion_StopsBeforeAnotherWorkbookEvenWhenContinueIsDefault(

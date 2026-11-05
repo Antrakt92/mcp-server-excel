@@ -19,13 +19,13 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-4.0.0.md)
+[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-4.1.0.md)
 
-The latest portable release, **4.0.0**, includes upstream **2.6.11** and exposes
-445 operations through 64 MCP tools across 33 feature areas. It adds known-password
-VBA project unlocking and verification, and corrects stale worksheet screenshots
-in normal, frozen and split views. Password authentication opens current-session
-access without removing saved protection, saving or reopening the workbook.
+The latest portable release, **4.1.0**, includes upstream **2.6.11** and exposes
+445 operations through 64 MCP tools across 33 feature areas. It adds native
+process exit history and separates operation errors from visibility-snapshot
+errors. CLI and MCP batches stop when an Excel disconnect leaves completion
+uncertain. Existing VBA password and screenshot capabilities remain available.
 
 **CLI migration:** all three VBA password actions require batch JSON on stdin.
 Direct password flags and file batches containing password actions are refused;
@@ -35,8 +35,8 @@ see [migration](#migrate-password-calls-from-fork-360). MCP tool inputs remain a
 
 | Package | Use |
 | --- | --- |
-| [ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0/ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
-| [ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0/ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
+| [ExcelMcp-Antrakt-MCP-4.1.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.1.0/ExcelMcp-Antrakt-MCP-4.1.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
+| [ExcelMcp-Antrakt-CLI-4.1.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.1.0/ExcelMcp-Antrakt-CLI-4.1.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
@@ -44,13 +44,13 @@ Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.js
 <summary>Download with PowerShell</summary>
 
 ```powershell
-$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.0.0'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-4.0.0-win-x64.zip'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-4.0.0-win-x64.zip'
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v4.1.0'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-4.1.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-4.1.0-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-4.1.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-4.1.0-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
 Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
-Get-FileHash .\ExcelMcp-Antrakt-*-4.0.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\ExcelMcp-Antrakt-*-4.1.0-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 

@@ -96,7 +96,7 @@ public sealed class VbaProjectAuthenticationFailureTransportTests
             new VbaProjectAuthenticationState { Phase = "requesting-authentication", AuthenticationPerformed = true, AccessUnlocked = null });
         var method = typeof(ExcelMcpService).GetMethod("CreateExcelDisconnectedResponse", BindingFlags.Static | BindingFlags.NonPublic)!;
         var response = Assert.IsType<ServiceResponse>(method.Invoke(null,
-            ["lost-session", Wrap(failure, wrapping), "Excel process died."]));
+            ["lost-session", Wrap(failure, wrapping), "Excel process died.", null]));
         Assert.Equal("ExcelProcessDied", response.ErrorCategory);
         Assert.Equal("0x80010108", response.HResult);
         Assert.Contains("Original authentication disconnect.", response.InnerError);

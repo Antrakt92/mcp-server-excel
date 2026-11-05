@@ -16,7 +16,7 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Feature", "ServiceDaemon")]
 [Trait("Speed", "Medium")]
 [Trait("RequiresExcel", "false")]
-public sealed class ExcelControllerTests
+public sealed partial class ExcelControllerTests
 {
     // ShellExecute does not reliably resolve a process-local SDK PATH on Windows.
     private static string DotNetHost => Path.GetFullPath(Path.Combine(

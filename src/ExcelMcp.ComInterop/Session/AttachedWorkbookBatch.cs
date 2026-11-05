@@ -4,7 +4,7 @@ using Excel = Microsoft.Office.Interop.Excel;
 namespace Sbroenne.ExcelMcp.ComInterop.Session;
 
 internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo workbook)
-    : IExcelBatch, IExcelBatchRefreshState, IExcelBatchCloseState, IExcelBatchWindowControl
+    : IExcelBatch, IExcelBatchRefreshState, IExcelBatchCloseState, IExcelBatchWindowControl, IExcelBatchProcessObservation
 {
     private string _path = workbook.Location ?? workbook.Name;
     private string _workbookName = workbook.Name;
@@ -12,6 +12,7 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
     private long _locationRevision;
 
     internal ExcelBatch Owner => owner;
+    ExcelNativeProcessObservation? IExcelBatchProcessObservation.ProcessObservation => owner.ProcessObservation;
     internal string WorkbookId => workbook.WorkbookId;
     internal bool? AutoSaveOn => workbook.AutoSaveOn;
     internal string WorkbookName => _workbookName;

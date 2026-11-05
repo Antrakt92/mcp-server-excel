@@ -163,6 +163,11 @@ internal interface IExcelBatchTeardownState
     bool TryConfirmOwnedProcessTeardown();
 }
 
+internal interface IExcelBatchProcessObservation
+{
+    ExcelNativeProcessObservation? ProcessObservation { get; }
+}
+
 internal interface IExcelBatchCloseState
 {
     bool ShutdownCommitted { get; }
