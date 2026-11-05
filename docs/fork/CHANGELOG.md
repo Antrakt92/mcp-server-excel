@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [4.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.1.0) | 2026-11-05 | Native exit history, clearer failure diagnostics and safer disconnected batches |
 | [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and worksheet screenshot fixes |
 | [3.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.6.0) | 2026-11-03 | Native VBA project password configuration and verified dialog cleanup |
 | [3.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.5.1) | 2026-11-03 | MCP SDK maintenance and locked video tooling updates |
@@ -20,6 +21,48 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 4.1.0 — 2026-11-05
+
+ExcelMCP 4.1.0 adds clearer evidence for Excel automation failures and keeps recent process exits available after their sessions disappear. It also stops dependent batch commands when an automation disconnect leaves the previous operation's outcome uncertain.
+
+### New diagnostics
+
+- Disconnect responses can include `partialState.diagnostics.nativeProcess`, captured through a retained process handle checked against the exact PID and creation time. `state` distinguishes `Alive`, `Exited` and `Indeterminate`; `exitCode` and `nativeError` remain separate. An unavailable exit code is `null`, never an assumed zero.
+- `session.list` includes `recentExcelExits` in both complete results and partial results. It retains up to 16 distinct process identities for the current controller, including exits whose sessions have already been removed. Repeated observations do not consume extra entries.
+- Public `startedAtUtcFileTime` values in these diagnostics are decimal strings. Preserve the digits when comparing identities; converting them to JavaScript numbers can lose precision. Native exit codes remain unsigned JSON numbers.
+- `partialState.diagnostics.execution` separates an operation failure from a later visibility-snapshot failure. It reports `callbackReturned` and the operation/snapshot exception types and HRESULTs when those facts are available. `complete:false` marks an incomplete or ambiguous exception chain. Existing error causes, cancellation tokens and observed VBA state are preserved.
+
+### Fixes
+
+- CLI and MCP batches stop after a retained `ExcelDisconnected` result, including batches configured to continue after ordinary errors. A callback having returned does not make it safe to start the next command after a disconnect.
+- Native exit observations are recorded before process ownership is released. A failed diagnostic write leaves teardown retryable. Closing an already exited normal workbook without saving can finish without another COM readiness probe; this shortcut does not report a requested save as successful.
+- Repeated teardown reuses an identical observation that the worker has already persisted. An unnecessary second write can no longer turn completed cleanup into a new failure. A richer observation still requires a successful write before replacing the stored state.
+- The controller can recover a newer persisted exit observation when its known worker dies before confirming release or delivering its final response. Recovery checks the worker, controller, generation, build, pipe and known Excel identity. It retains diagnostics without adopting a process, recreating a session or acknowledging an unconfirmed release.
+- Disconnect handling captures available native evidence before dead-session cleanup can remove it. A process whose exit cannot be confirmed is described as uncertain rather than reported as still running.
+- Locked VBA source errors now point to `vba.unlock-project` and the CLI batch-stdin password route instead of saying that projects cannot be unlocked.
+
+### MCP scalar arguments
+
+The server already accepts native JSON numbers and Booleans in `vba` invocation arguments. Some clients present `arguments[].value` as string-only. The workflow guide now explains how to use MCP `batch` action `run` with a nested `vba.invoke` entry to preserve the intended types. Do not quote numbers or Booleans to satisfy that client presentation. New protocol regressions cover discovery, direct invocation and batch forwarding.
+
+### Maintenance
+
+Removed unused result models and legacy version/progress reporters. The generators now share their word-separator conversion while preserving existing CLI kebab-case and MCP snake_case names. Historical 4.0.0 dependency notes were corrected to identify the existing transitive tensor dependency accurately.
+
+Dependencies are unchanged from 4.0.0: upstream ExcelMCP **2.6.11**, MCP SDK **2.3.1**, `System.Numerics.Tensors` **10.0.14**, and build SDK **10.0.403**. The catalogue remains **445 operations**, **64 MCP tools** and **33 feature areas**.
+
+### Upgrading and limits
+
+Existing 4.0.0 command inputs remain supported. The password workflow still requires serialized CLI batch JSON on stdin. Reconnect the MCP client and use the matching CLI installation after switching packages.
+
+Exit history belongs to the current controller and is cleared when that controller restarts. Exit code zero confirms normal native process exit; it does not prove that workbook changes were saved. Cancellation, timeout and a lost connection do not undo edits or authorize a retry.
+
+The historical RPC failures still have no established cause. Bounded synthetic form/timer checks passed without reproducing those incidents. Preserve the incident records and capture the new diagnostics if a failure recurs.
+
+See `VERIFICATION-RESULTS.json` in this release for the checks completed against the published packages and their source revision. Private workbook diagnostics are not included in release assets.
+
+[Full changes since 4.0.0](https://github.com/Antrakt92/mcp-server-excel/compare/v4.0.0...v4.1.0)
 
 ## 4.0.0 — 2026-11-04
 
