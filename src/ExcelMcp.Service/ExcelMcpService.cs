@@ -1462,6 +1462,24 @@ public sealed class ExcelMcpService : IDisposable
         string? hresult = OperationFailureClassifier.GetComHResult(ex);
         string? innerError = null;
         var errorCategory = OperationFailureClassifier.Classify(ex);
+        var errorMessage = $"{exceptionType}: {ex.Message}";
+        if (errorCategory == "Busy" && sessionId is not null &&
+            !errorMessage.Contains(ExcelBusyException.DialogGuidance, StringComparison.Ordinal))
+        {
+            // Reporting the error must not retire a session or reveal its window.
+            var batch = _sessionManager.GetSessionForDiagnostics(sessionId);
+            var owner = batch is AttachedWorkbookBatch attached ? attached.Owner : batch as ExcelBatch;
+            if (owner is not null)
+            {
+                var identity = owner.ProcessIdentity;
+                var inspection = ExcelDialogProbe.Inspect(identity, owner.Logger);
+                if (inspection.State == WorkbookRefreshState.DialogOpen)
+                {
+                    var details = ExcelDialogProbe.ReadDetails(inspection, identity, owner.Logger);
+                    errorMessage += $" {ExcelBusyException.DialogGuidance} {details}";
+                }
+            }
+        }
 
         if (ex.InnerException != null)
         {
@@ -1529,7 +1547,7 @@ public sealed class ExcelMcpService : IDisposable
                 Command = command,
                 SessionId = sessionId,
                 ErrorCategory = pqEx.ErrorCategory,
-                ErrorMessage = $"{pqEx.GetType().Name}: {pqEx.Message}",
+                ErrorMessage = errorMessage,
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
@@ -1543,7 +1561,7 @@ public sealed class ExcelMcpService : IDisposable
                 Command = command,
                 SessionId = sessionId,
                 ErrorCategory = errorCategory,
-                ErrorMessage = $"{exceptionType}: {ex.Message}",
+                ErrorMessage = errorMessage,
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,

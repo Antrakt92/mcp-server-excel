@@ -921,6 +921,31 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.DoesNotContain(sessionId, listResponse.Result, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CreateErrorResponse_BusyDoesNotRetireSessionAfterProcessExit()
+    {
+        using var service = new ExcelMcpService();
+        var batch = new FakeBatch
+        {
+            ExecuteException = new ExcelBusyException("Excel rejected the operation."),
+            IsAliveAfterExecuteException = false
+        };
+        const string sessionId = "busy-process-exited";
+        RegisterSession(service, sessionId, batch);
+        var failure = Assert.Throws<ExcelBusyException>(() => batch.Execute((_, _) => { }));
+        Assert.False(batch.IsExcelProcessAlive());
+
+        var create = typeof(ExcelMcpService).GetMethod("CreateErrorResponse",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(create);
+        var response = Assert.IsType<ServiceResponse>(
+            create.Invoke(service, [failure, "sheet.list", sessionId, null, null]));
+
+        Assert.Equal("Busy", response.ErrorCategory);
+        Assert.Equal(0, batch.DisposeCalls);
+        Assert.Same(batch, service.SessionManager.GetSessionForDiagnostics(sessionId));
+    }
+
     private static void RegisterSession(ExcelMcpService service, string sessionId, IExcelBatch batch)
     {
         var sessionManager = GetPrivateField<SessionManager>(service, "_sessionManager");

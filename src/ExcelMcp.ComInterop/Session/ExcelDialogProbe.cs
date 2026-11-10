@@ -16,9 +16,12 @@ internal static class ExcelDialogProbe
         Inspect(identity, logger, includeEnabledOwnerOfficeDialog).State;
 
     internal static string ReadDetails(
-        ExcelProcessIdentity? identity, ILogger logger, bool includeEnabledOwnerOfficeDialog = false)
+        ExcelProcessIdentity? identity, ILogger logger, bool includeEnabledOwnerOfficeDialog = false) =>
+        ReadDetails(Inspect(identity, logger, includeEnabledOwnerOfficeDialog), identity, logger, includeEnabledOwnerOfficeDialog);
+
+    internal static string ReadDetails(
+        Inspection inspection, ExcelProcessIdentity? identity, ILogger logger, bool includeEnabledOwnerOfficeDialog = false)
     {
-        var inspection = Inspect(identity, logger, includeEnabledOwnerOfficeDialog);
         if (inspection.State == WorkbookRefreshState.Ready)
             return "No blocking Excel dialog was detected.";
         if (inspection.State == WorkbookRefreshState.Unknown)
@@ -47,8 +50,13 @@ internal static class ExcelDialogProbe
                 return true;
             }
             var buffer = new char[2048];
-            if (SendMessageTimeout(window, 0x000D, (nuint)buffer.Length, buffer,
-                    0x0023, (uint)Math.Min(50, remainingMilliseconds), out var length) == nint.Zero)
+            // Windows can return another process's stored caption without waiting on its UI thread.
+            // Same-process GetWindowText sends a message, so keep that path timeout-bounded.
+            var length = window == inspection.Dialog && processId != Environment.ProcessId
+                ? (nuint)GetWindowText(window, buffer, buffer.Length)
+                : 0;
+            if (length == 0 && SendMessageTimeout(window, 0x000D, (nuint)buffer.Length, buffer,
+                    0x0023, (uint)Math.Min(50, remainingMilliseconds), out length) == nint.Zero)
             {
                 incomplete = true;
                 return true;
@@ -249,6 +257,9 @@ internal static class ExcelDialogProbe
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint SendMessageTimeout(nint window, uint message, nuint wParam,
         [Out] char[] text, uint flags, uint timeoutMilliseconds, out nuint result);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(nint window, [Out] char[] text, int capacity);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
