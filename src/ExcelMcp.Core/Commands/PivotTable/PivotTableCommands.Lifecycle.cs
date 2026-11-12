@@ -396,21 +396,29 @@ public partial class PivotTableCommands
     public PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null,
         string? sheetName = null)
     {
-        return batch.Execute((ctx, ct) =>
+        return timeout.HasValue
+            ? ExcelBatchWait.Execute(batch, timeout.Value, RefreshPivot)
+            : batch.Execute(RefreshPivot);
+
+        PivotTableRefreshResult RefreshPivot(ExcelContext ctx, CancellationToken ct)
         {
             Excel.PivotTable? pivot = null;
             Excel.PivotCache? pivotCache = null;
 
             try
             {
+                ct.ThrowIfCancellationRequested();
                 pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, sheetName);
                 pivotCache = pivot.PivotCache();
 
                 int previousRecordCount = pivotCache.RecordCount;
 
-                // Refresh the PivotTable
-                pivot.RefreshTable();
+                ct.ThrowIfCancellationRequested();
+                if (!pivot.RefreshTable())
+                    throw new InvalidOperationException(
+                        $"Excel reported that PivotTable '{pivotTableName}' did not refresh. Inspect the report before retrying.");
 
+                ct.ThrowIfCancellationRequested();
                 int currentRecordCount = pivotCache.RecordCount;
 
                 return new PivotTableRefreshResult
@@ -429,7 +437,7 @@ public partial class PivotTableCommands
                 ComUtilities.Release(ref pivotCache);
                 ComUtilities.Release(ref pivot);
             }
-        });
+        }
     }
 
     /// <summary>

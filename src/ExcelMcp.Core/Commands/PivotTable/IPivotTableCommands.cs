@@ -128,7 +128,7 @@ public interface IPivotTableCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable to refresh</param>
-    /// <param name="timeout">Optional public timeout in whole seconds from 1 through 2147483; converted to TimeSpan at shared dispatch</param>
+    /// <param name="timeout">Optional wait deadline in whole seconds from 1 through 2147483. An expired wait may leave Excel refreshing. Omit to use the session deadline.</param>
     /// <param name="sheetName">Worksheet containing the PivotTable, required when names repeat</param>
     /// <returns>Refresh timestamp, record count, any structural changes</returns>
     [ServiceAction("refresh")]
