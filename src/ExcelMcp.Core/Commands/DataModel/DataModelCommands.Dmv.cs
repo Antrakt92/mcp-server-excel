@@ -108,38 +108,7 @@ public partial class DataModelCommands
                 }
 
                 // Read all rows from the recordset
-                while (!recordset.EOF)
-                {
-                    var row = new List<object?>();
-
-                    for (int i = 0; i < fieldCount; i++)
-                    {
-                        ADODB.Field? field = null;
-                        try
-                        {
-                            field = fields[i];
-                            object? value = field.Value;
-
-                            // Convert DBNull to null
-                            if (value == DBNull.Value || value == null)
-                            {
-                                row.Add(null);
-                            }
-                            else
-                            {
-                                // Convert to JSON-friendly types
-                                row.Add(ConvertToJsonFriendly(value));
-                            }
-                        }
-                        finally
-                        {
-                            ComUtilities.Release(ref field);
-                        }
-                    }
-
-                    result.Rows.Add(row);
-                    recordset.MoveNext();
-                }
+                ReadRecordsetRows(recordset, fieldCount, result.Rows, ct);
 
                 result.RowCount = result.Rows.Count;
                 result.Success = true;

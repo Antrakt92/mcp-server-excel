@@ -137,6 +137,51 @@ public class PersistentServiceDataModelEvaluateTests(
             System.Globalization.CultureInfo.InvariantCulture));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(256)]
+    [InlineData(333)]
+    public void Evaluate_PreservesRecordOrderAcrossAdoReads(int count)
+    {
+        const string columns = "'SalesTable'[SalesID], 'SalesTable'[CustomerID], 'SalesTable'[Date]";
+        var result = _dataModelCommands.Evaluate(_fixture.BatchToken,
+            $"EVALUATE TOPN({count}, CROSSJOIN(ALL('SalesTable'[SalesID]), ALL('SalesTable'[CustomerID]), " +
+            $"ALL('SalesTable'[Date])), {columns.Replace(", ", ", ASC, ", StringComparison.Ordinal)}, ASC) ORDER BY {columns}");
+
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Equal(count, result.RowCount);
+        var expected = (from sale in ExpectedSales
+                        from customer in ExpectedSales.Select(row => row.Customer).Distinct().Order()
+                        from date in ExpectedSales.Select(row => row.Date).Order()
+                        select (sale.Id, customer, date)).Take(count).ToArray();
+        Assert.Equal(count, result.Rows.Count);
+        var idColumn = result.Columns.IndexOf("SalesTable[SalesID]");
+        var customerColumn = result.Columns.IndexOf("SalesTable[CustomerID]");
+        var dateColumn = result.Columns.IndexOf("SalesTable[Date]");
+        Assert.All(new[] { idColumn, customerColumn, dateColumn }, index => Assert.InRange(index, 0, 2));
+        for (int index = 0; index < count; index++)
+        {
+            var row = result.Rows[index];
+            var culture = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.Equal(3, row.Count);
+            Assert.Equal(expected[index], (Convert.ToInt32(row[idColumn], culture),
+                Convert.ToInt32(row[customerColumn], culture), Convert.ToDouble(row[dateColumn], culture)));
+        }
+    }
+
+    [Fact]
+    public void Evaluate_NullColumnPreservesTheRow()
+    {
+        var result = _dataModelCommands.Evaluate(_fixture.BatchToken,
+            "EVALUATE ROW(\"Marker\", 42, \"Missing\", IF(1 = 2, 1, BLANK()))");
+
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Collection(result.Columns, name => Assert.Equal("[Marker]", name), name => Assert.Equal("[Missing]", name));
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(42, Convert.ToInt32(row[0], System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Null(row[1]);
+    }
+
     #endregion
 
     #region Error Handling Tests
