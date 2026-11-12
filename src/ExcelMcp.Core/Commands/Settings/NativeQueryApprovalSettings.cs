@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Xml.Linq;
 
 namespace Sbroenne.ExcelMcp.Core.Commands.Settings;
@@ -12,6 +14,9 @@ internal interface INativeQueryApprovalSettings
 
     NativeQueryApprovalSnapshot Read();
 
+    T ExecuteUpdate<T>(Func<T> update);
+
+    // Called within ExecuteUpdate so the read, write, and verification share one lock.
     string Write(bool required, Func<bool> isExcelRunning);
 }
 
@@ -35,11 +40,13 @@ internal sealed class NativeQueryApprovalSettings : INativeQueryApprovalSettings
         _settingsFilePath = settingsFilePath;
 
     public string SettingsFilePath => _settingsFilePath;
+    internal Action? BeforeReadForTests { get; set; }
 
     public NativeQueryApprovalSnapshot Read()
     {
         EnsureWindows();
 
+        BeforeReadForTests?.Invoke();
         using var stream = OpenSettingsArchive();
         ZipArchive archive;
         try
@@ -73,11 +80,41 @@ internal sealed class NativeQueryApprovalSettings : INativeQueryApprovalSettings
         }
     }
 
-    public string Write(bool required, Func<bool> isExcelRunning)
+    public T ExecuteUpdate<T>(Func<T> update)
     {
         EnsureWindows();
 
+        string canonicalPath = Path.GetFullPath(_settingsFilePath).ToUpperInvariant();
+        string key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalPath)));
+        using var updateLock = new Mutex(false, $@"Global\ExcelMcp.NativeQueryApproval.{key}");
+        bool acquired;
+        try
+        {
+            acquired = updateLock.WaitOne(TimeSpan.FromSeconds(5));
+        }
+        catch (AbandonedMutexException)
+        {
+            // The prior writer has exited. Read the current file before preparing a replacement.
+            acquired = true;
+        }
+
+        if (!acquired)
+            throw new IOException("Another Excel MCP process is updating native-query approval. Retry after it finishes.");
+
+        try
+        {
+            return update();
+        }
+        finally
+        {
+            updateLock.ReleaseMutex();
+        }
+    }
+
+    public string Write(bool required, Func<bool> isExcelRunning)
+    {
         string backupPath = $"{_settingsFilePath}.{DateTime.UtcNow:yyyyMMddTHHmmssfffZ}.bak";
+        string displacedPath = backupPath + ".displaced";
         string backupTemporaryPath = $"{backupPath}.{Guid.NewGuid():N}.tmp";
         string temporaryPath = $"{_settingsFilePath}.{Guid.NewGuid():N}.tmp";
         bool backupCreated = false;
@@ -113,8 +150,8 @@ internal sealed class NativeQueryApprovalSettings : INativeQueryApprovalSettings
                     "Excel started while the native-query approval archive was being prepared. The original archive was not replaced.");
             }
 
-            File.Move(temporaryPath, _settingsFilePath, overwrite: true);
-            return backupPath;
+            if (!ArchivesMatch(backupPath, _settingsFilePath))
+                throw new IOException("The Power Query settings archive changed while the update was prepared.");
         }
         catch (InvalidDataException exception)
         {
@@ -140,6 +177,58 @@ internal sealed class NativeQueryApprovalSettings : INativeQueryApprovalSettings
         {
             throw CreateWriteFailure(exception, temporaryPath, backupTemporaryPath, backupPath, backupCreated);
         }
+
+        try
+        {
+            // Preserve the actual displaced bytes if an external writer replaces the file after validation.
+            File.Replace(temporaryPath, _settingsFilePath, displacedPath);
+        }
+        catch (IOException exception)
+        {
+            throw CreatePublicationFailure(exception, temporaryPath, displacedPath, backupPath);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw CreatePublicationFailure(exception, temporaryPath, displacedPath, backupPath);
+        }
+
+        try
+        {
+            if (!ArchivesMatch(backupPath, displacedPath))
+                throw new IOException("The archive displaced during publication differs from the prepared snapshot.");
+            File.Delete(displacedPath);
+        }
+        catch (IOException exception)
+        {
+            throw new IOException(
+                $"The Power Query settings archive was replaced, but its previous version could not be reconciled. " +
+                $"The displaced archive is '{displacedPath}' and the preparation backup is '{backupPath}'.", exception);
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new IOException(
+                $"The Power Query settings archive was replaced, but its previous version could not be reconciled. " +
+                $"The displaced archive is '{displacedPath}' and the preparation backup is '{backupPath}'.", exception);
+        }
+
+        return backupPath;
+    }
+
+    private IOException CreatePublicationFailure(
+        Exception exception, string temporaryPath, string displacedPath, string backupPath)
+    {
+        return new IOException(
+            $"Could not confirm replacement of '{_settingsFilePath}'. The preparation backup is '{backupPath}'. " +
+            $"The candidate may remain at '{temporaryPath}' and the displaced archive may be at '{displacedPath}'.",
+            exception);
+    }
+
+    private static bool ArchivesMatch(string firstPath, string secondPath)
+    {
+        using var first = File.OpenRead(firstPath);
+        using var second = File.OpenRead(secondPath);
+        return first.Length == second.Length &&
+            SHA256.HashData(first).AsSpan().SequenceEqual(SHA256.HashData(second));
     }
 
     internal static bool IsExcelRunning()
