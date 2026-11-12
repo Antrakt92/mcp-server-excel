@@ -490,9 +490,15 @@ public sealed class SessionManager : IDisposable
         public void Dispose() => _scope.Dispose();
     }
 
-    internal IReadOnlyList<string> GetOwnedFilePaths(string sessionId) =>
-        GetOwnedFilePathKeys(sessionId).Select(WorkbookLocation.Normalize)
+    internal IReadOnlyList<string> GetOwnedFilePaths(string sessionId)
+    {
+        if (_activeSessions.TryGetValue(sessionId, out var batch)
+            && batch is ExcelBatch { MacroReopenQuarantine: not null } retained)
+            return retained.QuarantinedMacroReopenPath is { } path ? [path] : [];
+
+        return GetOwnedFilePathKeys(sessionId).Select(WorkbookLocation.Normalize)
             .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
     internal IReadOnlyList<string> GetOwnedFilePathKeys(string sessionId) =>
         _activeFilePaths.Where(entry => string.Equals(entry.Value, sessionId, StringComparison.Ordinal))
@@ -810,6 +816,8 @@ public sealed class SessionManager : IDisposable
                     ValidateOwnedWorkbookLocations(ownedCandidates);
                 if (previousPath is null)
                     continue;
+                if (owned.MacroReopenQuarantine is not null)
+                    return ownedSessionId;
                 var primaryWorkbook = string.Equals(previousPath, owned.WorkbookPath, StringComparison.OrdinalIgnoreCase);
                 AfterOwnedWorkbookMatchHookForTests?.Invoke();
 
@@ -1001,6 +1009,8 @@ public sealed class SessionManager : IDisposable
                     "The workbook connection changed during attachment. Discover open workbooks again.");
             if (existingSessionId is not null)
             {
+                if (_activeSessions[existingSessionId] is ExcelBatch { MacroReopenQuarantine: { } quarantine })
+                    throw new InvalidOperationException(quarantine);
                 if (_activeSessions[existingSessionId] is ExcelBatch { IsManagedTemporaryBatch: true } temporary
                     && !string.Equals(current.Location, temporary.WorkbookPath, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
@@ -1670,8 +1680,13 @@ public sealed class SessionManager : IDisposable
         }
 
         var activeOps = GetActiveOperationCount(sessionId);
-        var refreshState = GetRefreshState(batch);
         var isVisible = IsExcelVisible(sessionId);
+        if (batch is ExcelBatch { MacroReopenQuarantine: { } quarantine })
+            return new CloseValidationResult(true, isVisible, activeOps, "workbookLocationChanged")
+            {
+                BlockingMessage = quarantine
+            };
+        var refreshState = GetRefreshState(batch);
 
         if (refreshState == WorkbookRefreshState.DialogOpen)
         {
@@ -1746,6 +1761,11 @@ public sealed class SessionManager : IDisposable
             {
                 return false;
             }
+
+            if (batch is ExcelBatch { MacroReopenQuarantine: { } quarantine } retained
+                && batch.IsExcelProcessAlive()
+                && (save || !retained.AreAllWorkbooksClosedInExcel(ClosedInExcelCheckTimeout)))
+                throw new InvalidOperationException(quarantine);
 
             // A confirmed native exit needs no COM readiness probe. Never treat this as a successful save.
             if (!batch.IsExcelProcessAlive() && (!save || batch is ExcelBatch { HasFailedStartup: true })
@@ -2191,6 +2211,8 @@ public sealed class SessionManager : IDisposable
                     }
                     else
                     {
+                        if (batch is ExcelBatch { MacroReopenQuarantine: not null } retained)
+                            path = retained.QuarantinedMacroReopenPath;
                         snapshot.Add(new SessionDescriptor(
                             sessionId, path, origin, createdAt == default ? null : createdAt));
                     }

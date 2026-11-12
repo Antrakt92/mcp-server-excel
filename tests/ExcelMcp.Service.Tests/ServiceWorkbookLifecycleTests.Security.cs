@@ -511,6 +511,128 @@ public sealed partial class ServiceWorkbookLifecycleTests
         });
     }
 
+    [Fact]
+    public async Task SecurityMacros_OpeningCodeSaveAsQuarantinesTheOldSessionAndPreservesTheNewWorkbook()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var originalPath = Path.Join(directory, "original.xlsm");
+            var retargetedPath = Path.Join(directory, "retargeted.xlsm");
+            var created = await CreateSessionAsync(service, originalPath);
+            sessions[created] = 0;
+            await WriteMarkerAsync(service, created, "original-saved");
+            service.SessionManager.GetSession(created)!.Execute((ctx, _) =>
+                InstallSecurityProbeMacros(ctx, retargetOnOpen: retargetedPath));
+            await CloseSessionAsync(service, created, save: true);
+            sessions.TryRemove(created, out _);
+            var originalBytes = await File.ReadAllBytesAsync(originalPath);
+
+            var sessionId = await OpenSessionAsync(service, originalPath);
+            sessions[sessionId] = 0;
+            var owner = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(sessionId));
+            var identity = Assert.IsType<ExcelProcessIdentity>(owner.ProcessIdentity);
+            var originalContext = owner.Execute((ctx, _) => ctx);
+            var openingSettings = owner.Execute((ctx, _) => (ctx.App.AutomationSecurity, ctx.App.DisplayAlerts));
+            (string? FullName, bool Saved, string? Marker) expected = (retargetedPath, false, "opening-unsaved");
+            var failure = await Record.ExceptionAsync(async () =>
+            {
+                var response = await SendSecurityAsync(service, sessionId, "enable-macros",
+                    new { approved = true, allowReopen = true });
+                Assert.True(File.Exists(retargetedPath), "The synthetic Workbook_Open did not create the Save As destination.");
+                Assert.Equal(expected, owner.ExecuteForRetainedWorkbook((_, _) =>
+                    InspectRetargetedSecurityFixture(originalContext.App, retargetedPath)));
+                Assert.Equal(identity, owner.ProcessIdentity);
+                Assert.Equal(openingSettings, owner.ExecuteForRetainedWorkbook((_, _) =>
+                    (originalContext.App.AutomationSecurity, originalContext.App.DisplayAlerts)));
+                Assert.False(response.Success);
+                Assert.Contains("location changed", response.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(retargetedPath, response.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+                Assert.Throws<KeyNotFoundException>(() => owner.GetWorkbook(originalPath));
+                var blocked = Assert.Throws<InvalidOperationException>(() => owner.Execute((_, _) => true));
+                Assert.Contains("location changed", blocked.Message, StringComparison.OrdinalIgnoreCase);
+                var listed = await service.ProcessAsync(new ServiceRequest { Command = "session.list" });
+                RequireSuccess(listed);
+                using (var document = JsonDocument.Parse(listed.Result!))
+                {
+                    var row = Assert.Single(document.RootElement.GetProperty("sessions").EnumerateArray());
+                    Assert.Equal(retargetedPath, row.GetProperty("filePath").GetString(), ignoreCase: true);
+                    Assert.Equal(retargetedPath, Assert.Single(row.GetProperty("filePaths").EnumerateArray()).GetString(), ignoreCase: true);
+                    Assert.False(row.GetProperty("canClose").GetBoolean());
+                }
+
+                var retainedBytes = ReadSharedWorkbookBytes(retargetedPath);
+                foreach (var (command, args) in new[]
+                {
+                    ("range.get-values", """{"sheetName":"Sheet1","rangeAddress":"A1"}"""),
+                    ("session.save", null),
+                    ("session.close", """{"save":true}"""),
+                    ("session.close", """{"save":false}""")
+                })
+                {
+                    var refused = await service.ProcessAsync(new ServiceRequest
+                    {
+                        Command = command,
+                        SessionId = sessionId,
+                        Args = args
+                    });
+                    Assert.False(refused.Success);
+                    Assert.Contains("location changed", refused.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+                }
+                Assert.Equal(expected, owner.ExecuteForRetainedWorkbook((_, _) =>
+                    InspectRetargetedSecurityFixture(originalContext.App, retargetedPath)));
+                Assert.Equal(originalBytes, await File.ReadAllBytesAsync(originalPath));
+                Assert.Equal(retainedBytes, ReadSharedWorkbookBytes(retargetedPath));
+            });
+            var cleanup = Record.Exception(() =>
+            {
+                if (owner.ProcessIdentity == identity && owner.IsExcelProcessAlive() && File.Exists(retargetedPath))
+                    owner.ExecuteForRetainedWorkbook((_, _) =>
+                        InspectRetargetedSecurityFixture(originalContext.App, retargetedPath, closeFixture: true));
+            });
+            if (cleanup is not null)
+                failure = PersistentServiceCleanupFailures.Combine(failure, cleanup);
+            PersistentServiceCleanupFailures.ThrowIfFailed(failure);
+        });
+    }
+
+    private static (string? FullName, bool Saved, string? Marker) InspectRetargetedSecurityFixture(
+        Excel.Application application, string expectedPath, bool closeFixture = false)
+    {
+        Excel.Workbooks? books = null;
+        Excel.Workbook? book = null;
+        Excel.Sheets? sheets = null;
+        Excel.Worksheet? sheet = null;
+        Excel.Range? cell = null;
+        try
+        {
+            books = application.Workbooks;
+            if (books.Count == 0)
+                return default;
+            Assert.Equal(1, books.Count);
+            book = books[1];
+            var fullName = book.FullName;
+            Assert.Equal(expectedPath, fullName, ignoreCase: true);
+            if (closeFixture)
+            {
+                book.Close(SaveChanges: false);
+                return default;
+            }
+
+            sheets = book.Worksheets;
+            sheet = (Excel.Worksheet)sheets[1];
+            cell = sheet.Range["A1"];
+            return (fullName, book.Saved, cell.Value2 as string);
+        }
+        finally
+        {
+            ComUtilities.Release(ref cell);
+            ComUtilities.Release(ref sheet);
+            ComUtilities.Release(ref sheets);
+            ComUtilities.Release(ref book);
+            ComUtilities.Release(ref books);
+        }
+    }
+
     private static Task<ServiceResponse> SendSecurityAsync(ExcelMcpService service, string id, string action, object? args = null) =>
         service.ProcessAsync(new ServiceRequest
         {
@@ -519,7 +641,7 @@ public sealed partial class ServiceWorkbookLifecycleTests
             Args = args is null ? null : JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions)
         });
 
-    private static void InstallSecurityProbeMacros(ExcelContext ctx, bool closeOnOpen = false)
+    private static void InstallSecurityProbeMacros(ExcelContext ctx, bool closeOnOpen = false, string? retargetOnOpen = null)
     {
         Vbe.VBProject? project = null;
         Vbe.VBComponents? components = null;
@@ -531,10 +653,15 @@ public sealed partial class ServiceWorkbookLifecycleTests
             components = project.VBComponents;
             component = components.Item(ctx.Book.CodeName);
             code = component.CodeModule;
+            var openingCode = closeOnOpen ? "ThisWorkbook.Close SaveChanges:=False\r\n"
+                : retargetOnOpen is not null
+                    ? "ThisWorkbook.Worksheets(1).Range(\"A1\").Value = \"opening-saved\"\r\n" +
+                      $"ThisWorkbook.SaveAs Filename:=\"{retargetOnOpen.Replace("\"", "\"\"", StringComparison.Ordinal)}\", FileFormat:=52\r\n" +
+                      "ThisWorkbook.Worksheets(1).Range(\"A1\").Value = \"opening-unsaved\"\r\n"
+                    : "ThisWorkbook.Worksheets(1).Range(\"A1\").Value = \"opening-ran\"\r\n";
             code.AddFromString(
                 "Private Sub Workbook_Open()\r\n" +
-                (closeOnOpen ? "ThisWorkbook.Close SaveChanges:=False\r\n"
-                    : "ThisWorkbook.Worksheets(1).Range(\"A1\").Value = \"opening-ran\"\r\n") +
+                openingCode +
                 "End Sub\r\n" +
                 "Public Sub SecurityMarker()\r\n" +
                 "ThisWorkbook.Worksheets(1).Range(\"A1\").Value = \"explicit-ran-\" & CStr(Application.AutomationSecurity)\r\nEnd Sub");

@@ -1382,7 +1382,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             throw new InvalidOperationException("Workbooks not initialized");
 
         string normalizedPath = WorkbookLocation.Normalize(filePath);
-        if (_workbooks.TryGetValue(normalizedPath, out var workbook))
+        if (!_macroReopenQuarantined && _workbooks.TryGetValue(normalizedPath, out var workbook))
         {
             return workbook;
         }
@@ -1413,7 +1413,18 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     /// </summary>
     public T Execute<T>(
         Func<ExcelContext, CancellationToken, T> operation,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ExecuteCore(operation, cancellationToken, allowQuarantinedReopen: false);
+
+    internal T ExecuteForRetainedWorkbook<T>(
+        Func<ExcelContext, CancellationToken, T> operation,
+        CancellationToken cancellationToken = default) =>
+        ExecuteCore(operation, cancellationToken, allowQuarantinedReopen: true);
+
+    private T ExecuteCore<T>(
+        Func<ExcelContext, CancellationToken, T> operation,
+        CancellationToken cancellationToken,
+        bool allowQuarantinedReopen)
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
         cancellationToken.ThrowIfCancellationRequested();
@@ -1452,6 +1463,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             using var closeTimingContext = SessionDiagnostics.UseCloseTimings(closeTimings);
             if (_operationTimedOut)
                 throw new ExcelBusyException("An earlier operation exceeded its wait. This queued operation was not executed.");
+            if (!allowQuarantinedReopen && MacroReopenQuarantine is { } quarantine)
+                throw new InvalidOperationException(quarantine);
             lock (_statusLock)
             {
                 ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
@@ -1721,6 +1734,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
+        ThrowIfWorkbookUnavailable();
         if (OperationStatus.ExecutionPending)
             throw new ExcelBusyException("Cannot save: Excel work is still pending. The workbook remains open.");
         ExcelBusyException.ThrowIfNotReady(GetExecutionPreflightState(), "save", this);
@@ -1910,14 +1924,17 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 return;
             }
 
-            Execute((_, _) =>
+            ExecuteForRetainedWorkbook((_, _) =>
             {
                 ForgetWorkbooksClosedInExcel();
+                if (_workbooks!.Count > 0 && MacroReopenQuarantine is { } quarantine)
+                    throw new InvalidOperationException(quarantine);
                 ExcelBusyException.ThrowIfNotReady(ReadRefreshState(), "close", this);
                 CloseOwnedWorkbooksBeforeShutdown(saveChanges: saveChanges);
                 Interlocked.Exchange(ref _disposed, 1);
                 _shutdownCts.Cancel();
                 _workQueue.Writer.TryComplete();
+                return 0;
             });
             CompleteDispose();
         }
@@ -1938,7 +1955,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             var shutdownWait = _operationTimeout < ComInteropConstants.ExcelQuitTimeout
                 ? _operationTimeout
                 : ComInteropConstants.ExcelQuitTimeout;
-            ExcelBatchWait.Execute(this, shutdownWait, (_, _) =>
+            ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, shutdownWait, (_, _) =>
             {
                 ForgetWorkbooksClosedInExcel();
                 ExcelBusyException.ThrowIfNotReady(ReadRefreshState(), "shutdown", this);
@@ -1947,20 +1964,21 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 {
                     // Native prompts protect edits made after the saved-state check.
                     _excel.DisplayAlerts = true;
-                    CloseOwnedWorkbooksBeforeShutdown(onlySaved: true);
+                    if (!_macroReopenQuarantined)
+                        CloseOwnedWorkbooksBeforeShutdown(onlySaved: true);
                     if (_workbooks!.Count > 0)
                     {
                         _excel.Visible = true;
                         if (!_excel.Visible)
-                            throw new InvalidOperationException("Cannot hand over unsaved workbooks: Excel visibility was not confirmed.");
+                            throw new InvalidOperationException("Cannot hand over retained workbooks: Excel visibility was not confirmed.");
                         UpdateConfirmedVisibility(true, _applicationLease!.VisibilityRevision);
                         if (_originalDisplayAlerts is { } displayAlerts)
                             _excel.DisplayAlerts = displayAlerts;
                         if (_excelProcessIdentity is not { } identity)
-                            throw new InvalidOperationException("Cannot hand over unsaved workbooks without a confirmed Excel process identity.");
+                            throw new InvalidOperationException("Cannot hand over retained workbooks without a confirmed Excel process identity.");
                         _leaveOwnedApplicationOpen = true;
                         _ownedProcessLeftOpen = true;
-                        _logger.LogInformation("Leaving unsaved workbook(s) open and visible without saving or discarding changes");
+                        _logger.LogInformation("Leaving retained workbook(s) open and visible without saving or discarding changes");
                     }
                 }
                 catch (Exception shutdownFailure)
@@ -1987,7 +2005,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     }
 
     internal string? FindOwnedWorkbookPath(OpenWorkbookInfo selected) =>
-        ExcelBatchWait.Execute(this, TimeSpan.FromSeconds(2),
+        ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, TimeSpan.FromSeconds(2),
             (_, _) => FindOwnedWorkbookPathOnExcelThread(selected));
 
     internal string? FindOwnedWorkbookPathOnExcelThread(OpenWorkbookInfo selected)
@@ -2155,7 +2173,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             if (_disposed != 0 || _attachedApplication is not null
                 || GetExecutionPreflightState() != WorkbookRefreshState.Ready)
                 return false;
-            return ExcelBatchWait.Execute(this, timeout, (_, _) =>
+            return ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, timeout, (_, _) =>
                 _excel is not null && _workbooks is { Count: > 0 }
                 && _workbooks.Values.All(workbook => !ExcelShutdownService.IsWorkbookOpen(_excel, workbook)));
         }

@@ -10,6 +10,13 @@ internal sealed partial class ExcelBatch
     private readonly HashSet<Excel.Workbook> _approvedConnectionWorkbooks = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Excel.Workbook> _disabledMacroWorkbooks = new(ReferenceEqualityComparer.Instance);
     private string? _securityReopenFailure;
+    private const string UnverifiedMacroReopenLocation = "<unverified reopened workbook>";
+    private volatile bool _macroReopenQuarantined;
+
+    internal string? MacroReopenQuarantine => _macroReopenQuarantined ? _securityReopenFailure : null;
+
+    internal string? QuarantinedMacroReopenPath =>
+        _macroReopenQuarantined && _workbookPath != UnverifiedMacroReopenLocation ? _workbookPath : null;
 
     internal void ThrowIfWorkbookUnavailable()
     {
@@ -19,6 +26,7 @@ internal sealed partial class ExcelBatch
 
     internal WorkbookNoticeStatus ReadWorkbookNotices(string? workbookId = null)
     {
+        ThrowIfWorkbookUnavailable();
         var state = GetExecutionPreflightState();
         if (state != WorkbookRefreshState.Ready)
         {
@@ -269,6 +277,7 @@ internal sealed partial class ExcelBatch
             _disabledMacroWorkbooks.Remove(book);
             _workbook = null;
             _context = null;
+            InvalidateLocationSnapshot();
             _securityReopenFailure = "The original saved workbook closed, but reopening with macros has not completed. Nothing was saved or discarded by this action. Inspect Excel before continuing.";
             Excel.Workbook? closed = book;
             ComUtilities.Release(ref closed);
@@ -276,15 +285,38 @@ internal sealed partial class ExcelBatch
             books = _excel.Workbooks;
             _workbook = books.Open(path, UpdateLinks: 0, IgnoreReadOnlyRecommended: true, Notify: false, AddToMru: false)
                 ?? throw new InvalidOperationException("Excel returned no reopened workbook.");
+            // Opening code can change the workbook location before Workbooks.Open returns.
+            // Keep the COM reference even when the current location cannot be read.
+            _workbooks[UnverifiedMacroReopenLocation] = _workbook;
+            _workbookPath = _allWorkbookPaths[0] = UnverifiedMacroReopenLocation;
+            _securityReopenFailure = "The reopened workbook could not be verified. It remains in Excel for inspection.";
+            _macroReopenQuarantined = true;
             if (!ExcelShutdownService.IsWorkbookOpen(_excel, _workbook))
             {
+                _workbooks.Clear();
+                _workbookPath = _allWorkbookPaths[0] = path;
+                _macroReopenQuarantined = false;
                 _securityReopenFailure = "The original saved workbook closed, and the reopened workbook is no longer open after opening event code ran. Inspect Excel before continuing; no automatic recovery was attempted.";
                 ComUtilities.Release(ref _workbook);
                 throw new InvalidOperationException("Excel did not retain the reopened workbook.");
             }
-            _workbooks[path] = _workbook;
-            _context = new ExcelContext(_workbookPath, _excel, _workbook) { ProcessIdentity = _excelProcessIdentity };
+
+            var reopenedPath = GetWorkbookLocation(_workbook.FullName)
+                ?? throw new InvalidOperationException("Excel returned no verified location for the reopened workbook.");
+            _workbooks.Remove(UnverifiedMacroReopenLocation);
+            _workbooks[reopenedPath] = _workbook;
+            _workbookPath = _allWorkbookPaths[0] = reopenedPath;
+            if (!string.Equals(path, reopenedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _securityReopenFailure =
+                    $"The workbook location changed during opening code from '{path}' to '{reopenedPath}'. " +
+                    "The reopened workbook remains in Excel with its changes. Inspect it directly before continuing.";
+                failure = new InvalidOperationException(_securityReopenFailure);
+                throw failure;
+            }
+            _context = new ExcelContext(reopenedPath, _excel, _workbook) { ProcessIdentity = _excelProcessIdentity };
             _approvedMacroWorkbooks.Add(_workbook);
+            _macroReopenQuarantined = false;
             _securityReopenFailure = null;
             return new("enable-macros", true, false, true,
                 "The saved workbook was reopened with VBA macros enabled. Opening event code may have run and may have changed the workbook. No external-link update was requested. Company restrictions can still prevent macro execution.");
@@ -293,6 +325,10 @@ internal sealed partial class ExcelBatch
         {
             if (_securityReopenFailure is { } partialState)
             {
+                if (_macroReopenQuarantined)
+                    RevealForRecovery();
+                if (ReferenceEquals(ex, failure))
+                    throw;
                 failure = new InvalidOperationException(partialState, ex);
                 throw failure;
             }
