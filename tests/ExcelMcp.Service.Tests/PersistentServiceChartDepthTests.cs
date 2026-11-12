@@ -339,7 +339,7 @@ public sealed class PersistentServiceChartDepthTests(PersistentServiceWorkbookFi
             using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 var createdImages = new ConcurrentQueue<string>();
-                using var watcher = new FileSystemWatcher(directory, ".sales.*.tmp.png");
+                using var watcher = new FileSystemWatcher(directory, ".excelmcp.*.tmp.png");
                 watcher.Created += (_, change) => createdImages.Enqueue(change.FullPath);
                 watcher.EnableRaisingEvents = true;
                 var rejected = await _fixture.SendForFailureAsync("chart.export-image",

@@ -1,6 +1,7 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Commands.Chart;
+using Sbroenne.ExcelMcp.Core.Commands.Workbook;
 using Sbroenne.ExcelMcp.Core.Tests.Helpers;
 using Sbroenne.ExcelMcp.Tests.Infrastructure;
 using Xunit;
@@ -27,6 +28,67 @@ public sealed class ChartExportCancellationTests(ChartExportCancellationFixture 
         if (existingOutput)
             File.WriteAllText(output, "Keep existing image");
         using var inner = ExcelSession.BeginBatch(path);
+        var commands = CreateChart(inner);
+        var before = inner.Execute((context, _) => (context.App.Calculation, context.App.ScreenUpdating));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        using var cancelled = new InjectedCancellationBatch(inner, cancellation.Token);
+
+        var error = Assert.ThrowsAny<OperationCanceledException>(() =>
+            commands.ExportImage(cancelled, "Sales", output, overwrite: existingOutput));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        if (existingOutput)
+            Assert.Equal("Keep existing image", File.ReadAllText(output));
+        else
+            Assert.False(File.Exists(output));
+        Assert.Empty(Directory.GetFiles(fixture.DirectoryPath, ".excelmcp.*.tmp.png"));
+        Assert.Equal(before, inner.Execute((context, _) => (context.App.Calculation, context.App.ScreenUpdating)));
+
+        var followUp = commands.ExportImage(inner, "Sales", output, overwrite: existingOutput);
+        Assert.True(followUp.Success, followUp.ErrorMessage);
+        Assert.True(string.IsNullOrEmpty(followUp.ErrorMessage));
+        Assert.Equal(output, followUp.FilePath);
+        Assert.Equal((byte)137, File.ReadAllBytes(output)[0]);
+    }
+
+    [Fact]
+    public void ExportImage_StagingCleanupFailureRetainsBothErrors()
+    {
+        var path = fixture.CreateWorkbook();
+        var output = Path.ChangeExtension(path, ".png");
+        using var batch = ExcelSession.BeginBatch(path);
+        var commands = CreateChart(batch);
+        var exportError = new IOException("Injected chart export failure.");
+        string? stagingPath = null;
+        FileStream? stagingLock = null;
+        try
+        {
+            WorkbookCommands.BeforeOutputCommitHookForTests = staged =>
+            {
+                stagingPath = staged;
+                stagingLock = File.Open(staged, FileMode.Open, FileAccess.Read, FileShare.Read);
+                throw exportError;
+            };
+
+            var failure = Assert.Throws<AggregateException>(() => commands.ExportImage(batch, "Sales", output));
+            Assert.Equal(2, failure.InnerExceptions.Count);
+            Assert.Same(exportError, failure.InnerExceptions[0]);
+            Assert.IsAssignableFrom<IOException>(failure.InnerExceptions[1]);
+            Assert.False(File.Exists(output));
+            Assert.NotNull(stagingPath);
+            Assert.True(File.Exists(stagingPath));
+        }
+        finally
+        {
+            WorkbookCommands.BeforeOutputCommitHookForTests = null;
+            stagingLock?.Dispose();
+            if (stagingPath is not null)
+                File.Delete(stagingPath);
+        }
+    }
+
+    private static ChartCommands CreateChart(IExcelBatch inner)
+    {
         var sheetName = inner.Execute((context, _) =>
         {
             Excel.Sheets? sheets = null;
@@ -50,26 +112,7 @@ public sealed class ChartExportCancellationTests(ChartExportCancellationFixture 
         var commands = new ChartCommands();
         var created = commands.CreateFromRange(inner, sheetName, "A1:B4", ChartType.ColumnClustered, chartName: "Sales");
         Assert.True(created.Success, created.ErrorMessage);
-        var before = inner.Execute((context, _) => (context.App.Calculation, context.App.ScreenUpdating));
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
-        using var cancelled = new InjectedCancellationBatch(inner, cancellation.Token);
-
-        var error = Assert.ThrowsAny<OperationCanceledException>(() =>
-            commands.ExportImage(cancelled, "Sales", output, overwrite: existingOutput));
-        Assert.Equal(cancellation.Token, error.CancellationToken);
-        if (existingOutput)
-            Assert.Equal("Keep existing image", File.ReadAllText(output));
-        else
-            Assert.False(File.Exists(output));
-        Assert.Empty(Directory.GetFiles(fixture.DirectoryPath, $".{Path.GetFileNameWithoutExtension(output)}.*.tmp.png"));
-        Assert.Equal(before, inner.Execute((context, _) => (context.App.Calculation, context.App.ScreenUpdating)));
-
-        var followUp = commands.ExportImage(inner, "Sales", output, overwrite: existingOutput);
-        Assert.True(followUp.Success, followUp.ErrorMessage);
-        Assert.True(string.IsNullOrEmpty(followUp.ErrorMessage));
-        Assert.Equal(output, followUp.FilePath);
-        Assert.Equal((byte)137, File.ReadAllBytes(output)[0]);
+        return commands;
     }
 }
 

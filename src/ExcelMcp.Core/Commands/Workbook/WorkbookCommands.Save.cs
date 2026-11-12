@@ -98,7 +98,7 @@ public partial class WorkbookCommands
     {
         var normalizedPath = ValidateOutputPath(targetPath, overwrite);
         var outputExtension = Path.GetExtension(normalizedPath);
-        var writePath = GetWritePath(normalizedPath, overwrite);
+        var writePath = CreateOutputStagingPath(normalizedPath);
         return batch.Execute((context, _) =>
         {
             var currentExtension = string.IsNullOrEmpty(context.Book.Path)
@@ -123,7 +123,7 @@ public partial class WorkbookCommands
             {
                 context.Book.SaveCopyAs(writePath);
                 BeforeOutputCommitHookForTests?.Invoke(writePath);
-                CommitOutput(writePath, normalizedPath);
+                PublishStagedOutput(writePath, normalizedPath, overwrite);
                 return new OperationResult
                 {
                     Success = true,
@@ -139,7 +139,7 @@ public partial class WorkbookCommands
             }
             finally
             {
-                OperationCleanup.Run(() => DeleteTemporaryOutput(writePath, normalizedPath), operationFailure);
+                OperationCleanup.Run(() => File.Delete(writePath), operationFailure);
             }
         });
     }
@@ -167,10 +167,7 @@ public partial class WorkbookCommands
                 nameof(targetPath));
         }
 
-        var writePath = GetWritePath(normalizedPath, overwrite);
-        var openAfterCommit =
-            openAfterPublish &&
-            !string.Equals(writePath, normalizedPath, StringComparison.OrdinalIgnoreCase);
+        var writePath = CreateOutputStagingPath(normalizedPath);
         return batch.Execute((context, _) =>
         {
             Exception? operationFailure = null;
@@ -188,12 +185,12 @@ public partial class WorkbookCommands
                     ignorePrintAreas,
                     fromPage ?? Type.Missing,
                     toPage ?? Type.Missing,
-                    openAfterPublish && !openAfterCommit,
+                    OpenAfterPublish: false,
                     Type.Missing);
 
                 BeforeOutputCommitHookForTests?.Invoke(writePath);
-                CommitOutput(writePath, normalizedPath);
-                if (openAfterCommit)
+                PublishStagedOutput(writePath, normalizedPath, overwrite);
+                if (openAfterPublish)
                 {
                     using var process = System.Diagnostics.Process.Start(
                         new System.Diagnostics.ProcessStartInfo(normalizedPath)
@@ -217,7 +214,7 @@ public partial class WorkbookCommands
             }
             finally
             {
-                OperationCleanup.Run(() => DeleteTemporaryOutput(writePath, normalizedPath), operationFailure);
+                OperationCleanup.Run(() => File.Delete(writePath), operationFailure);
             }
         });
     }
@@ -247,33 +244,24 @@ public partial class WorkbookCommands
         return normalizedPath;
     }
 
-    internal static string GetWritePath(string normalizedPath, bool overwrite)
+    internal static string CreateOutputStagingPath(string normalizedPath)
     {
-        if (!overwrite || !File.Exists(normalizedPath))
-        {
-            return normalizedPath;
-        }
-
         var directory = Path.GetDirectoryName(normalizedPath)!;
-        var fileName = Path.GetFileNameWithoutExtension(normalizedPath);
         var extension = Path.GetExtension(normalizedPath);
-        return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp{extension}");
+        return Path.Combine(directory, $".excelmcp.{Guid.NewGuid():N}.tmp{extension}");
     }
 
-    internal static void CommitOutput(string writePath, string normalizedPath)
+    internal static void PublishStagedOutput(string writePath, string normalizedPath, bool overwrite)
     {
-        if (!string.Equals(writePath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+        const int errorFileExists = unchecked((int)0x80070050);
+        const int errorAlreadyExists = unchecked((int)0x800700B7);
+        try
         {
-            File.Move(writePath, normalizedPath, overwrite: true);
+            File.Move(writePath, normalizedPath, overwrite);
         }
-    }
-
-    internal static void DeleteTemporaryOutput(string writePath, string normalizedPath)
-    {
-        if (!string.Equals(writePath, normalizedPath, StringComparison.OrdinalIgnoreCase) &&
-            File.Exists(writePath))
+        catch (IOException exception) when (!overwrite && exception.HResult is errorFileExists or errorAlreadyExists)
         {
-            File.Delete(writePath);
+            throw new IOException($"Output file already exists: '{normalizedPath}'.", exception);
         }
     }
 
