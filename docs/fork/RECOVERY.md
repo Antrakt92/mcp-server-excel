@@ -18,6 +18,24 @@ Extract into a new version-specific directory. Do not overwrite a running execut
 
 To roll back, repeat these steps with the previous verified release. Preserve workbook state first. Switching binaries cannot undo workbook edits.
 
+### CLI daemons from earlier versions
+
+The default CLI daemon pipe now includes the Windows session. A daemon already
+running on the earlier per-user default keeps its pipe and workbook sessions.
+Use the previous CLI to finish that work, or temporarily point the new CLI to
+the old pipe from the same Windows session.
+
+```powershell
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$env:EXCELMCP_CLI_PIPE = "excelmcp-cli-$sid"
+excelcli service status
+```
+
+After finishing or handing over that daemon's work, clear
+`EXCELMCP_CLI_PIPE` to use the new default. Explicit pipe names still require
+the client and daemon to share a Windows session. Use distinct override names
+when running custom daemons in separate sessions.
+
 ## Migrate automation from fork 2.5.4
 
 Fork 3.0.0 uses upstream 2.6.0 and requires CLI consumer changes:
