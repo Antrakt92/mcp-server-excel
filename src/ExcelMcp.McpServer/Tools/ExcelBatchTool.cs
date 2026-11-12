@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -41,6 +43,9 @@ public sealed class BatchCommandEntry
 [McpServerToolType]
 public static partial class ExcelBatchTool
 {
+    private const int MaximumCommands = 128;
+    private const int ResultBudgetBytes = 8 * 1024 * 1024;
+
     /// <summary>
     /// Run a known sequence of commands one at a time in one MCP call.
     /// Uses the excelcli batch entry format: command is group.action (range.get-values, sheet.list, session.open),
@@ -54,6 +59,8 @@ public static partial class ExcelBatchTool
     /// Other returned values are not substituted. Use individual tools when later steps need inspection.
     /// Continues after errors by default; set stop_on_error:true for dependent steps.
     /// Timeouts, cancellation, and reported unknown completion always stop further commands, because Excel work may still be running.
+    /// After 8 MiB of result JSON, the batch keeps the last result intact and stops before another command.
+    /// If commands remain, the reply reports stopReason:result-budget. Inspect the returned results before continuing.
     /// Results contain each executed or rejected entry's zero-based index, command, success and normal MCP JSON fields.
     /// totalCount, executedCount and stoppedEarly report how much of the list was processed.
     /// Any failed entry sets the batch's success:false and MCP error flag. Cancellation stops further commands.
@@ -63,7 +70,7 @@ public static partial class ExcelBatchTool
     /// Screenshots in a batch return JSON data; use the screenshot tool for native image content.
     /// </summary>
     /// <param name="action">Run the supplied sequence.</param>
-    /// <param name="commands">Non-empty list in CLI batch format: [{"command":"range.get-values","args":{"sheetName":"Sales","rangeAddress":"A1:B2"}}].</param>
+    /// <param name="commands">1 to 128 entries in CLI batch format: [{"command":"range.get-values","args":{"sheetName":"Sales","rangeAddress":"A1:B2"}}].</param>
     /// <param name="workbook_session_id">Optional default workbook session; each entry's sessionId overrides it.</param>
     /// <param name="stop_on_error">Stop after the first failed entry. Default false, matching excelcli batch.</param>
     [McpServerTool(Name = "batch", Title = "Batch Operations", Destructive = true, Idempotent = false)]
@@ -94,15 +101,23 @@ public static partial class ExcelBatchTool
                 throw new ArgumentOutOfRangeException(nameof(action));
             if (commands is null || commands.Length == 0)
                 throw new ArgumentException("commands must contain at least one command.");
+            if (commands.Length > MaximumCommands)
+                throw new ArgumentException($"commands must contain at most {MaximumCommands} entries.");
             for (var index = 0; index < commands.Length; index++)
             {
                 if (commands[index] is null || string.IsNullOrWhiteSpace(commands[index].Command))
                     throw new ArgumentException($"Command at index {index} must be an object with a non-empty command field.");
             }
 
-            var results = new JsonArray();
+            var buffer = new ArrayBufferWriter<byte>();
+            using var writer = new Utf8JsonWriter(buffer);
+            writer.WriteStartObject();
+            writer.WriteStartArray("results");
+            var resultsStart = writer.BytesCommitted + writer.BytesPending;
+            var executedCount = 0;
+            var resultBudgetReached = false;
             string? activeSession = workbook_session_id;
-            ResultJson? firstFailure = null;
+            string? firstFailureCategory = null;
             for (var index = 0; index < commands.Length; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -132,29 +147,42 @@ public static partial class ExcelBatchTool
                     : JsonNode.Parse(outcome.ToToolJson())!.AsObject();
                 item["index"] = index;
                 item["command"] = entry.Command;
-                results.Add(item);
+                item.WriteTo(writer, ExcelToolsBase.JsonOptions);
+                executedCount++;
                 if (!outcome.Success)
                 {
-                    firstFailure ??= outcome;
+                    firstFailureCategory ??= outcome.Error?["category"]?.GetValue<string>() ?? "OperationFailed";
                     if (stop_on_error || outcome.MayStillBeRunning)
                         break;
                 }
+                // Keep this complete result, including failure evidence. The budget gates the next dispatch.
+                if (executedCount < commands.Length &&
+                    writer.BytesCommitted + writer.BytesPending - resultsStart >= ResultBudgetBytes)
+                {
+                    resultBudgetReached = true;
+                    break;
+                }
             }
 
-            var result = new JsonObject
+            writer.WriteEndArray();
+            writer.WriteBoolean("success", firstFailureCategory is null && !resultBudgetReached);
+            writer.WriteNumber("totalCount", commands.Length);
+            writer.WriteNumber("executedCount", executedCount);
+            writer.WriteBoolean("stoppedEarly", executedCount < commands.Length);
+            if (resultBudgetReached)
             {
-                ["success"] = firstFailure is null,
-                ["totalCount"] = commands.Length,
-                ["executedCount"] = results.Count,
-                ["stoppedEarly"] = results.Count < commands.Length,
-                ["results"] = results
-            };
-            if (firstFailure is not null)
-            {
-                result["errorMessage"] = "One or more batch commands failed. The batch does not roll back; individual commands can save or discard edits. Inspect results before continuing.";
-                result["errorCategory"] = firstFailure.Error?["category"]?.DeepClone();
+                writer.WriteString("stopReason", "result-budget");
+                writer.WriteString("errorMessage", "The batch reached its 8 MiB result budget. Inspect the returned results and session state before continuing with the remaining commands.");
+                writer.WriteString("errorCategory", firstFailureCategory ?? "ResourceLimit");
             }
-            return result.ToJsonString(ExcelToolsBase.JsonOptions);
+            else if (firstFailureCategory is not null)
+            {
+                writer.WriteString("errorMessage", "One or more batch commands failed. The batch does not roll back; individual commands can save or discard edits. Inspect results before continuing.");
+                writer.WriteString("errorCategory", firstFailureCategory);
+            }
+            writer.WriteEndObject();
+            writer.Flush();
+            return Encoding.UTF8.GetString(buffer.WrittenSpan);
         }, cancellationToken, static (_, _, _, _) => { });
 
     private static async Task<ResultJson> ExecuteCommandAsync(

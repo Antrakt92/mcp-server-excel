@@ -16,6 +16,103 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 public sealed class BatchToolExecutionTests
 {
     [Fact]
+    public async Task CommandBudget_RejectsOversizedBatchBeforeDispatch()
+    {
+        var backend = new Backend(_ => Task.FromResult(new ServiceResponse
+        {
+            Success = true,
+            Result = """{"sheets":[]}"""
+        }));
+        using var bridge = new Bridge(() => backend);
+        var commands = Enumerable.Repeat(new BatchCommandEntry { Command = "sheet.list" }, 129).ToArray();
+
+        var result = await ExcelBatchTool.ExcelBatch(BatchAction.Run, bridge, commands, "target");
+
+        Assert.Empty(backend.Requests);
+        Assert.True(result.IsError);
+        var output = result.StructuredContent!.Value;
+        Assert.Equal("InvalidInput", output.GetProperty("errorCategory").GetString());
+        Assert.Contains("128", output.GetProperty("errorMessage").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResultBudget_StopsBeforeNextCommandAndKeepsPriorResultsAndCrossingFailure()
+    {
+        const int itemSize = 4 * 1024 * 1024;
+        var backend = new Backend(request => Task.FromResult(request.SessionId == "failure"
+            ? new ServiceResponse
+            {
+                Success = false,
+                ErrorCategory = "Permissions",
+                ErrorMessage = "Original workbook error.",
+                PartialState = JsonSerializer.Serialize(new { payload = new string('b', itemSize), marker = "retained" })
+            }
+            : new ServiceResponse
+            {
+                Success = true,
+                Result = JsonSerializer.Serialize(new { payload = new string('a', itemSize), marker = "first" })
+            }));
+        using var bridge = new Bridge(() => backend);
+
+        var result = await ExcelBatchTool.ExcelBatch(BatchAction.Run, bridge,
+            [
+                new() { Command = "sheet.list", SessionId = "first" },
+                new() { Command = "sheet.list", SessionId = "failure" },
+                new() { Command = "sheet.list", SessionId = "must-not-dispatch" }
+            ]);
+
+        Assert.Equal(2, backend.Requests.Count);
+        Assert.True(result.IsError);
+        var output = result.StructuredContent!.Value;
+        Assert.False(output.GetProperty("success").GetBoolean());
+        Assert.Equal(3, output.GetProperty("totalCount").GetInt32());
+        Assert.Equal(2, output.GetProperty("executedCount").GetInt32());
+        Assert.True(output.GetProperty("stoppedEarly").GetBoolean());
+        Assert.Equal("result-budget", output.GetProperty("stopReason").GetString());
+        var items = output.GetProperty("results");
+        Assert.Equal(2, items.GetArrayLength());
+        Assert.Equal(0, items[0].GetProperty("index").GetInt32());
+        Assert.Equal("first", items[0].GetProperty("marker").GetString());
+        Assert.Equal(itemSize, items[0].GetProperty("payload").GetString()!.Length);
+        Assert.Equal(1, items[1].GetProperty("index").GetInt32());
+        Assert.Equal("Permissions", items[1].GetProperty("errorCategory").GetString());
+        Assert.Equal("Original workbook error.", items[1].GetProperty("errorMessage").GetString());
+        var state = items[1].GetProperty("partialState");
+        Assert.Equal("retained", state.GetProperty("marker").GetString());
+        Assert.Equal(itemSize, state.GetProperty("payload").GetString()!.Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResultBudget_ReportsFailureOnlyWhenAnotherCommandRemains(bool anotherCommand)
+    {
+        var backend = new Backend(_ => Task.FromResult(new ServiceResponse
+        {
+            Success = true,
+            Result = JsonSerializer.Serialize(new { payload = new string('a', 8 * 1024 * 1024) })
+        }));
+        using var bridge = new Bridge(() => backend);
+        BatchCommandEntry first = new() { Command = "sheet.list" };
+        BatchCommandEntry[] commands = anotherCommand ? [first, first] : [first];
+
+        var result = await ExcelBatchTool.ExcelBatch(BatchAction.Run, bridge, commands, "target");
+
+        Assert.Single(backend.Requests);
+        var output = result.StructuredContent!.Value;
+        Assert.Equal(anotherCommand, result.IsError == true);
+        Assert.Equal(!anotherCommand, output.GetProperty("success").GetBoolean());
+        Assert.Equal(1, output.GetProperty("executedCount").GetInt32());
+        Assert.Equal(anotherCommand, output.GetProperty("stoppedEarly").GetBoolean());
+        Assert.Equal(anotherCommand, output.TryGetProperty("stopReason", out var reason));
+        if (anotherCommand)
+        {
+            Assert.Equal("result-budget", reason.GetString());
+            Assert.Equal("ResourceLimit", output.GetProperty("errorCategory").GetString());
+        }
+    }
+
+    [Fact]
     public async Task CancelledOpen_DoesNotRevealTheDefaultWorkbook()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
