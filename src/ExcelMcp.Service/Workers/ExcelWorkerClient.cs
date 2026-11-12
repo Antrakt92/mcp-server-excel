@@ -45,10 +45,13 @@ internal sealed class ExcelWorkerClient
         rpc => rpc.ClaimAsync(new(_controller, _generation, WorkerRegistry.Build), CancellationToken.None),
         CancellationToken.None, StartupTimeout));
 
-    internal async Task<WorkerSnapshot> ClaimAsync(CancellationToken cancellationToken) =>
+    internal async Task<WorkerSnapshot> ClaimAsync(CancellationToken cancellationToken, Action admitClaim) =>
         RecordSnapshot(await CallAsync(
-            rpc => rpc.ClaimAsync(new(_controller, _generation, WorkerRegistry.Build), cancellationToken),
-            cancellationToken, ControlTimeout));
+            rpc =>
+            {
+                admitClaim();
+                return rpc.ClaimAsync(new(_controller, _generation, WorkerRegistry.Build), CancellationToken.None);
+            }, CancellationToken.None, ControlTimeout, connectionCancellation: cancellationToken));
 
     internal async Task<WorkerSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default) =>
         RecordSnapshot(await CallAsync(rpc => rpc.SnapshotAsync(_generation, cancellationToken),
@@ -104,7 +107,8 @@ internal sealed class ExcelWorkerClient
     }
 
     private async Task<T> CallAsync<T>(
-        Func<IExcelWorkerRpc, Task<T>> invoke, CancellationToken cancellationToken, TimeSpan timeout)
+        Func<IExcelWorkerRpc, Task<T>> invoke, CancellationToken cancellationToken, TimeSpan timeout,
+        CancellationToken connectionCancellation = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
@@ -113,23 +117,30 @@ internal sealed class ExcelWorkerClient
             throw new InvalidOperationException("The recorded Excel worker process has been replaced.");
         using var monitor = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var exited = process.WaitForExitAsync(monitor.Token);
+        var invoked = false;
         try
         {
             await using var pipe = ServiceSecurity.CreateClient(Registration.PipeName);
-            var connecting = pipe.ConnectAsync(deadline.Token);
-            if (await Task.WhenAny(connecting, exited) == exited && exited.IsCompletedSuccessfully)
-                throw new IOException($"Excel worker {process.Id} exited before connecting (exit code {process.ExitCode}). Ensure the controller and worker were built together.");
-            await connecting;
+            using (var connectDeadline = connectionCancellation.CanBeCanceled
+                ? CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, connectionCancellation) : null)
+            {
+                var connecting = pipe.ConnectAsync(connectDeadline?.Token ?? deadline.Token);
+                if (await Task.WhenAny(connecting, exited) == exited && exited.IsCompletedSuccessfully)
+                    throw new IOException($"Excel worker {process.Id} exited before connecting (exit code {process.ExitCode}). Ensure the controller and worker were built together.");
+                await connecting;
+            }
             WorkerPipeIdentity.VerifyServer(pipe.SafePipeHandle, Registration.Worker);
             var proxy = JsonRpc.Attach<IExcelWorkerRpc>(pipe);
             using var connection = (IDisposable)proxy;
             var response = invoke(proxy);
+            invoked = true;
             var completed = await Task.WhenAny(response, exited).WaitAsync(deadline.Token);
             if (completed == exited && exited.IsCompletedSuccessfully && !response.IsCompleted)
                 throw new IOException($"Excel worker {process.Id} exited while its response was pending (exit code {process.ExitCode}). Its workbook outcome is unconfirmed; no work was repeated.");
             return await response.WaitAsync(deadline.Token);
         }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested
+            && (invoked || !connectionCancellation.IsCancellationRequested))
         {
             throw new TimeoutException("The Excel worker did not respond within the allotted wait. Its work was not repeated or terminated.", ex);
         }

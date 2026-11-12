@@ -732,29 +732,18 @@ internal sealed class ExcelController : IDisposable
                                 continue;
                             }
                             else
-                            {
                                 worker = new ExcelWorkerClient(record, _identity, _generation);
-                                lock (_shutdownLock)
-                                {
-                                    if (_shutdown is not null)
-                                        throw new InvalidOperationException("The service is stopping. No Excel application was claimed.");
-                                    if (_workers.Count >= 32)
-                                        throw new InvalidOperationException("The service has reached its Excel worker limit. Close unused sessions before retrying.");
-                                    _workers[record.PipeName] = worker;
-                                }
-                                await worker.ClaimAsync(cancellationToken);
-                            }
                         }
                         else
                             worker = await StartWorkerAsync(window.Process, cancellationToken);
                     }
+                    if (worker.Snapshot is null)
+                        await ClaimRetainedWorkerAsync(worker, cancellationToken);
                     if (worker.Snapshot?.Releasing == true)
                     {
                         errors.Add(new(window.Process.ProcessId, "The previous worker is still releasing Excel. No second Excel owner was started."));
                         continue;
                     }
-                    if (worker.Snapshot is null)
-                        await worker.ClaimAsync(cancellationToken);
                     var completion = CompleteWorkerRequestAsync(new ServiceRequest
                     {
                         Command = "session.discover",
@@ -791,6 +780,27 @@ internal sealed class ExcelController : IDisposable
         {
             _discovery.Release();
         }
+    }
+
+    private async Task ClaimRetainedWorkerAsync(ExcelWorkerClient worker, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await worker.ClaimAsync(cancellationToken, () =>
+        {
+            lock (_shutdownLock)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_shutdown is not null)
+                    throw new InvalidOperationException("The service is stopping. No Excel application was claimed.");
+                var pipeName = worker.Registration.PipeName;
+                if (!_workers.ContainsKey(pipeName) && _workers.Count >= 32)
+                    throw new InvalidOperationException("The service has reached its Excel worker limit. Close unused sessions before retrying.");
+                // Once the verified pipe may receive the claim, keep it tracked even if the reply is lost.
+                _workers[pipeName] = worker;
+            }
+        });
+        ApplyWorkerSnapshot(worker);
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
