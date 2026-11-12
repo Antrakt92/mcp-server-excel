@@ -55,10 +55,11 @@ public interface ISlicerCommands
     /// <param name="slicerName">Unique timeline name</param>
     /// <param name="destinationSheet">Destination worksheet</param>
     /// <param name="position">Single top-left anchor cell</param>
+    /// <param name="pivotSheetName">Worksheet containing the source PivotTable, required when names repeat</param>
     [ServiceAction("create-timeline")]
     SlicerStateResult CreateTimeline(IExcelBatch batch, [RequiredParameter] string pivotTableName,
         [RequiredParameter] string fieldName, [RequiredParameter] string slicerName,
-        [RequiredParameter] string destinationSheet, [RequiredParameter] string position);
+        [RequiredParameter] string destinationSheet, [RequiredParameter] string position, string? pivotSheetName = null);
 
     /// <summary>Reads complete native layout, cache connections, selection and timeline state for one PivotTable/Table slicer or date timeline.</summary>
     /// <param name="batch">Excel batch session</param>
@@ -90,15 +91,19 @@ public interface ISlicerCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="slicerName">PivotTable slicer or timeline</param>
     /// <param name="pivotTableName">Compatible PivotTable to connect</param>
+    /// <param name="pivotSheetName">Worksheet containing the PivotTable, required when names repeat</param>
     [ServiceAction("connect-pivottable")]
-    SlicerStateResult ConnectPivotTable(IExcelBatch batch, [RequiredParameter] string slicerName, [RequiredParameter] string pivotTableName);
+    SlicerStateResult ConnectPivotTable(IExcelBatch batch, [RequiredParameter] string slicerName,
+        [RequiredParameter] string pivotTableName, string? pivotSheetName = null);
 
     /// <summary>Disconnects one currently connected PivotTable; keeps at least one PivotTable connection. Does not reset other connected tables or their filters.</summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="slicerName">PivotTable slicer or timeline</param>
     /// <param name="pivotTableName">Connected PivotTable to disconnect</param>
+    /// <param name="pivotSheetName">Worksheet containing the connected PivotTable, required when connected names repeat</param>
     [ServiceAction("disconnect-pivottable")]
-    SlicerStateResult DisconnectPivotTable(IExcelBatch batch, [RequiredParameter] string slicerName, [RequiredParameter] string pivotTableName);
+    SlicerStateResult DisconnectPivotTable(IExcelBatch batch, [RequiredParameter] string slicerName,
+        [RequiredParameter] string pivotTableName, string? pivotSheetName = null);
 
     /// <summary>
     /// Creates a slicer for a PivotTable field.
@@ -110,19 +115,21 @@ public interface ISlicerCommands
     /// <param name="slicerName">Name for the new slicer</param>
     /// <param name="destinationSheet">Worksheet where slicer will be placed</param>
     /// <param name="position">Top-left cell position for the slicer (e.g., "H2")</param>
+    /// <param name="pivotSheetName">Worksheet containing the source PivotTable, required when names repeat</param>
     /// <returns>Created slicer details with available items</returns>
     [ServiceAction("create-slicer")]
     SlicerResult CreateSlicer(IExcelBatch batch, string pivotTableName,
-        string fieldName, string slicerName, string destinationSheet, string position);
+        string fieldName, string slicerName, string destinationSheet, string position, string? pivotSheetName = null);
 
     /// <summary>
     /// Lists all slicers in the workbook, optionally filtered by PivotTable.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Optional PivotTable name to filter slicers (null = all slicers)</param>
+    /// <param name="pivotSheetName">Worksheet containing the PivotTable specified by pivotTableName</param>
     /// <returns>List of slicers with names, fields, positions, and selections</returns>
     [ServiceAction("list-slicers")]
-    SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null);
+    SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null, string? pivotSheetName = null);
 
     /// <summary>
     /// Sets the selection for a slicer, filtering the connected PivotTable(s).

@@ -117,6 +117,8 @@ public sealed class SlicerDetails
     public bool FilterCleared { get; set; }
     /// <summary>All connected PivotTables.</summary>
     public List<string> ConnectedPivotTables { get; set; } = [];
+    /// <summary>All connected PivotTables with their worksheet names.</summary>
+    public List<SlicerPivotTableReference> ConnectedPivotTableReferences { get; set; } = [];
     /// <summary>Source Excel Table name, where applicable.</summary>
     public string? ConnectedTable { get; set; }
     /// <summary>All available native items; empty for timelines.</summary>
@@ -126,6 +128,11 @@ public sealed class SlicerDetails
     /// <summary>Native timeline state, where applicable.</summary>
     public TimelineDetails? Timeline { get; set; }
 }
+
+/// <summary>A PivotTable connected to a slicer or timeline.</summary>
+/// <param name="PivotTableName">Native PivotTable name.</param>
+/// <param name="SheetName">Worksheet containing the PivotTable.</param>
+public sealed record SlicerPivotTableReference(string PivotTableName, string SheetName);
 
 /// <summary>Result of inspecting or changing a slicer/timeline.</summary>
 public sealed class SlicerStateResult : ResultBase

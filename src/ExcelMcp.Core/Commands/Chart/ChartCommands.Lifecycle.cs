@@ -93,11 +93,11 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
     }
 
     /// <inheritdoc />
-    public ChartInfoResult Read(IExcelBatch batch, string chartName)
+    public ChartInfoResult Read(IExcelBatch batch, string chartName, string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            var found = FindChart(ctx.Book, chartName);
+            var found = FindChart(ctx.Book, chartName, chartSheetName);
             try
             {
                 if (found.Chart is null || found.Shape is null)
@@ -326,7 +326,8 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         double width = 400,
         double height = 300,
         string? chartName = null,
-        string? targetRange = null)
+        string? targetRange = null,
+        string? pivotSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -350,11 +351,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
             try
             {
                 // Find PivotTable
-                pivotTable = (Excel.PivotTable?)FindPivotTable(ctx.Book, pivotTableName);
-                if (pivotTable == null)
-                {
-                    throw new InvalidOperationException($"PivotTable '{pivotTableName}' not found in workbook.");
-                }
+                pivotTable = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, pivotSheetName);
 
                 // Get target worksheet
                 worksheets = (Excel.Sheets)ctx.Book.Worksheets;
@@ -411,8 +408,10 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                 pivotLayout = chart.PivotLayout;
                 linkedPivotTable = pivotLayout?.PivotTable;
 
-                string linkedPivotTableName = linkedPivotTable?.Name ?? string.Empty;
-                if (!linkedPivotTableName.Equals(pivotTableName, StringComparison.OrdinalIgnoreCase))
+                if (linkedPivotTable is null ||
+                    !string.Equals(linkedPivotTable.Name, pivotTable.Name, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(CoreLookupHelpers.GetPivotWorksheetName(linkedPivotTable),
+                        sourceWorksheet.Name, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
                         $"Excel did not link the new PivotChart to PivotTable '{pivotTableName}'.");
@@ -442,7 +441,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                     SheetName = sheetName,
                     ChartType = (ChartType)chart.ChartType,
                     IsPivotChart = true,
-                    LinkedPivotTable = linkedPivotTableName,
+                    LinkedPivotTable = linkedPivotTable.Name,
                     Left = finalLeft,
                     Top = finalTop,
                     Width = finalWidth,
@@ -527,11 +526,11 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         CreatedObjectFailure.Create("chart", createdName, sheetName, step, cause);
 
     /// <inheritdoc />
-    public OperationResult Delete(IExcelBatch batch, string chartName)
+    public OperationResult Delete(IExcelBatch batch, string chartName, string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out _);
+            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out _, chartSheetName);
             try
             {
                 if (shape is null)
@@ -553,11 +552,12 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         double? left = null,
         double? top = null,
         double? width = null,
-        double? height = null)
+        double? height = null,
+        string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out var sheetName);
+            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out var sheetName, chartSheetName);
             Excel.Worksheet? worksheet = null;
             try
             {
@@ -587,13 +587,4 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         });
     }
 
-    /// <summary>
-    /// Finds a PivotTable by name across all worksheets.
-    /// Delegates to CoreLookupHelpers.TryFindPivotTable for the actual lookup.
-    /// </summary>
-    private static Excel.PivotTable? FindPivotTable(Excel.Workbook workbook, string pivotTableName)
-    {
-        CoreLookupHelpers.TryFindPivotTable(workbook, pivotTableName, out Excel.PivotTable? pivotTable);
-        return pivotTable;
-    }
 }

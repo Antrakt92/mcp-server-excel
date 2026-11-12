@@ -274,6 +274,24 @@ public class PersistentServicePivotTableDataModelTests(
         Assert.Equal(second.Range, RequireSuccess(_pivotCommands.Read(batch, pivotName, secondSheet)).PivotTable.Range);
     }
 
+    [Fact]
+    public void DuplicatePivotName_ScopedDeleteLeavesOtherReport()
+    {
+        var batch = _fixture.BatchToken;
+        var firstSheet = _fixture.CreateTestSheet(batch);
+        var secondSheet = _fixture.CreateTestSheet(batch);
+        var pivotName = $"RepeatedPivot{Guid.NewGuid():N}";
+        RequireSuccess(_pivotCommands.CreateFromDataModel(batch, "SalesTable", firstSheet, "H1", pivotName));
+        RequireSuccess(_pivotCommands.CreateFromDataModel(batch, "SalesTable", secondSheet, "J4", pivotName));
+
+        RequireSuccess(_pivotCommands.Delete(batch, pivotName, secondSheet));
+
+        var remaining = Assert.Single(RequireSuccess(_pivotCommands.List(batch)).PivotTables,
+            pivot => pivot.Name == pivotName);
+        Assert.Equal(firstSheet, remaining.SheetName);
+        Assert.Equal(firstSheet, RequireSuccess(_pivotCommands.Read(batch, pivotName)).PivotTable.SheetName);
+    }
+
     /// <summary>
     /// Tests error handling for non-existent Data Model table.
     /// </summary>

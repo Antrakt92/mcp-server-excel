@@ -37,9 +37,11 @@ public interface IChartCommands
     /// <param name="targetPath">Output image path in an existing directory; extension must match the requested image format</param>
     /// <param name="imageFormat">Png (default), Jpeg or Gif; available filters depend on installed Excel</param>
     /// <param name="overwrite">Explicit permission to replace an existing output image; default false</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     [ServiceAction("export-image")]
     OperationResult ExportImage(IExcelBatch batch, [RequiredParameter] string chartName,
-        [RequiredParameter] string targetPath, [FromString] ChartImageFormat imageFormat = ChartImageFormat.Png, bool overwrite = false);
+        [RequiredParameter] string targetPath, [FromString] ChartImageFormat imageFormat = ChartImageFormat.Png,
+        bool overwrite = false, string? chartSheetName = null);
 
     // === LIFECYCLE OPERATIONS ===
 
@@ -59,9 +61,10 @@ public interface IChartCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="chartName">Name of the chart (or shape name)</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     /// <returns>Chart type, data source, series info, position, styling</returns>
     [ServiceAction("read")]
-    ChartInfoResult Read(IExcelBatch batch, [RequiredParameter] string chartName);
+    ChartInfoResult Read(IExcelBatch batch, [RequiredParameter] string chartName, string? chartSheetName = null);
 
     /// <summary>
     /// Creates a Regular Chart from an Excel range.
@@ -130,6 +133,7 @@ public interface IChartCommands
     /// <param name="height">Chart height in points</param>
     /// <param name="chartName">Optional chart name (auto-generated if omitted)</param>
     /// <param name="targetRange">Cell range to position chart within (e.g., 'F2:K15'). PREFERRED over left/top. When set, left/top are ignored.</param>
+    /// <param name="pivotSheetName">Worksheet containing the source PivotTable, required when names repeat</param>
     [ServiceAction("create-from-pivottable")]
     ChartCreateResult CreateFromPivotTable(
         IExcelBatch batch,
@@ -141,15 +145,17 @@ public interface IChartCommands
         double width = 400,
         double height = 300,
         string? chartName = null,
-        string? targetRange = null);
+        string? targetRange = null,
+        string? pivotSheetName = null);
 
     /// <summary>
     /// Deletes a chart (Regular or PivotChart).
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="chartName">Name of the chart to delete</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     [ServiceAction("delete")]
-    OperationResult Delete(IExcelBatch batch, [RequiredParameter] string chartName);
+    OperationResult Delete(IExcelBatch batch, [RequiredParameter] string chartName, string? chartSheetName = null);
 
     /// <summary>
     /// Moves/resizes a chart.
@@ -160,6 +166,7 @@ public interface IChartCommands
     /// <param name="top">New top position in points (null to keep current)</param>
     /// <param name="width">New width in points (null to keep current)</param>
     /// <param name="height">New height in points (null to keep current)</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     [ServiceAction("move")]
     OperationResult Move(
         IExcelBatch batch,
@@ -167,7 +174,8 @@ public interface IChartCommands
         double? left = null,
         double? top = null,
         double? width = null,
-        double? height = null);
+        double? height = null,
+        string? chartSheetName = null);
 
     /// <summary>
     /// Fits a chart to a cell range by setting position and size to match the range bounds.
@@ -176,10 +184,12 @@ public interface IChartCommands
     /// <param name="chartName">Name of the chart to fit</param>
     /// <param name="sheetName">Worksheet containing the range</param>
     /// <param name="rangeAddress">Range to fit the chart to (e.g., A1:D10)</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     [ServiceAction("fit-to-range")]
     OperationResult FitToRange(
         IExcelBatch batch,
         [RequiredParameter] string chartName,
         [RequiredParameter] string sheetName,
-        [RequiredParameter] string rangeAddress);
+        [RequiredParameter] string rangeAddress,
+        string? chartSheetName = null);
 }

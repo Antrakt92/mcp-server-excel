@@ -118,9 +118,10 @@ public interface IPivotTableCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable to delete</param>
+    /// <param name="sheetName">Worksheet containing the PivotTable, required when names repeat</param>
     /// <returns>Operation result</returns>
     [ServiceAction("delete")]
-    OperationResult Delete(IExcelBatch batch, string pivotTableName);
+    OperationResult Delete(IExcelBatch batch, string pivotTableName, string? sheetName = null);
 
     /// <summary>
     /// Refreshes PivotTable data from source and returns updated info
@@ -128,9 +129,11 @@ public interface IPivotTableCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable to refresh</param>
     /// <param name="timeout">Optional public timeout in whole seconds from 1 through 2147483; converted to TimeSpan at shared dispatch</param>
+    /// <param name="sheetName">Worksheet containing the PivotTable, required when names repeat</param>
     /// <returns>Refresh timestamp, record count, any structural changes</returns>
     [ServiceAction("refresh")]
-    PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null);
+    PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null,
+        string? sheetName = null);
 
     /// <summary>Reads native worksheet-backed source, record count, shared cache users, and connected slicer/timeline caches. External/OLAP sources are unsupported here.</summary>
     /// <param name="batch">Excel batch session.</param>

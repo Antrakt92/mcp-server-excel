@@ -115,6 +115,42 @@ public static class CoreLookupHelpers
         return pivotTable!;
     }
 
+    internal static Excel.PivotTable FindPivotTableOnSheet(
+        Excel.Workbook workbook, string pivotTableName, string? pivotSheetName)
+    {
+        if (pivotSheetName is null)
+            return FindPivotTable(workbook, pivotTableName);
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(pivotSheetName);
+        Excel.Worksheet? sheet = null;
+        Excel.PivotTables? pivotTables = null;
+        try
+        {
+            sheet = Utilities.WorksheetLookup.Get(workbook, pivotSheetName);
+            pivotTables = (Excel.PivotTables)sheet.PivotTables();
+            return pivotTables.Item(pivotTableName);
+        }
+        finally
+        {
+            ComUtilities.Release(ref pivotTables);
+            ComUtilities.Release(ref sheet);
+        }
+    }
+
+    internal static string GetPivotWorksheetName(Excel.PivotTable pivotTable)
+    {
+        Excel.Worksheet? sheet = null;
+        try
+        {
+            sheet = (Excel.Worksheet)pivotTable.Parent;
+            return sheet.Name;
+        }
+        finally
+        {
+            ComUtilities.Release(ref sheet);
+        }
+    }
+
     #endregion
 
     #region Table Lookup

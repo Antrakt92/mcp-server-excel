@@ -360,7 +360,7 @@ public partial class PivotTableCommands
     /// <summary>
     /// Deletes a PivotTable
     /// </summary>
-    public OperationResult Delete(IExcelBatch batch, string pivotTableName)
+    public OperationResult Delete(IExcelBatch batch, string pivotTableName, string? sheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -369,7 +369,7 @@ public partial class PivotTableCommands
 
             try
             {
-                pivot = FindPivotTable(ctx.Book, pivotTableName);
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, sheetName);
                 tableRange = pivot.TableRange2;
 
                 // Delete the PivotTable
@@ -393,7 +393,8 @@ public partial class PivotTableCommands
     /// <summary>
     /// Refreshes a PivotTable
     /// </summary>
-    public PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null)
+    public PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null,
+        string? sheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -402,7 +403,7 @@ public partial class PivotTableCommands
 
             try
             {
-                pivot = FindPivotTable(ctx.Book, pivotTableName);
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, sheetName);
                 pivotCache = pivot.PivotCache();
 
                 int previousRecordCount = pivotCache.RecordCount;

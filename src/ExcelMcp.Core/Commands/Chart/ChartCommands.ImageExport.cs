@@ -11,7 +11,8 @@ public partial class ChartCommands
 {
     /// <inheritdoc />
     public OperationResult ExportImage(
-        IExcelBatch batch, string chartName, string targetPath, ChartImageFormat imageFormat = ChartImageFormat.Png, bool overwrite = false)
+        IExcelBatch batch, string chartName, string targetPath, ChartImageFormat imageFormat = ChartImageFormat.Png,
+        bool overwrite = false, string? chartSheetName = null)
     {
         if (!Enum.IsDefined(imageFormat)) throw new ArgumentOutOfRangeException(nameof(imageFormat));
         var output = WorkbookCommands.ValidateOutputPath(targetPath, overwrite);
@@ -27,7 +28,7 @@ public partial class ChartCommands
         var writePath = WorkbookCommands.CreateOutputStagingPath(output);
         return batch.Execute((ctx, ct) =>
         {
-            var found = FindChart(ctx.Book, chartName);
+            var found = FindChart(ctx.Book, chartName, chartSheetName);
             Excel.Chart? chart = null;
             Exception? operationFailure = null;
             try

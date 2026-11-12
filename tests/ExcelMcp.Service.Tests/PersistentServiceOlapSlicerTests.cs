@@ -62,6 +62,34 @@ public sealed class PersistentServiceOlapSlicerTests(
     }
 
     [Fact]
+    public async Task DuplicatePivotName_SlicerConnectionsUseWorksheetIdentity()
+    {
+        CreateModelSlicer();
+        var batch = _fixture.BatchToken;
+        const string pivotName = "SlicerPivot";
+        const string slicerName = "QuarterSlicer";
+        var secondSheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_pivots.CreateFromDataModel(batch, "SlicerSales", secondSheet, "G1", pivotName));
+        Assert.Single(RequireSuccess(_slicers.ListSlicers(batch, pivotName, Sheet)).Slicers);
+        Assert.Empty(RequireSuccess(_slicers.ListSlicers(batch, pivotName, secondSheet)).Slicers);
+
+        var connected = RequireSuccess(_slicers.ConnectPivotTable(batch, slicerName, pivotName, secondSheet));
+        Assert.Equal(2, connected.Slicer.ConnectedPivotTableReferences.Count);
+        Assert.Contains(new SlicerPivotTableReference(pivotName, Sheet), connected.Slicer.ConnectedPivotTableReferences);
+        Assert.Contains(new SlicerPivotTableReference(pivotName, secondSheet), connected.Slicer.ConnectedPivotTableReferences);
+
+        var ambiguous = await _fixture.SendForFailureAsync("slicer.disconnect-pivottable",
+            new { slicerName, pivotTableName = pivotName });
+        Assert.Equal("Conflict", ambiguous.ErrorCategory);
+        Assert.Equal(2, RequireSuccess(_slicers.GetSlicer(batch, slicerName)).Slicer.ConnectedPivotTableReferences.Count);
+
+        var disconnected = RequireSuccess(_slicers.DisconnectPivotTable(batch, slicerName, pivotName, secondSheet));
+        Assert.Equal(new SlicerPivotTableReference(pivotName, Sheet),
+            Assert.Single(disconnected.Slicer.ConnectedPivotTableReferences));
+        Assert.Empty(RequireSuccess(_slicers.ListSlicers(batch, pivotName, secondSheet)).Slicers);
+    }
+
+    [Fact]
     public void CreateAndList_DataModel_ReturnCaptionsAndReuseCache()
     {
         var created = CreateModelSlicer();

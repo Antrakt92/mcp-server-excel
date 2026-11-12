@@ -16,7 +16,7 @@ public partial class PivotTableCommands
     /// Creates a slicer for a PivotTable field
     /// </summary>
     internal static SlicerResult CreateSlicer(IExcelBatch batch, string pivotTableName,
-        string fieldName, string slicerName, string destinationSheet, string position)
+        string fieldName, string slicerName, string destinationSheet, string position, string? pivotSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -30,7 +30,7 @@ public partial class PivotTableCommands
 
             try
             {
-                pivot = FindPivotTable(ctx.Book, pivotTableName);
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, pivotSheetName);
                 slicerCaches = ctx.Book.SlicerCaches;
 
                 // Check everything that can fail before Excel creates a slicer cache:
@@ -99,8 +99,12 @@ public partial class PivotTableCommands
     /// <summary>
     /// Lists all slicers in the workbook, optionally filtered by PivotTable
     /// </summary>
-    internal static SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null)
+    internal static SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null,
+        string? pivotSheetName = null)
     {
+        if (pivotSheetName is not null && string.IsNullOrEmpty(pivotTableName))
+            throw new ArgumentException("Specify pivotTableName when filtering slicers by a PivotTable worksheet.");
+
         return batch.Execute((ctx, ct) =>
         {
             var result = new SlicerListResult { Success = true };
@@ -114,7 +118,7 @@ public partial class PivotTableCommands
                 // If filtering by PivotTable, find it first
                 if (!string.IsNullOrEmpty(pivotTableName))
                 {
-                    targetPivot = FindPivotTable(ctx.Book, pivotTableName);
+                    targetPivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, pivotSheetName);
                 }
 
                 for (int cacheIndex = 1; cacheIndex <= slicerCaches.Count; cacheIndex++)
@@ -358,34 +362,17 @@ public partial class PivotTableCommands
         }
 
         Excel.SlicerPivotTables? pivotTables = null;
+        Excel.PivotTable? connected = null;
         try
         {
             pivotTables = cache.PivotTables;
-            string targetName = targetPivot.Name?.ToString() ?? string.Empty;
-
-            for (int i = 1; i <= pivotTables.Count; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                Excel.PivotTable? pt = null;
-                try
-                {
-                    pt = pivotTables.Item[i];
-                    string ptName = pt.Name?.ToString() ?? string.Empty;
-                    ct.ThrowIfCancellationRequested();
-                    if (string.Equals(ptName, targetName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return true;
-                    }
-                }
-                finally
-                {
-                    ComUtilities.Release(ref pt);
-                }
-            }
-            return false;
+            connected = SlicerConnections.Find(pivotTables, targetPivot.Name,
+                CoreLookupHelpers.GetPivotWorksheetName(targetPivot), ct);
+            return connected is not null;
         }
         finally
         {
+            ComUtilities.Release(ref connected);
             ComUtilities.Release(ref pivotTables);
         }
     }

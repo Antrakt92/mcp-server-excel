@@ -6,6 +6,32 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class PersistentServiceChartFormattingTests
 {
+    [Fact]
+    public void DuplicateChartName_ScopedReadMoveAndDeleteAffectOnlyRequestedWorksheet()
+    {
+        const string chartName = "RepeatedChart";
+        var batch = _fixture.BatchToken;
+        string secondSheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetValues(batch, secondSheet, "A1:B3",
+            [["Category", "SecondSeries"], ["Q1", 100], ["Q2", 200]]));
+        RequireSuccess(_chartCommands.CreateFromRange(batch, _sheetName, "A1:B4",
+            ChartType.ColumnClustered, 120, 60, 320, 220, chartName));
+        RequireSuccess(_chartCommands.CreateFromRange(batch, secondSheet, "A1:B3",
+            ChartType.ColumnClustered, 180, 90, 370, 250, chartName));
+
+        var original = RequireSuccess(_chartCommands.Read(batch, chartName, _sheetName));
+        var second = RequireSuccess(_chartCommands.Read(batch, chartName, secondSheet));
+        Assert.Equal(_sheetName, original.SheetName);
+        Assert.Equal(secondSheet, second.SheetName);
+        Assert.NotEqual(original.Left, second.Left);
+
+        RequireSuccess(_chartCommands.Move(batch, chartName, left: 240, chartSheetName: secondSheet));
+        Assert.Equal(240, RequireSuccess(_chartCommands.Read(batch, chartName, secondSheet)).Left, 1);
+        Assert.Equal(original.Left, RequireSuccess(_chartCommands.Read(batch, chartName, _sheetName)).Left);
+        RequireSuccess(_chartCommands.Delete(batch, chartName, secondSheet));
+        Assert.Equal(_sheetName, RequireSuccess(_chartCommands.Read(batch, chartName)).SheetName);
+    }
+
     [Theory]
     [InlineData("chart.read")]
     [InlineData("chart.delete")]

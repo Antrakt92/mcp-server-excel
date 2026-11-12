@@ -12,12 +12,12 @@ public sealed partial class SlicerCommands : ISlicerCommands
 {
     /// <inheritdoc />
     public SlicerResult CreateSlicer(IExcelBatch batch, string pivotTableName,
-        string fieldName, string slicerName, string destinationSheet, string position)
-        => PivotTableCommands.CreateSlicer(batch, pivotTableName, fieldName, slicerName, destinationSheet, position);
+        string fieldName, string slicerName, string destinationSheet, string position, string? pivotSheetName = null)
+        => PivotTableCommands.CreateSlicer(batch, pivotTableName, fieldName, slicerName, destinationSheet, position, pivotSheetName);
 
     /// <inheritdoc />
-    public SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null)
-        => PivotTableCommands.ListSlicers(batch, pivotTableName);
+    public SlicerListResult ListSlicers(IExcelBatch batch, string? pivotTableName = null, string? pivotSheetName = null)
+        => PivotTableCommands.ListSlicers(batch, pivotTableName, pivotSheetName);
 
     /// <inheritdoc />
     public SlicerResult SetSlicerSelection(IExcelBatch batch, string slicerName,
