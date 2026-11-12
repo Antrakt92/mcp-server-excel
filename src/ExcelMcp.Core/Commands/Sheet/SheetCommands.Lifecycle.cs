@@ -158,7 +158,7 @@ public partial class SheetCommands
         }
     }
 
-    private static void ValidateNewSheetName(string name)
+    internal static void ValidateNewSheetName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) ||
             name.Length > 31 ||
@@ -174,7 +174,7 @@ public partial class SheetCommands
         }
     }
 
-    private static void EnsureSheetNameAvailable(
+    internal static void EnsureSheetNameAvailable(
         Excel.Workbook workbook, string name, CancellationToken cancellationToken, string? currentName = null)
     {
         Excel.Sheets? sheets = null;

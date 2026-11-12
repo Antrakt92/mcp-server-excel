@@ -23,6 +23,86 @@ public sealed class PersistentServicePowerQueryMutationFailureTests : IAsyncLife
     public void Dispose() => _fixture.Dispose();
 
     [Theory]
+    [InlineData("A1", "occupied")]
+    [InlineData("A1", "blank-formula")]
+    [InlineData("A1:B2", "multi-cell")]
+    [InlineData("XFE1", "invalid-address")]
+    [InlineData("A1", "invalid-sheet")]
+    [InlineData("A1", "protected-sheet")]
+    public async Task LoadTo_RejectedWorksheetDestination_PreservesExistingLoads(string targetCellAddress, string scenario)
+    {
+        const string queryName = "ExistingLoad";
+        const string guardSheet = "DestinationGuard";
+        string targetSheet = scenario == "invalid-sheet" ? "Invalid/Sheet" : guardSheet;
+        const string mCode = "#table(type table [X = Int64.Type], {{17}, {29}})";
+        await using var scope = _fixture.CreateScope();
+        await _fixture.SendAsync("powerquery.create", new { queryName, mCode, loadDestination = "both" });
+        await _fixture.SendAsync("sheet.create", new { sheetName = guardSheet });
+
+        string? existingFormula = scenario == "blank-formula" ? "=\"\"" : null;
+        string? existingValue = scenario == "occupied" ? "preserve this cell" : null;
+        if (existingFormula is not null)
+        {
+            await _fixture.SendAsync("range.set-formulas",
+                new { sheetName = guardSheet, rangeAddress = "A1", formulas = new[] { new[] { existingFormula } } });
+        }
+        if (existingValue is not null)
+        {
+            await _fixture.SendAsync("range.set-values",
+                new { sheetName = guardSheet, rangeAddress = "A1", values = new[] { new[] { existingValue } } });
+        }
+
+        if (scenario == "protected-sheet")
+        {
+            await _fixture.SendAsync("worksheetstyle.set-protection",
+                new { sheetName = guardSheet, isProtected = true });
+        }
+
+        await _fixture.SaveAndReopenAsync();
+        PowerQueryStateAssertions.AssertStored(scope, queryName, mCode,
+            PowerQueryLoadMode.LoadToBoth, queryName, ["X"], [[17], [29]]);
+        _fixture.ExecuteRawVerification((context, _) => Assert.True(context.Book.Saved));
+
+        var response = await _fixture.SendForFailureAsync("powerquery.load-to",
+            new { queryName, loadDestination = "worksheet", targetSheet, targetCellAddress });
+
+        PowerQueryStateAssertions.AssertStored(scope, queryName, mCode,
+            PowerQueryLoadMode.LoadToBoth, queryName, ["X"], [[17], [29]]);
+        _fixture.ExecuteRawVerification((context, _) => Assert.True(context.Book.Saved));
+        var ranges = _fixture.CreateCommands<Sbroenne.ExcelMcp.Core.Commands.Range.IRangeCommands>();
+        var guard = ranges.GetFormulas(_fixture.BatchToken, guardSheet, "A1");
+        Assert.True(guard.Success, guard.ErrorMessage);
+        Assert.Equal(existingFormula ?? string.Empty, Assert.Single(Assert.Single(guard.Formulas)));
+        if (existingFormula is null)
+            Assert.Equal(existingValue, Assert.Single(Assert.Single(guard.Values)));
+        string expectedError = scenario switch
+        {
+            "invalid-sheet" => "Worksheet names",
+            "protected-sheet" => "is protected",
+            _ => targetCellAddress
+        };
+        Assert.Contains(expectedError, response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(response.PartialState);
+    }
+
+    [Fact]
+    public async Task LoadTo_ExistingWorksheetAnchor_CanReplaceItsOwnLoad()
+    {
+        const string queryName = "SameAnchor";
+        const string mCode = "#table(type table [X = Int64.Type], {{17}, {29}})";
+        await using var scope = _fixture.CreateScope();
+        await _fixture.SendAsync("powerquery.create", new { queryName, mCode, loadDestination = "worksheet" });
+        PowerQueryStateAssertions.AssertStored(scope, queryName, mCode,
+            PowerQueryLoadMode.LoadToTable, queryName, ["X"], [[17], [29]]);
+
+        await _fixture.SendAsync("powerquery.load-to",
+            new { queryName, loadDestination = "both", targetSheet = queryName, targetCellAddress = "A1" });
+
+        PowerQueryStateAssertions.AssertStored(scope, queryName, mCode,
+            PowerQueryLoadMode.LoadToBoth, queryName, ["X"], [[17], [29]]);
+    }
+
+    [Theory]
     [InlineData("DataSource.Error", "This server does not support Windows credentials.", "Authentication", "Organizational account")]
     [InlineData("DataSource.Error", "Analysis Services does not support the 'en-DE' culture", "Culture", "Culture = \"en-US\"")]
     public async Task LoadTo_RecognizedFailure_PreservesDefinitionAndReportsActualPartialLoad(

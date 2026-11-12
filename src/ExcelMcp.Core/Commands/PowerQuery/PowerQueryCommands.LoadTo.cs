@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
@@ -34,7 +35,9 @@ public partial class PowerQueryCommands
         string? targetSheet = null,
         string? targetCellAddress = null)
     {
-        // Validate inputs
+        if (!Enum.IsDefined(loadMode))
+            throw new ArgumentOutOfRangeException(nameof(loadMode));
+
         bool requiresWorksheet = loadMode == PowerQueryLoadMode.LoadToTable || loadMode == PowerQueryLoadMode.LoadToBoth;
 
         if (requiresWorksheet && string.IsNullOrWhiteSpace(targetSheet))
@@ -95,6 +98,9 @@ public partial class PowerQueryCommands
                 {
                     throw new InvalidOperationException($"Query '{queryName}' not found.");
                 }
+
+                if (requiresWorksheet)
+                    PreflightWorksheetLoad(ctx.Book, queryName, targetSheet!, targetCellAddress, ct);
 
                 // STEP 2: Always clean up current destinations before applying the new load mode.
                 // This ensures clean state transitions in all directions:
@@ -158,6 +164,164 @@ public partial class PowerQueryCommands
         });
     }
 
+    private static void PreflightWorksheetLoad(Excel.Workbook workbook, string queryName, string sheetName,
+        string targetCellAddress, CancellationToken cancellationToken)
+    {
+        Excel.Sheets? worksheets = null;
+        Excel.Worksheet? sheet = null;
+        Excel.Range? destination = null;
+        try
+        {
+            worksheets = workbook.Worksheets;
+            sheet = FindLoadWorksheet(worksheets, sheetName, cancellationToken);
+            if (sheet is null)
+            {
+                SheetCommands.ValidateNewSheetName(sheetName);
+                SheetCommands.EnsureSheetNameAvailable(workbook, sheetName, cancellationToken);
+                if (workbook.ProtectStructure)
+                    throw new InvalidOperationException($"Workbook structure is protected. Worksheet '{sheetName}' cannot be added.");
+                // The worksheet does not exist yet, so only a bounded cell address can be resolved on it.
+                Range.RangeCommands.ParseCellAddress(targetCellAddress);
+                return;
+            }
+
+            destination = ResolveWorksheetLoadCell(sheet, targetCellAddress);
+            ValidateWorksheetLoadCell(sheet, destination, targetCellAddress, queryName, cancellationToken);
+        }
+        finally
+        {
+            ComUtilities.Release(ref destination);
+            ComUtilities.Release(ref sheet);
+            ComUtilities.Release(ref worksheets);
+        }
+    }
+
+    private static Excel.Worksheet? FindLoadWorksheet(
+        Excel.Sheets worksheets, string sheetName, CancellationToken cancellationToken)
+    {
+        int count = worksheets.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Excel.Worksheet? sheet = null;
+            try
+            {
+                sheet = (Excel.Worksheet)worksheets[index];
+                if (string.Equals(sheet.Name, sheetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    var match = sheet;
+                    sheet = null;
+                    return match;
+                }
+            }
+            finally
+            {
+                ComUtilities.Release(ref sheet);
+            }
+        }
+
+        return null;
+    }
+
+    private static Excel.Range ResolveWorksheetLoadCell(Excel.Worksheet sheet, string targetCellAddress)
+    {
+        Excel.Range? destination = null;
+        Excel.Worksheet? destinationSheet = null;
+        try
+        {
+            destination = sheet.Range[targetCellAddress];
+            destinationSheet = destination.Worksheet;
+            if (Convert.ToInt64((object)destination.CountLarge, CultureInfo.InvariantCulture) != 1 ||
+                !ReferenceEquals(destinationSheet, sheet))
+            {
+                throw new ArgumentException(
+                    $"Target cell '{targetCellAddress}' must be one cell on the destination worksheet.",
+                    nameof(targetCellAddress));
+            }
+
+            var cell = destination;
+            destination = null;
+            return cell;
+        }
+        catch (COMException ex)
+        {
+            throw new InvalidOperationException(
+                $"Could not resolve target cell '{targetCellAddress}' on the destination worksheet: {ex.Message}", ex);
+        }
+        finally
+        {
+            ComUtilities.Release(ref destinationSheet);
+            ComUtilities.Release(ref destination);
+        }
+    }
+
+    private static void ValidateWorksheetLoadCell(Excel.Worksheet sheet, Excel.Range destination,
+        string targetCellAddress, string? replacingQueryName, CancellationToken cancellationToken)
+    {
+        if (sheet.ProtectContents && !sheet.ProtectionMode)
+        {
+            throw new InvalidOperationException(
+                $"Worksheet '{sheet.Name}' is protected. Unprotect it or choose another destination before loading the query.");
+        }
+
+        Excel.ListObjects? tables = null;
+        try
+        {
+            int row = destination.Row;
+            int column = destination.Column;
+            tables = sheet.ListObjects;
+            int count = tables.Count;
+            for (int index = 1; index <= count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Excel.ListObject? table = null;
+                Excel.Range? range = null;
+                Excel.QueryTable? queryTable = null;
+                try
+                {
+                    table = tables[index];
+                    range = table.Range;
+                    var (rows, columns) = Range.RangeHelpers.GetDimensions(range);
+                    if (row < range.Row || row >= range.Row + rows ||
+                        column < range.Column || column >= range.Column + columns)
+                        continue;
+
+                    // Allow an existing table only when unload will remove this exact query's table.
+                    if (replacingQueryName is not null &&
+                        table.SourceType is Excel.XlListObjectSourceType.xlSrcExternal or Excel.XlListObjectSourceType.xlSrcQuery)
+                    {
+                        queryTable = table.QueryTable;
+                        if (queryTable is not null && MatchesWorksheetQueryTable(queryTable, replacingQueryName))
+                            return;
+                    }
+
+                    throw new InvalidOperationException(
+                        $"Cell {targetCellAddress} on sheet '{sheet.Name}' overlaps with an existing table.");
+                }
+                finally
+                {
+                    ComUtilities.Release(ref queryTable);
+                    ComUtilities.Release(ref range);
+                    ComUtilities.Release(ref table);
+                }
+            }
+
+            if ((object)destination.HasFormula is not bool hasFormula)
+                throw new InvalidOperationException($"Could not inspect formulas in target cell '{targetCellAddress}'.");
+
+            if (hasFormula || (object?)destination.Value2 is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Target cell '{targetCellAddress}' on worksheet '{sheet.Name}' already contains data. " +
+                    "Choose a different targetCellAddress or clear the existing data first.");
+            }
+        }
+        finally
+        {
+            ComUtilities.Release(ref tables);
+        }
+    }
+
     /// <summary>
     /// Loads query data to a worksheet using ListObjects.Add (correct approach for Power Query).
     /// SHARED IMPLEMENTATION - Used by both Create and LoadTo.
@@ -189,109 +353,18 @@ public partial class PowerQueryCommands
         {
             worksheets = workbook.Worksheets;
 
-            // Check if worksheet exists (Excel UI behavior: validate occupied cells on existing sheets)
-            bool worksheetExists = false;
-            for (int i = 1; i <= worksheets.Count; i++)
-            {
-                Excel.Worksheet? ws = null;
-                try
-                {
-                    ws = (Excel.Worksheet)worksheets[i];
-                    string wsName = ws.Name?.ToString() ?? "";
-                    if (wsName.Equals(sheetName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        worksheetExists = true;
-                        sheet = ws;
-                        ws = null; // Keep reference, don't release
-                        break;
-                    }
-                }
-                finally
-                {
-                    ComUtilities.Release(ref ws!);
-                }
-            }
-
-            // Create new worksheet if doesn't exist
-            if (!worksheetExists)
+            sheet = FindLoadWorksheet(worksheets, sheetName, cancellationToken);
+            bool worksheetExists = sheet is not null;
+            if (sheet is null)
             {
                 sheet = (Excel.Worksheet)worksheets.Add();
                 sheet.Name = sheetName;
             }
 
-            if (sheet == null)
-            {
-                throw new InvalidOperationException($"Cannot access worksheet '{sheetName}'");
-            }
-
-            // Get destination range
-            destination = sheet.Range[targetCellAddress];
-
-            // For existing worksheets, check if target area would overlap with existing tables
-            // Excel allows loading over cell data, but NOT over existing tables/PivotTables
+            destination = ResolveWorksheetLoadCell(sheet, targetCellAddress);
             if (worksheetExists)
-            {
-                // Check if any ListObjects (tables) would overlap with this location
-                // Excel error: "A table cannot overlap a range that contains a pivot table report, query results, protected cells or another table."
-                Excel.ListObjects? existingTables = null;
-                try
-                {
-                    existingTables = sheet.ListObjects;
-                    int tableCount = existingTables.Count;
+                ValidateWorksheetLoadCell(sheet, destination, targetCellAddress, null, cancellationToken);
 
-                    if (tableCount > 0)
-                    {
-                        // Get destination cell row/column for comparison
-                        int destRow = Convert.ToInt32(destination.Row);
-                        int destCol = Convert.ToInt32(destination.Column);
-
-                        for (int i = 1; i <= tableCount; i++)
-                        {
-                            Excel.ListObject? table = null;
-                            Excel.Range? tableRange = null;
-                            try
-                            {
-                                table = existingTables[i];
-                                tableRange = table.Range;
-
-                                int tableStartRow = Convert.ToInt32(tableRange.Row);
-                                int tableStartCol = Convert.ToInt32(tableRange.Column);
-                                (int tableRows, int tableColumns) = Range.RangeHelpers.GetDimensions(tableRange);
-                                int tableEndRow = tableStartRow + tableRows - 1;
-                                int tableEndCol = tableStartCol + tableColumns - 1;
-
-                                // Check if destination cell would overlap with existing table
-                                if (destRow >= tableStartRow && destRow <= tableEndRow &&
-                                    destCol >= tableStartCol && destCol <= tableEndCol)
-                                {
-                                    throw new InvalidOperationException($"Cell {targetCellAddress} on sheet '{sheetName}' overlaps with existing table.");
-                                }
-                            }
-                            finally
-                            {
-                                ComUtilities.Release(ref tableRange);
-                                ComUtilities.Release(ref table);
-                            }
-                        }
-                    }
-                }
-                finally
-                {
-                    ComUtilities.Release(ref existingTables);
-                }
-
-                // Also check if target cell contains data (Excel UI validation)
-                object? cellValue = destination.Value2;
-                bool cellHasData = cellValue is not null && !string.IsNullOrWhiteSpace(cellValue.ToString());
-                ComUtilities.Release(ref cellValue!);
-
-                if (cellHasData)
-                {
-                    throw new InvalidOperationException($"Target cell '{targetCellAddress}' on worksheet '{sheetName}' already contains data. Choose a different targetCellAddress or clear the existing data first.");
-                }
-            }
-
-            // Step 1: Create connection with Connections.Add2() using proper naming
             // This ensures the connection is named "Query - {queryName}" instead of generic "Connection", "Connection1", etc.
             connections = workbook.Connections;
             string connectionName = $"Query - {queryName}";
