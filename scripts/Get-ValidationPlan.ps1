@@ -149,7 +149,7 @@ function Get-ValidationPlan {
                 $plan.PackageComponents += 'Mcp'; $plan.NpmTests = $true; break
             }
         }
-        if ($path -match '^(docs/(?!agents/)|gh-pages/|samples/world-bank-dashboard/|README\.md$|FEATURES\.md$|CHANGELOG\.md$|LICENSE$|doc-counts\.json$)') { $plan.Docs = $true }
+        if ($path -match '^(docs/(?!agents/)|gh-pages/|examples/mcp-configs/[^/]+\.json$|samples/world-bank-(dashboard|briefing)/|README\.md$|FEATURES\.md$|CHANGELOG\.md$|LICENSE$|doc-counts\.json$)') { $plan.Docs = $true }
         switch -Regex -CaseSensitive ($path) {
             '^(skills/|scripts/Build-AgentSkills\.ps1$|docs/(AGENT-SKILLS\.md|reference/report-formatting\.md)$)' {
                 Add-Filter Tooling Packaging 'Feature=PluginBootstrap'; break
@@ -276,7 +276,7 @@ function Get-ValidationPlan {
                 $plan.ToolingOnDemandFilters.ScriptSafety = 'FullyQualifiedName=Sbroenne.ExcelMcp.ScriptSafety.Tests.AutomationSafetyTests.AzurePreview_NeverMutatesAndRejectsFailedReads|FullyQualifiedName=Sbroenne.ExcelMcp.ScriptSafety.Tests.AutomationSafetyTests.AnalyticsOidc_SwitchesToSelectedTenantAndRestoresOriginalSubscription'
                 break
             }
-            '^(scripts/check-|scripts/tests/|scripts/Start-OlapTestCube\.ps1$|videos/excel-mcp-intro/Capture-Evidence\.ps1$)' {
+            '^(scripts/check-|scripts/tests/|scripts/Start-OlapTestCube\.ps1$|scripts/olap_test_cube\.py$|videos/excel-mcp-intro/Capture-Evidence\.ps1$)' {
                 Add-Filter Tooling ScriptSafety 'Feature=AutomationSafety'; break
             }
             '^scripts/(Test-E2E|Test-CliWorkflow|Stop-ExcelCliService)\.ps1$' {
@@ -288,7 +288,7 @@ function Get-ValidationPlan {
             '^(README\.md|CHANGELOG\.md|LICENSE)$|^src/ExcelMcp\.(CLI|McpServer)/README\.md$|^vscode-extension/(README\.md|CHANGELOG\.md|LICENSE)$|^npm-packages/(excelcli|mcp-server-excel)[^/]*/README\.md$' {
                 Add-Filter Tooling Packaging 'Feature=Packaging'; break
             }
-            '\.md$|^(docs/|gh-pages/|\.github/|\.changeset/|\.squad/|\.vscode/|infrastructure/|videos/|llm-tests/|npm-packages/|vscode-extension/|samples/world-bank-dashboard/|scripts/(AnalyticsStorage\.ps1$|.*(UsageAnalytics|StarHistory))|\.(gitignore|gitattributes|mcp\.json)$)' { break }
+            '\.md$|^(docs/|gh-pages/|\.github/|\.changeset/|\.squad/|\.vscode/|infrastructure/|videos/|llm-tests/|npm-packages/|vscode-extension/|examples/mcp-configs/[^/]+\.json$|samples/world-bank-(dashboard|briefing)/|scripts/(AnalyticsStorage\.ps1$|.*(UsageAnalytics|StarHistory))|\.(gitignore|gitattributes|mcp\.json)$)' { break }
             default { throw "No validation mapping for $path. Add an owning area; a full-suite fallback is not allowed." }
         }
         $plan.Reasons += "$path -> explicit owning validation groups"
