@@ -1680,13 +1680,13 @@ public sealed class SessionManager : IDisposable
         }
 
         var activeOps = GetActiveOperationCount(sessionId);
-        var isVisible = IsExcelVisible(sessionId);
         if (batch is ExcelBatch { MacroReopenQuarantine: { } quarantine })
-            return new CloseValidationResult(true, isVisible, activeOps, "workbookLocationChanged")
+            return new CloseValidationResult(true, IsExcelVisible(sessionId), activeOps, "workbookLocationChanged")
             {
                 BlockingMessage = quarantine
             };
         var refreshState = GetRefreshState(batch);
+        var isVisible = IsExcelVisible(sessionId);
 
         if (refreshState == WorkbookRefreshState.DialogOpen)
         {
