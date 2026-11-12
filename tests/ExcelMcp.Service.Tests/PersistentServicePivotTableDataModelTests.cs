@@ -242,6 +242,38 @@ public class PersistentServicePivotTableDataModelTests(
         Assert.True(RequireSuccess(_pivotCommands.Read(batch, pivotName, secondSheet)).Success);
     }
 
+    [Theory]
+    [InlineData("pivottable.read")]
+    [InlineData("pivottable.delete")]
+    [InlineData("pivottable.refresh")]
+    public async Task DuplicatePivotName_RejectsUnscopedLookupAndPreservesScopedRead(string command)
+    {
+        var batch = _fixture.BatchToken;
+        var firstSheet = _fixture.CreateTestSheet(batch);
+        var secondSheet = _fixture.CreateTestSheet(batch);
+        var pivotName = $"RepeatedPivot{Guid.NewGuid():N}";
+
+        RequireSuccess(_pivotCommands.CreateFromDataModel(batch, "SalesTable", firstSheet, "H1", pivotName));
+        RequireSuccess(_pivotCommands.CreateFromDataModel(batch, "SalesTable", secondSheet, "J4", pivotName));
+        var first = RequireSuccess(_pivotCommands.Read(batch, pivotName, firstSheet)).PivotTable;
+        var second = RequireSuccess(_pivotCommands.Read(batch, pivotName, secondSheet)).PivotTable;
+        Assert.Equal(firstSheet, first.SheetName);
+        Assert.Equal(secondSheet, second.SheetName);
+        Assert.NotEqual(first.Range, second.Range);
+
+        var failure = await _fixture.SendForFailureAsync(command, new { pivotTableName = pivotName });
+
+        Assert.Equal("Conflict", failure.ErrorCategory);
+        Assert.Contains(pivotName, failure.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains(firstSheet, failure.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains(secondSheet, failure.ErrorMessage, StringComparison.Ordinal);
+        var matching = RequireSuccess(_pivotCommands.List(batch)).PivotTables
+            .Where(pivot => pivot.Name == pivotName).ToArray();
+        Assert.Equal(2, matching.Length);
+        Assert.Equal(first.Range, RequireSuccess(_pivotCommands.Read(batch, pivotName, firstSheet)).PivotTable.Range);
+        Assert.Equal(second.Range, RequireSuccess(_pivotCommands.Read(batch, pivotName, secondSheet)).PivotTable.Range);
+    }
+
     /// <summary>
     /// Tests error handling for non-existent Data Model table.
     /// </summary>
