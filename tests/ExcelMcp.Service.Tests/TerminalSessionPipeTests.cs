@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using Sbroenne.ExcelMcp.Service.Rpc;
 using Xunit;
 using ClientPipeSecurity = Sbroenne.ExcelMcp.ComInterop.ServiceClient.ServiceSecurity;
@@ -44,10 +45,13 @@ public sealed class TerminalSessionPipeTests
         var run = host.RunAsync(pipeName);
         try
         {
-            using var rejected = new ServiceClient(pipeName);
-            var rejectedResponse = await rejected.SendAsync(
-                new ServiceRequest { Command = "service.ping" }, TimeSpan.FromSeconds(3));
-            Assert.False(rejectedResponse.Success);
+            // Observe the server disconnect without racing the client's post-connect ACL check.
+            using (var rejected = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
+            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+            {
+                await rejected.ConnectAsync(deadline.Token);
+                Assert.Equal(0, await rejected.ReadAsync(new byte[1], deadline.Token));
+            }
             Assert.Equal(0, Volatile.Read(ref requests));
             Assert.Equal(1, Volatile.Read(ref probes));
 
