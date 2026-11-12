@@ -459,11 +459,16 @@ internal sealed class ExcelController : IDisposable
         foreach (var path in _paths.Where(entry => entry.Value.Token == worker.Registration.PipeName
             && entry.Value.SessionId is null))
             _paths.TryRemove(path);
+        ClearUtilityWorker(worker);
+        foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
+            _selections.TryRemove(selection.Key, out _);
+    }
+
+    private void ClearUtilityWorker(ExcelWorkerClient worker)
+    {
         lock (_utilityLock)
             if (_utility is { IsCompletedSuccessfully: true } && _utility.Result == worker)
                 _utility = null;
-        foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
-            _selections.TryRemove(selection.Key, out _);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
@@ -785,11 +790,13 @@ internal sealed class ExcelController : IDisposable
         Justification = "A failed acknowledgement is diagnosed and retried. A rejected receipt cannot replace the independently verified process state.")]
     private void RetireExitedWorker(WorkerRegistration registration, bool explicitDiscovery = false)
     {
+        ExcelWorkerClient worker;
         lock (_shutdownLock)
         {
-            if (!_workers.TryGetValue(registration.PipeName, out var worker)
-                || worker.Registration.Worker != registration.Worker || registration.Worker.IsAlive())
+            if (!_workers.TryGetValue(registration.PipeName, out var candidate)
+                || candidate.Registration.Worker != registration.Worker || registration.Worker.IsAlive())
                 return;
+            worker = candidate;
             if (!explicitDiscovery && registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
                 return;
             if (!explicitDiscovery && registration.Excel is null
@@ -803,6 +810,9 @@ internal sealed class ExcelController : IDisposable
                     // The worker can exit after RefreshWorkerAsync checked its process.
                     // Read its last durable status again before acknowledging the record.
                     var recorded = _registry.Read(registration.PipeName);
+                    // The worker could have published the application only to disk.
+                    if (recorded?.Excel is { } recordedExcel && !OwnedProcessGuard.TryConfirmExited(recordedExcel))
+                        return;
                     if (recorded is not null)
                     {
                         var releaseRecovered = false;
@@ -842,6 +852,7 @@ internal sealed class ExcelController : IDisposable
             foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
                 _selections.TryRemove(selection);
         }
+        ClearUtilityWorker(worker);
     }
 
     private static void ReportWorkerRecordRemovalFailure(ExcelWorkerClient worker, Exception error)
@@ -914,21 +925,11 @@ internal sealed class ExcelController : IDisposable
                             ReportWorkerRecordRemovalFailure(worker, ex);
                         }
                     }
-                    else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName))
-                    {
-                        if (!worker.Registration.Worker.IsAlive())
-                            RetireExitedWorker(worker.Registration);
-                        else
-                            await ReleaseEmptyWorkerAsync(worker);
-                    }
-                    else if (worker.Registration.Excel is { } excel
-                        && OwnedProcessGuard.TryConfirmExited(excel))
-                    {
-                        if (!worker.Registration.Worker.IsAlive())
-                            RetireExitedWorker(worker.Registration);
-                        else
-                            await ReleaseEmptyWorkerAsync(worker);
-                    }
+                    else if (!worker.Registration.Worker.IsAlive())
+                        RetireExitedWorker(worker.Registration);
+                    else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName)
+                        || worker.Registration.Excel is { } excel && OwnedProcessGuard.TryConfirmExited(excel))
+                        await ReleaseEmptyWorkerAsync(worker);
                 }));
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested)
