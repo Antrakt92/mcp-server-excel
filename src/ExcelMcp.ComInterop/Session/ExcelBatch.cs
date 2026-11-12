@@ -440,7 +440,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 "The selected workbook remains open; retry discovery after Excel becomes ready.");
     }
 
-    internal void CloseAttachedWorkbook(string workbookId, bool force = false)
+    internal void CloseAttachedWorkbook(string workbookId, bool force = false, bool saveChanges = false)
     {
         var discovery = RefreshAttachedWorkbooks();
         if (!discovery.Workbooks.Any(workbook =>
@@ -461,11 +461,14 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         var protectedView = FindProtectedView(context.Book);
         try
         {
-            if (protectedView is null)
+            if (protectedView is not null)
+                ExcelShutdownService.CloseProtectedViewWindow(protectedView);
+            else if (saveChanges)
+                ExcelShutdownService.CloseWorkbookAndConfirm(
+                    context.Book, context.App, true, context.WorkbookPath, _logger);
+            else
                 ExcelShutdownService.CloseAndQuit(
                     context.Book, null, false, context.WorkbookPath, _logger, releaseWorkbook: false);
-            else
-                ExcelShutdownService.CloseProtectedViewWindow(protectedView);
         }
         finally
         {
@@ -1868,7 +1871,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         return WorkbookRefreshProbe.Read(_excel!, workbook);
     }
 
-    public void Close()
+    public void Close() => Close(saveChanges: false);
+
+    internal void Close(bool saveChanges)
     {
         lock (_disposeLock)
         {
@@ -1884,7 +1889,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             {
                 ForgetWorkbooksClosedInExcel();
                 ExcelBusyException.ThrowIfNotReady(ReadRefreshState(), "close", this);
-                CloseOwnedWorkbooksBeforeShutdown();
+                CloseOwnedWorkbooksBeforeShutdown(saveChanges: saveChanges);
                 Interlocked.Exchange(ref _disposed, 1);
                 _shutdownCts.Cancel();
                 _workQueue.Writer.TryComplete();
@@ -2060,7 +2065,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         }
     }
 
-    private void CloseOwnedWorkbooksBeforeShutdown(bool onlySaved = false)
+    private void CloseOwnedWorkbooksBeforeShutdown(bool onlySaved = false, bool saveChanges = false)
     {
         if (_excel is null || _workbooks is null)
             throw new InvalidOperationException("Owned Excel workbooks are not initialized.");
@@ -2074,7 +2079,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             try
             {
                 ExcelShutdownService.CloseWorkbookAndConfirm(
-                    workbook, _excel, onlySaved ? null : false, entry.Key, _logger);
+                    workbook, _excel, onlySaved ? null : saveChanges, entry.Key, _logger);
             }
             catch (Exception ex) when (_closedWorkbookPathsDuringShutdown.Count > 0)
             {

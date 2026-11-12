@@ -1824,7 +1824,7 @@ public sealed class SessionManager : IDisposable
 
             BeforeCloseSessionHookForTests?.Invoke();
             SessionDiagnostics.MeasureCloseStage("session-teardown",
-                () => CloseSessionSync(sessionId, batch, force));
+                () => CloseSessionSync(sessionId, batch, force, save));
             closeSucceeded = true;
             return true;
         }
@@ -2015,7 +2015,7 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    private void CloseSessionSync(string sessionId, IExcelBatch batch, bool force)
+    private void CloseSessionSync(string sessionId, IExcelBatch batch, bool force, bool saveChanges)
     {
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -2024,7 +2024,7 @@ public sealed class SessionManager : IDisposable
 
         try
         {
-            CloseBatch(batch, force);
+            CloseBatch(batch, force, saveChanges);
         }
         catch (Exception ex) when (ex is ExcelBusyException
             || batch is IExcelBatchCloseState { ShutdownCommitted: false })
@@ -2078,11 +2078,16 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    private static void CloseBatch(IExcelBatch batch, bool force = false)
+    private static void CloseBatch(IExcelBatch batch, bool force = false, bool saveChanges = false)
     {
         if (batch is AttachedWorkbookBatch attached)
         {
-            attached.Close(force);
+            attached.Close(force, saveChanges);
+            return;
+        }
+        if (saveChanges && batch is ExcelBatch owned)
+        {
+            owned.Close(saveChanges: true);
             return;
         }
 
