@@ -27,7 +27,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Table;
 /// </summary>
 [ServiceCategory("Table")]
 [McpTool("table", Title = "Table Operations", Destructive = true, Category = "data",
-    Description = "Create, change, delete, and append data to Excel Tables (ListObjects). SAFE CREATION: Create checks merged cells, headers, excluded contiguous columns, formula-sort risks, and the effective range. It rejects deterministic blockers; heuristic warnings remain advisory. Formula risk analysis is skipped with an explicit warning when the proposed range exceeds 100,000 cells. CONVERT TO TABLE: Write data to a range, then use create. APPEND: Every input row must match the table's column count; mismatched rows are rejected before writing. STYLING: Pass tableStyle on create or use set-style later; never apply range_format to table headers or data rows. Prefer append/resize/rename over delete+recreate. Deleting tables used by PivotTables or the Data Model breaks those objects. Use table_column for filtering, sorting, and columns.")]
+    Description = "Create, change, delete, and append data to Excel Tables (ListObjects). SAFE CREATION: Create checks merged cells, headers, excluded contiguous columns, formula-sort risks, and the effective range. It rejects deterministic blockers; heuristic warnings remain advisory. Formula risk analysis is skipped with an explicit warning when the proposed range exceeds 100,000 cells. CONVERT TO TABLE: Write data to a range, then use create. APPEND: Every input row must match the table's column count. The table needs empty cells below it for expansion. The totals row is preserved. STYLING: Pass tableStyle on create or use set-style later; never apply range_format to table headers or data rows. Prefer append/resize/rename over delete+recreate. Deleting tables used by PivotTables or the Data Model breaks those objects. Use table_column for filtering, sorting, and columns.")]
 [McpReadOnlyActions("list", "preflight", "read", "get-data", "get-dax")]
 public interface ITableCommands
 {
@@ -117,7 +117,8 @@ public interface ITableCommands
     /// <summary>
     /// Appends rows to an Excel Table (table auto-expands).
     /// Provide EITHER rows (inline JSON 2D array) OR rowsFile (path to .json or .csv file), not both.
-    /// Every row must match the table's column count. All row widths are checked before writing cells.
+    /// Every row must match the table's column count. Expansion requires empty, unmerged cells below the table.
+    /// Existing totals are preserved. Include null for an intentionally blank cell in an appended row.
     /// </summary>
     /// <param name="tableName">Name of the table to append to (table auto-expands)</param>
     /// <param name="rows">2D array of row data to append - every row must match the table's column count and column order. Optional if rowsFile is provided.</param>
