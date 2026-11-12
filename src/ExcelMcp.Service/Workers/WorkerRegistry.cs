@@ -54,7 +54,9 @@ internal sealed class WorkerRegistry
                     throw new InvalidOperationException("Too many retained Excel workers. Inspect the retained processes before retrying.");
                 registrations.Add(registration);
             }
-            else
+            // Only the owning controller can acknowledge a completed record while it is alive.
+            // The worker may have replaced this file with its final status after we opened it.
+            else if (!registration.Controller.IsAlive())
                 File.Delete(path);
         }
         return registrations;

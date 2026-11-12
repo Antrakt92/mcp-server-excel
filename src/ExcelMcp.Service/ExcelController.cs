@@ -47,6 +47,7 @@ internal sealed class ExcelController : IDisposable
     internal event Action<ExcelProcessIdentity>? ExcelProcessPreserved;
     internal event Action<ExcelProcessIdentity>? ExcelProcessReleased;
     internal Action<string, string>? BeforeRecordPathPublicationHookForTests { get; set; }
+    internal Func<ExcelWorkerClient, Task>? BeforeWorkerSnapshotReadForTests { get; set; }
 
     internal ExcelController(
         Func<ServiceRequest, Func<Task<ServiceResponse>>, Task<ServiceResponse>>? trackRequest = null,
@@ -474,17 +475,12 @@ internal sealed class ExcelController : IDisposable
             var recorded = !worker.Registration.Worker.IsAlive()
                 ? _registry.Read(worker.Registration.PipeName)
                 : null;
-            if (recorded is not null)
-                PreserveRecordedNativeExit(worker, recorded);
-            if (recorded is { ReleaseConfirmed: true } released)
+            if (recorded is null || !RecoverRecordedWorkerStatus(worker, recorded))
             {
-                worker.RecordSnapshot(new(released, [],
-                    new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[],"count":0}""" },
-                    null, null, new Dictionary<string, IReadOnlyList<string>>(),
-                    Releasing: true, Revision: (worker.Snapshot?.Revision ?? 0) + 1));
-            }
-            else
+                if (BeforeWorkerSnapshotReadForTests is { } beforeRead)
+                    await beforeRead(worker);
                 await worker.ReadSnapshotAsync(cancellationToken);
+            }
             return ApplyWorkerSnapshot(worker);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -544,7 +540,7 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
-    private void PreserveRecordedNativeExit(ExcelWorkerClient worker, WorkerRegistration recorded)
+    private bool RecoverRecordedWorkerStatus(ExcelWorkerClient worker, WorkerRegistration recorded)
     {
         var current = worker.Registration;
         if (recorded.PipeName != current.PipeName || recorded.Worker != current.Worker
@@ -552,7 +548,7 @@ internal sealed class ExcelController : IDisposable
             || recorded.Build != WorkerRegistry.Build)
             throw new InvalidOperationException("The retained Excel worker record has a mismatched process identity or build.");
 
-        // Durable diagnostics do not restore worker/session ownership or acknowledge release.
+        // An exit observation alone does not restore ownership or acknowledge release.
         if (recorded.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation)
         {
             if ((current.Excel != observation.Identity && current.ReleasedExcel != observation.Identity)
@@ -560,6 +556,14 @@ internal sealed class ExcelController : IDisposable
                 throw new InvalidOperationException("The retained native observation does not match the known Excel process identity.");
             RememberNativeExit(recorded);
         }
+        if (!recorded.ReleaseConfirmed)
+            return false;
+
+        worker.RecordSnapshot(new(recorded, [],
+            new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[],"count":0}""" },
+            null, null, new Dictionary<string, IReadOnlyList<string>>(),
+            Releasing: true, Revision: (worker.Snapshot?.Revision ?? 0) + 1));
+        return true;
     }
 
     private void PublishProcessIdentity(WorkerRegistration registration)
@@ -777,6 +781,8 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A failed acknowledgement is diagnosed and retried. A rejected receipt cannot replace the independently verified process state.")]
     private void RetireExitedWorker(WorkerRegistration registration, bool explicitDiscovery = false)
     {
         lock (_shutdownLock)
@@ -790,6 +796,36 @@ internal sealed class ExcelController : IDisposable
                 && (worker.Snapshot?.Sessions.Count > 0 || _sessions.Values.Contains(worker)
                     || _paths.Values.Any(path => path.Token == registration.PipeName)))
                 return;
+            if (!explicitDiscovery)
+            {
+                try
+                {
+                    // The worker can exit after RefreshWorkerAsync checked its process.
+                    // Read its last durable status again before acknowledging the record.
+                    var recorded = _registry.Read(registration.PipeName);
+                    if (recorded is not null)
+                    {
+                        var releaseRecovered = false;
+                        try
+                        {
+                            releaseRecovered = RecoverRecordedWorkerStatus(worker, recorded);
+                        }
+                        catch (InvalidOperationException ex)
+                        {
+                            System.Diagnostics.Trace.TraceError("Rejected exited Excel worker record: {0}", ex);
+                        }
+                        if (releaseRecovered)
+                            ApplyWorkerSnapshot(worker);
+                    }
+                    _registry.Remove(registration.PipeName);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                    or InvalidDataException or InvalidOperationException)
+                {
+                    ReportWorkerRecordRemovalFailure(worker, ex);
+                    return;
+                }
+            }
             _workers.TryRemove(registration.PipeName, out _);
             _publishedSnapshots.TryRemove(registration.PipeName, out _);
             _newWorkers.TryRemove(registration.PipeName, out _);
@@ -806,6 +842,13 @@ internal sealed class ExcelController : IDisposable
             foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
                 _selections.TryRemove(selection);
         }
+    }
+
+    private static void ReportWorkerRecordRemovalFailure(ExcelWorkerClient worker, Exception error)
+    {
+        worker.StatusError = $"The completed Excel worker record could not be removed: {error.GetType().Name}: {error.Message}";
+        System.Diagnostics.Trace.TraceError("Excel worker {0} completion record could not be removed: {1}",
+            worker.Registration.Worker.ProcessId, error);
     }
 
     internal Task<string?> ShutdownAsync()
@@ -868,10 +911,7 @@ internal sealed class ExcelController : IDisposable
                         }
                         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                         {
-                            worker.StatusError = $"The completed Excel worker record could not be removed: {ex.GetType().Name}: {ex.Message}";
-                            System.Diagnostics.Trace.TraceError(
-                                "Excel worker {0} completion record could not be removed: {1}",
-                                worker.Registration.Worker.ProcessId, ex);
+                            ReportWorkerRecordRemovalFailure(worker, ex);
                         }
                     }
                     else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName))
@@ -885,10 +925,7 @@ internal sealed class ExcelController : IDisposable
                         && OwnedProcessGuard.TryConfirmExited(excel))
                     {
                         if (!worker.Registration.Worker.IsAlive())
-                        {
                             RetireExitedWorker(worker.Registration);
-                            _registry.Remove(worker.Registration.PipeName);
-                        }
                         else
                             await ReleaseEmptyWorkerAsync(worker);
                     }
