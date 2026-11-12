@@ -412,7 +412,7 @@ public class FindOptions
 /// </summary>
 public class ReplaceOptions : FindOptions
 {
-    /// <summary>Whether to replace all occurrences (true) or just first (false)</summary>
+    /// <summary>Replace every occurrence (true) or one occurrence in the first matching cell in row-major order (false).</summary>
     public bool ReplaceAll { get; set; } = true;
 }
 

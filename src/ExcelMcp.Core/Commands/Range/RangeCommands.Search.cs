@@ -108,17 +108,20 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                // Excel COM constants
-                int lookAt = replaceOptions.MatchEntireCell ? 1 : 2; // xlWhole : xlPart
-
-                range.Replace(
-                    What: findValue,
-                    Replacement: replaceValue,
-                    LookAt: lookAt,
-                    SearchOrder: 1, // xlByRows
-                    MatchCase: replaceOptions.MatchCase,
-                    MatchByte: false
-                );
+                if (replaceOptions.ReplaceAll)
+                {
+                    range.Replace(
+                        What: findValue,
+                        Replacement: replaceValue,
+                        LookAt: replaceOptions.MatchEntireCell ? Excel.XlLookAt.xlWhole : Excel.XlLookAt.xlPart,
+                        SearchOrder: Excel.XlSearchOrder.xlByRows,
+                        MatchCase: replaceOptions.MatchCase,
+                        MatchByte: false);
+                }
+                else
+                {
+                    ReplaceFirst(ctx, range, findValue, replaceValue, replaceOptions, ct);
+                }
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
