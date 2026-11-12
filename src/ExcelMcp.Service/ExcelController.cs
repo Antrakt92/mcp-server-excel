@@ -80,15 +80,16 @@ internal sealed class ExcelController : IDisposable
         _workers.Values.Where(worker => worker.Registration.OwnsExcel)
             .Select(worker => worker.Registration.Excel).OfType<ExcelProcessIdentity>().Distinct().ToArray();
 
-    internal async Task<ServiceResponse> ProcessAsync(ServiceRequest request) =>
-        ExcelMcpService.AttachRequestContext(request, await ProcessCoreAsync(request).ConfigureAwait(false));
+    internal async Task<ServiceResponse> ProcessAsync(ServiceRequest request, bool waitForWorkerCompletion = false) =>
+        ExcelMcpService.AttachRequestContext(request,
+            await ProcessCoreAsync(request, waitForWorkerCompletion).ConfigureAwait(false));
 
     private static bool StartsWorkbookWorker(string command) =>
         command is "session.open" or "session.create" or "session.test" or "sheet.copy-to-file" or "sheet.move-to-file";
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "The controller is a failure-transport boundary. It reports the exact worker/transport cause and uncertain workbook outcome without replaying, saving, or discarding work.")]
-    private async Task<ServiceResponse> ProcessCoreAsync(ServiceRequest request)
+    private async Task<ServiceResponse> ProcessCoreAsync(ServiceRequest request, bool waitForWorkerCompletion)
     {
         List<string> reservedPaths = [];
         var reservation = new PathReservation(Guid.NewGuid().ToString("N"),
@@ -127,7 +128,7 @@ internal sealed class ExcelController : IDisposable
             if (_shutdown is not null)
                 return ExcelWorkerHost.Failure(request, "SessionUnavailable", "The service is stopping. No new work was started.");
             if (request.Command == "session.discover")
-                return await DiscoverAsync(request.CallerCancellation);
+                return await DiscoverAsync(request.CallerCancellation, waitForWorkerCompletion);
 
             if (StartsWorkbookWorker(request.Command))
             {
@@ -237,8 +238,10 @@ internal sealed class ExcelController : IDisposable
             if (!worker.Registration.Worker.IsAlive())
                 throw new IOException("The Excel worker exited before this request was sent. Discover open workbooks to reconnect; no work was started.");
             sent = true;
-            return await CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation)
-                .WaitAsync(request.CallerCancellation);
+            var completion = CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation);
+            return waitForWorkerCompletion
+                ? await completion
+                : await completion.WaitAsync(request.CallerCancellation);
         }
         catch (Exception ex)
         {
@@ -683,7 +686,7 @@ internal sealed class ExcelController : IDisposable
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Discovery reports each failed application's exact inspection/connection error alongside other discovered workbooks. A failed application is never presented as an empty successful inspection.")]
-    private async Task<ServiceResponse> DiscoverAsync(CancellationToken cancellationToken)
+    private async Task<ServiceResponse> DiscoverAsync(CancellationToken cancellationToken, bool waitForWorkerCompletion)
     {
         await _discovery.WaitAsync(cancellationToken);
         try
@@ -752,11 +755,13 @@ internal sealed class ExcelController : IDisposable
                     }
                     if (worker.Snapshot is null)
                         await worker.ClaimAsync(cancellationToken);
-                    var response = await CompleteWorkerRequestAsync(new ServiceRequest
+                    var completion = CompleteWorkerRequestAsync(new ServiceRequest
                     {
                         Command = "session.discover",
                         CallerCancellation = cancellationToken
-                    }, worker, [], new PathReservation("discovery")).WaitAsync(cancellationToken);
+                    }, worker, [], new PathReservation("discovery"));
+                    var response = waitForWorkerCompletion ? await completion : await completion.WaitAsync(cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!response.Success)
                     {
                         errors.Add(new(window.Process.ProcessId, response.ErrorMessage ?? "Excel inspection failed."));

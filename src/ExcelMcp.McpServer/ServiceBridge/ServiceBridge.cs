@@ -16,7 +16,9 @@ internal interface IServiceBridgeBackend : IDisposable
 
 internal sealed class ExcelControllerBackend(Service.ExcelController controller) : IServiceBridgeBackend
 {
-    public Task<ServiceResponse> ProcessAsync(ServiceRequest request) => controller.ProcessAsync(request);
+    // The bridge stops the caller's wait separately and keeps admission until the controller records the worker's response.
+    public Task<ServiceResponse> ProcessAsync(ServiceRequest request) =>
+        controller.ProcessAsync(request, waitForWorkerCompletion: true);
     public void RevealSession(string sessionId) => controller.RevealSession(sessionId);
     public string? RequestShutdown() => controller.RequestShutdownAsync().GetAwaiter().GetResult();
     public void Dispose() => controller.Dispose();
