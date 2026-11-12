@@ -60,6 +60,43 @@ public sealed class GeneratedActionContractCliTests : IDisposable
         Assert.Equal("New", args.RootElement.GetProperty("newName").GetString());
     }
 
+    [Theory]
+    [InlineData("drawing add-image --sheet-name Data --image-path fixtures/logo.png",
+        "drawing.add-image", "imagePath", "fixtures/logo.png", """{"sheetName":"Data","imagePath":"fixtures/logo.png"}""")]
+    [InlineData("worksheetstyle add-image --sheet-name Data --cell-address A1 --image-path fixtures/logo.png",
+        "worksheetstyle.add-image", "imagePath", "fixtures/logo.png",
+        """{"sheetName":"Data","cellAddress":"A1","imagePath":"fixtures/logo.png"}""")]
+    [InlineData("querytable create-text --query-table-name Example --sheet-name Data --destination-address A1 --source-path fixtures/data.csv",
+        "querytable.create-text", "sourcePath", "fixtures/data.csv",
+        """{"queryTableName":"Example","sheetName":"Data","destinationAddress":"A1","sourcePath":"fixtures/data.csv"}""")]
+    [InlineData("workbook apply-theme --theme-path fixtures/selected.thmx",
+        "workbook.apply-theme", "themePath", "fixtures/selected.thmx", """{"themePath":"fixtures/selected.thmx"}""")]
+    public async Task LocalFileActions_ResolveRelativePathsBeforeSendingToService(
+        string directCommand, string command, string argumentName, string relativePath, string batchArgs)
+    {
+        var callerDirectory = Environment.CurrentDirectory;
+        var expectedPath = Path.GetFullPath(relativePath, callerDirectory);
+        var success = new ServiceResponse { Success = true, Result = """{"success":true}""" };
+        var (direct, directRequests) = await InProcessCliHelper.RunRecordingAsync(directCommand + " --session target", success);
+        Assert.True(direct.ExitCode == 0, direct.Stdout + direct.Stderr);
+        var directRequest = Assert.Single(directRequests);
+        Assert.Equal(command, directRequest.Command);
+        using var directPayload = JsonDocument.Parse(directRequest.Args!);
+        Assert.Equal(expectedPath, directPayload.RootElement.GetProperty(argumentName).GetString());
+
+        ServiceRequest? batchRequest = null;
+        var input = $$"""[{"command":"{{command}}","sessionId":"target","args":{{batchArgs}}}]""";
+        var batch = await InProcessCliHelper.RunAsync(["batch"], request =>
+        {
+            batchRequest = request;
+            return success;
+        }, input);
+        Assert.True(batch.ExitCode == 0, batch.Stdout + batch.Stderr);
+        Assert.Equal(command, Assert.IsType<ServiceRequest>(batchRequest).Command);
+        using var batchPayload = JsonDocument.Parse(batchRequest.Args!);
+        Assert.Equal(expectedPath, batchPayload.RootElement.GetProperty(argumentName).GetString());
+    }
+
     [Fact]
     public async Task DataModelRefresh_ForwardsNumericTimeoutInProcess()
     {

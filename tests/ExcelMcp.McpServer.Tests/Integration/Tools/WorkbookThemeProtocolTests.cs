@@ -17,9 +17,9 @@ public sealed class WorkbookThemeProtocolTests(RecordingProgramTransportFixture 
         {
             ["action"] = "apply-theme",
             ["workbook_session_id"] = "session-1",
-            ["theme_path"] = "selected.thmx"
+            ["theme_path"] = @"C:\fixture\selected.thmx"
         }, RecordingToolTest.Success("""{"success":true}"""), "workbook.apply-theme",
-            """{"themePath":"selected.thmx"}""");
+            """{"themePath":"C:\\fixture\\selected.thmx"}""");
         Assert.False(call.Result.IsError);
     }
 

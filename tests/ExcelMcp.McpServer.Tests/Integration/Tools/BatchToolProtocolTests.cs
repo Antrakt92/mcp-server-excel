@@ -32,6 +32,38 @@ public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixt
         Assert.Contains("absolute", failure.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("drawing", "drawing.add-image", """{"sheet_name":"Data","image_path":"relative.png"}""",
+        """{"sheetName":"Data","imagePath":"relative.png"}""")]
+    [InlineData("worksheet_style", "worksheetstyle.add-image", """{"sheet_name":"Data","cell_address":"A1","image_path":"relative.png"}""",
+        """{"sheetName":"Data","cellAddress":"A1","imagePath":"relative.png"}""")]
+    [InlineData("querytable", "querytable.create-text",
+        """{"query_table_name":"Example","sheet_name":"Data","destination_address":"A1","source_path":"relative.csv"}""",
+        """{"queryTableName":"Example","sheetName":"Data","destinationAddress":"A1","sourcePath":"relative.csv"}""")]
+    [InlineData("workbook", "workbook.apply-theme", """{"theme_path":"relative.thmx"}""", """{"themePath":"relative.thmx"}""")]
+    public async Task LocalFileActions_RejectRelativePathsBeforeDispatch(
+        string tool, string command, string directArgs, string batchArgs)
+    {
+        var direct = JsonSerializer.Deserialize<Dictionary<string, object?>>(directArgs)!;
+        direct["action"] = command[(command.IndexOf('.') + 1)..];
+        direct["workbook_session_id"] = "recording-session";
+        var directCall = await fixture.CallSequenceAsync(tool, direct, RecordingToolTest.Success("""{"success":true}"""));
+        Assert.Empty(directCall.Requests);
+        Assert.True(directCall.Result.IsError);
+        using var directOutput = Parse(directCall.Result);
+        Assert.Equal("InvalidInput", directOutput.RootElement.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", directOutput.RootElement.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var batch = Arguments($$"""[{"command":"{{command}}","args":{{batchArgs}}}]""");
+        var batchCall = await fixture.CallSequenceAsync("batch", batch, RecordingToolTest.Success("""{"success":true}"""));
+        Assert.Empty(batchCall.Requests);
+        Assert.True(batchCall.Result.IsError);
+        using var batchOutput = Parse(batchCall.Result);
+        var failure = batchOutput.RootElement.GetProperty("results")[0];
+        Assert.Equal("InvalidInput", failure.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", failure.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Discovery_AdvertisesDefaultsAndNestedEntryNames()
     {

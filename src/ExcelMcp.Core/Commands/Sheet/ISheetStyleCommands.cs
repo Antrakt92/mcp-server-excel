@@ -144,7 +144,7 @@ public interface ISheetStyleCommands
     OperationResult AddImage(
         IExcelBatch batch,
         [RequiredParameter] string sheetName,
-        [RequiredParameter] string imagePath,
+        [RequiredParameter, LocalInputFile] string imagePath,
         [RequiredParameter] string cellAddress);
 
     /// <summary>
