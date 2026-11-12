@@ -1590,11 +1590,29 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = MergeExecutionDiagnostics(SerializePartialState(null,
+                PartialState = MergeExecutionDiagnostics(SerializeStartupFailureState(ex, SerializePartialState(null,
                     sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
-                    sessionId, retainedFiles), ex)
+                    sessionId, retainedFiles)), ex)
             }
         };
+    }
+
+    private static string? SerializeStartupFailureState(Exception error, string? partialState)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+        {
+            if (current is not WorkbookCreationPublicationException { FilePublished: true } published)
+                continue;
+
+            var state = partialState is null
+                ? new System.Text.Json.Nodes.JsonObject()
+                : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+            state["filePublished"] = true;
+            state["sessionEstablished"] = false;
+            state["filePath"] = published.FilePath;
+            return state.ToJsonString(ServiceProtocol.JsonOptions);
+        }
+        return partialState;
     }
 
     private static string SerializeVbaEditState(
