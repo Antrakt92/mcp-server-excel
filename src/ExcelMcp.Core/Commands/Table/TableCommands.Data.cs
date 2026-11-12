@@ -209,14 +209,11 @@ public partial class TableCommands
                 }
 
                 object? rawValues = dataBodyRange.Value2;
-                if (rawValues == null)
-                {
-                    result.Success = true;
-                    result.RowCount = 0;
-                    return result;
-                }
+                if (rawValues is null && RangeHelpers.GetDimensions(dataBodyRange) != (1, 1))
+                    throw new InvalidOperationException("Excel did not return values for the table's data range.");
 
-                listRows = table.ListRows;
+                if (visibleOnly)
+                    listRows = table.ListRows;
                 int listRowCount = listRows?.Count ?? 0;
 
                 if (rawValues is object[,] array2D)
@@ -226,16 +223,9 @@ public partial class TableCommands
 
                     for (int r = 1; r <= rows; r++)
                     {
-                        bool includeRow = !visibleOnly;
-                        if (!includeRow)
-                        {
-                            includeRow = IsListRowVisible(listRows, listRowCount, r);
-                        }
-
-                        if (!includeRow)
-                        {
+                        ct.ThrowIfCancellationRequested();
+                        if (visibleOnly && !IsListRowVisible(listRows, listRowCount, r))
                             continue;
-                        }
 
                         var row = new List<object?>(cols);
                         for (int c = 1; c <= cols; c++)
@@ -247,8 +237,7 @@ public partial class TableCommands
                 }
                 else
                 {
-                    bool includeRow = !visibleOnly || IsListRowVisible(listRows, listRowCount, 1);
-                    if (includeRow)
+                    if (!visibleOnly || IsListRowVisible(listRows, listRowCount, 1))
                     {
                         result.Data.Add([rawValues]);
                     }
