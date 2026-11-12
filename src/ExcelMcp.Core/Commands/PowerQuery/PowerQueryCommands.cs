@@ -155,12 +155,13 @@ public partial class PowerQueryCommands : IPowerQueryCommands
         string queryName,
         CancellationToken cancellationToken)
     {
-        var targetSheet = DetermineLoadedSheet(workbook, queryName, cancellationToken);
-        var isLoadedToDataModel = IsQueryLoadedToDataModel(
-            workbook,
-            queryName,
-            cancellationToken);
+        var sheets = FindLoadedSheets(workbook, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { queryName }, cancellationToken);
+        var modelQueries = FindModelQueries(workbook, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { queryName }, cancellationToken);
+        return GetLoadState(sheets.GetValueOrDefault(queryName), modelQueries.Contains(queryName));
+    }
 
+    private static PowerQueryLoadState GetLoadState(string? targetSheet, bool isLoadedToDataModel)
+    {
         var loadMode = (targetSheet != null, isLoadedToDataModel) switch
         {
             (true, true) => PowerQueryLoadMode.LoadToBoth,
@@ -173,18 +174,20 @@ public partial class PowerQueryCommands : IPowerQueryCommands
     }
 
     /// <summary>
-    /// Determines which worksheet a query is loaded to by exact mashup Location identity.
+    /// Finds the first worksheet load for each requested exact mashup Location.
     /// </summary>
-    private static string? DetermineLoadedSheet(
+    private static Dictionary<string, string> FindLoadedSheets(
         Excel.Workbook workbook,
-        string queryName,
+        HashSet<string> unmatchedQueryNames,
         CancellationToken cancellationToken)
     {
+        var loadedSheets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Excel.Sheets? worksheets = null;
         try
         {
             worksheets = workbook.Worksheets;
-            for (int ws = 1; ws <= worksheets.Count; ws++)
+            int worksheetCount = worksheets.Count;
+            for (int ws = 1; ws <= worksheetCount; ws++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Excel.Worksheet? worksheet = null;
@@ -194,16 +197,19 @@ public partial class PowerQueryCommands : IPowerQueryCommands
                 {
                     worksheet = (Excel.Worksheet)worksheets.Item[ws];
                     queryTables = worksheet.QueryTables;
-                    for (int qt = 1; qt <= queryTables.Count; qt++)
+                    int queryTableCount = queryTables.Count;
+                    for (int qt = 1; qt <= queryTableCount; qt++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         Excel.QueryTable? queryTable = null;
                         try
                         {
                             queryTable = queryTables.Item(qt);
-                            if (MatchesWorksheetQueryTable(queryTable, queryName))
+                            if (GetWorksheetQueryLocation(queryTable) is { } location && unmatchedQueryNames.Remove(location))
                             {
-                                return worksheet.Name;
+                                loadedSheets.Add(location, worksheet.Name);
+                                if (unmatchedQueryNames.Count == 0)
+                                    return loadedSheets;
                             }
                         }
                         finally
@@ -214,7 +220,8 @@ public partial class PowerQueryCommands : IPowerQueryCommands
 
                     listObjects = worksheet.ListObjects;
 
-                    for (int lo = 1; lo <= listObjects.Count; lo++)
+                    int listObjectCount = listObjects.Count;
+                    for (int lo = 1; lo <= listObjectCount; lo++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         Excel.ListObject? listObject = null;
@@ -232,9 +239,11 @@ public partial class PowerQueryCommands : IPowerQueryCommands
                                 continue;
                             }
 
-                            if (MatchesWorksheetQueryTable(queryTable, queryName))
+                            if (GetWorksheetQueryLocation(queryTable) is { } location && unmatchedQueryNames.Remove(location))
                             {
-                                return worksheet.Name;
+                                loadedSheets.Add(location, worksheet.Name);
+                                if (unmatchedQueryNames.Count == 0)
+                                    return loadedSheets;
                             }
                         }
                         finally
@@ -257,22 +266,23 @@ public partial class PowerQueryCommands : IPowerQueryCommands
             ComUtilities.Release(ref worksheets);
         }
 
-        return null;
+        return loadedSheets;
     }
 
     private static bool MatchesWorksheetQueryTable(
         Excel.QueryTable queryTable,
-        string queryName)
+        string queryName) =>
+        string.Equals(GetWorksheetQueryLocation(queryTable), queryName, StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetWorksheetQueryLocation(Excel.QueryTable queryTable)
     {
         Excel.WorkbookConnection? connection = null;
         try
         {
             connection = queryTable.WorkbookConnection;
-            return connection != null &&
-                PowerQuery.PowerQueryHelpers.TryGetMashupLocationForInspection(
-                    connection,
-                    out var location) &&
-                string.Equals(location, queryName, StringComparison.OrdinalIgnoreCase);
+            return connection != null && PowerQuery.PowerQueryHelpers.TryGetMashupLocationForInspection(connection, out var location)
+                ? location
+                : null;
         }
         finally
         {
@@ -281,14 +291,14 @@ public partial class PowerQueryCommands : IPowerQueryCommands
     }
 
     /// <summary>
-    /// Determines whether a query is loaded to the Data Model by requiring both
-    /// an exact table name and an exact mashup source Location identity.
+    /// Finds requested queries with both an exact model table name and an exact mashup source Location.
     /// </summary>
-    private static bool IsQueryLoadedToDataModel(
+    private static HashSet<string> FindModelQueries(
         Excel.Workbook workbook,
-        string queryName,
+        HashSet<string> unmatchedQueryNames,
         CancellationToken cancellationToken)
     {
+        var loadedQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Excel.Model? model = null;
         Excel.ModelTables? modelTables = null;
         try
@@ -296,7 +306,8 @@ public partial class PowerQueryCommands : IPowerQueryCommands
             model = workbook.Model;
             modelTables = model.ModelTables;
 
-            for (int i = 1; i <= modelTables.Count; i++)
+            int modelTableCount = modelTables.Count;
+            for (int i = 1; i <= modelTableCount; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Excel.ModelTable? table = null;
@@ -305,15 +316,15 @@ public partial class PowerQueryCommands : IPowerQueryCommands
                 {
                     table = modelTables.Item(i);
                     string tableName = table.Name;
+                    if (!unmatchedQueryNames.Contains(tableName))
+                        continue;
                     sourceConnection = table.SourceWorkbookConnection;
-                    if (string.Equals(
-                            tableName,
-                            queryName,
-                            StringComparison.OrdinalIgnoreCase) &&
-                        sourceConnection != null &&
-                        MatchesDataModelSourceConnection(sourceConnection, queryName))
+                    if (sourceConnection != null && MatchesDataModelSourceConnection(sourceConnection, tableName))
                     {
-                        return true;
+                        loadedQueries.Add(tableName);
+                        unmatchedQueryNames.Remove(tableName);
+                        if (unmatchedQueryNames.Count == 0)
+                            return loadedQueries;
                     }
                 }
                 finally
@@ -329,7 +340,7 @@ public partial class PowerQueryCommands : IPowerQueryCommands
             ComUtilities.Release(ref model);
         }
 
-        return false;
+        return loadedQueries;
     }
 
     private static bool MatchesDataModelSourceConnection(

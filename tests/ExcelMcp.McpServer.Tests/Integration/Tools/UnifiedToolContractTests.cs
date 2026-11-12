@@ -24,19 +24,21 @@ public sealed class McpToolContractBindingTests(RecordingProgramTransportFixture
     [InlineData(true)]
     public async Task RequiredFileOrValue_AcceptsEitherAlternative(bool useFile)
     {
+        const string code = "synthetic-contract-value";
+        var file = Path.Combine(Path.GetTempPath(), "synthetic-contract.m");
         var arguments = new Dictionary<string, object?>
         {
             ["action"] = "evaluate",
             ["workbook_session_id"] = "synthetic-session",
-            [useFile ? "m_code_file" : "m_code"] = "synthetic-contract-value"
+            [useFile ? "m_code_file" : "m_code"] = useFile ? file : code
         };
         var call = await fixture.CallToolAsync("powerquery", arguments,
             new ServiceResponse { Success = true, Result = """{"success":true}""" },
             "powerquery.evaluate",
             JsonSerializer.Serialize(new
             {
-                mCode = useFile ? null : "synthetic-contract-value",
-                mCodeFile = useFile ? "synthetic-contract-value" : null
+                mCode = useFile ? null : code,
+                mCodeFile = useFile ? file : null
             }, ServiceProtocol.JsonOptions));
         Assert.False(call.Result.IsError == true);
     }

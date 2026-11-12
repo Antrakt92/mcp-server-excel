@@ -2,6 +2,7 @@ using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Commands.Workbook;
 using Sbroenne.ExcelMcp.Core.Models;
+using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Sbroenne.ExcelMcp.Core.Commands.Chart;
@@ -10,7 +11,8 @@ public partial class ChartCommands
 {
     /// <inheritdoc />
     public OperationResult ExportImage(
-        IExcelBatch batch, string chartName, string targetPath, ChartImageFormat imageFormat = ChartImageFormat.Png, bool overwrite = false)
+        IExcelBatch batch, string chartName, string targetPath, ChartImageFormat imageFormat = ChartImageFormat.Png,
+        bool overwrite = false, string? chartSheetName = null)
     {
         if (!Enum.IsDefined(imageFormat)) throw new ArgumentOutOfRangeException(nameof(imageFormat));
         var output = WorkbookCommands.ValidateOutputPath(targetPath, overwrite);
@@ -23,44 +25,36 @@ public partial class ChartCommands
             _ => false
         };
         if (!matches) throw new ArgumentException("Output extension must match Png (.png), Jpeg (.jpg/.jpeg) or Gif (.gif).", nameof(targetPath));
-        var writePath = WorkbookCommands.GetWritePath(output, overwrite);
-        try
+        var writePath = WorkbookCommands.CreateOutputStagingPath(output);
+        return batch.Execute((ctx, ct) =>
         {
-            var result = batch.Execute((ctx, ct) =>
-            {
-                var found = FindChart(ctx.Book, chartName);
-                Excel.Chart? chart = null;
-                try
-                {
-                    chart = (Excel.Chart?)found.Chart ?? throw new ArgumentException($"Chart '{chartName}' not found.");
-                    found.Chart = null;
-                    ct.ThrowIfCancellationRequested();
-                    var filter = imageFormat == ChartImageFormat.Jpeg ? "JPG" : imageFormat.ToString().ToUpperInvariant();
-                    ValidateImageOutput(chart.Export(writePath, filter, false), writePath, imageFormat);
-                    return new OperationResult { Success = true, FilePath = output, Action = "export-image" };
-                }
-                finally
-                {
-                    ComUtilities.Release(ref chart);
-                    if (found.Shape != null) ComUtilities.Release(ref found.Shape!);
-                    if (found.Chart != null) ComUtilities.Release(ref found.Chart!);
-                }
-            });
-            WorkbookCommands.CommitOutput(writePath, output);
-            return result;
-        }
-        catch (Exception exportError)
-        {
+            var found = FindChart(ctx.Book, chartName, chartSheetName);
+            Excel.Chart? chart = null;
+            Exception? operationFailure = null;
             try
             {
-                File.Delete(writePath);
+                chart = (Excel.Chart?)found.Chart ?? throw new ArgumentException($"Chart '{chartName}' not found.");
+                found.Chart = null;
+                ct.ThrowIfCancellationRequested();
+                var filter = imageFormat == ChartImageFormat.Jpeg ? "JPG" : imageFormat.ToString().ToUpperInvariant();
+                ValidateImageOutput(chart.Export(writePath, filter, false), writePath, imageFormat);
+                WorkbookCommands.BeforeOutputCommitHookForTests?.Invoke(writePath);
+                WorkbookCommands.PublishStagedOutput(writePath, output, overwrite);
+                return new OperationResult { Success = true, FilePath = output, Action = "export-image" };
             }
-            catch (Exception cleanupError)
+            catch (Exception exception)
             {
-                throw new AggregateException("Chart image export and removal of its failed output both failed.", exportError, cleanupError);
+                operationFailure = exception;
+                throw;
             }
-            throw;
-        }
+            finally
+            {
+                ComUtilities.Release(ref chart);
+                if (found.Shape != null) ComUtilities.Release(ref found.Shape!);
+                if (found.Chart != null) ComUtilities.Release(ref found.Chart!);
+                OperationCleanup.Run(() => File.Delete(writePath), operationFailure);
+            }
+        });
     }
 
     private static void ValidateImageOutput(bool exported, string writePath, ChartImageFormat imageFormat)

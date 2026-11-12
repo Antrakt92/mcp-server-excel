@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.CLI.Tests.Helpers;
+using Sbroenne.ExcelMcp.Core.Utilities;
 using Sbroenne.ExcelMcp.Service;
 using Xunit;
 using Xunit.Abstractions;
@@ -57,6 +58,43 @@ public sealed class GeneratedActionContractCliTests : IDisposable
         using var args = JsonDocument.Parse(dispatched.Args!);
         Assert.Equal("Old", args.RootElement.GetProperty("oldName").GetString());
         Assert.Equal("New", args.RootElement.GetProperty("newName").GetString());
+    }
+
+    [Theory]
+    [InlineData("drawing add-image --sheet-name Data --image-path fixtures/logo.png",
+        "drawing.add-image", "imagePath", "fixtures/logo.png", """{"sheetName":"Data","imagePath":"fixtures/logo.png"}""")]
+    [InlineData("worksheetstyle add-image --sheet-name Data --cell-address A1 --image-path fixtures/logo.png",
+        "worksheetstyle.add-image", "imagePath", "fixtures/logo.png",
+        """{"sheetName":"Data","cellAddress":"A1","imagePath":"fixtures/logo.png"}""")]
+    [InlineData("querytable create-text --query-table-name Example --sheet-name Data --destination-address A1 --source-path fixtures/data.csv",
+        "querytable.create-text", "sourcePath", "fixtures/data.csv",
+        """{"queryTableName":"Example","sheetName":"Data","destinationAddress":"A1","sourcePath":"fixtures/data.csv"}""")]
+    [InlineData("workbook apply-theme --theme-path fixtures/selected.thmx",
+        "workbook.apply-theme", "themePath", "fixtures/selected.thmx", """{"themePath":"fixtures/selected.thmx"}""")]
+    public async Task LocalFileActions_ResolveRelativePathsBeforeSendingToService(
+        string directCommand, string command, string argumentName, string relativePath, string batchArgs)
+    {
+        var callerDirectory = Environment.CurrentDirectory;
+        var expectedPath = Path.GetFullPath(relativePath, callerDirectory);
+        var success = new ServiceResponse { Success = true, Result = """{"success":true}""" };
+        var (direct, directRequests) = await InProcessCliHelper.RunRecordingAsync(directCommand + " --session target", success);
+        Assert.True(direct.ExitCode == 0, direct.Stdout + direct.Stderr);
+        var directRequest = Assert.Single(directRequests);
+        Assert.Equal(command, directRequest.Command);
+        using var directPayload = JsonDocument.Parse(directRequest.Args!);
+        Assert.Equal(expectedPath, directPayload.RootElement.GetProperty(argumentName).GetString());
+
+        ServiceRequest? batchRequest = null;
+        var input = $$"""[{"command":"{{command}}","sessionId":"target","args":{{batchArgs}}}]""";
+        var batch = await InProcessCliHelper.RunAsync(["batch"], request =>
+        {
+            batchRequest = request;
+            return success;
+        }, input);
+        Assert.True(batch.ExitCode == 0, batch.Stdout + batch.Stderr);
+        Assert.Equal(command, Assert.IsType<ServiceRequest>(batchRequest).Command);
+        using var batchPayload = JsonDocument.Parse(batchRequest.Args!);
+        Assert.Equal(expectedPath, batchPayload.RootElement.GetProperty(argumentName).GetString());
     }
 
     [Fact]
@@ -267,7 +305,7 @@ public sealed class GeneratedActionContractCliTests : IDisposable
     }
 
     [Fact]
-    public async Task RawBatch_ReportsMissingFileAliasesAsIndexedValidationErrors()
+    public async Task RawBatch_ReportsMissingFileAliasesAsIndexedWorkerErrors()
     {
         var firstMissingPath = Path.Join(_tempDirectory, "missing-first.m");
         var secondMissingPath = Path.Join(_tempDirectory, "missing-second.m");
@@ -288,9 +326,25 @@ public sealed class GeneratedActionContractCliTests : IDisposable
                 }
             }));
 
-        var result = await InProcessCliHelper.RunWithServiceAsync(["batch", "--input", inputPath]);
+        var received = new List<string>();
+        var result = await InProcessCliHelper.RunAsync(["batch", "--input", inputPath], request =>
+        {
+            using var args = JsonDocument.Parse(request.Args!);
+            var file = args.RootElement.GetProperty("mCodeFile").GetString()!;
+            received.Add(file);
+            var failure = Assert.Throws<FileNotFoundException>(() =>
+                ParameterTransforms.ResolveFileOrValue(null, file, "mCode"));
+            return new ServiceResponse
+            {
+                Success = false,
+                ErrorMessage = failure.Message,
+                ErrorCategory = OperationFailureClassifier.Classify(failure),
+                ExceptionType = failure.GetType().Name
+            };
+        });
 
         Assert.Equal(1, result.ExitCode);
+        Assert.Equal([firstMissingPath, secondMissingPath], received);
         var outputLines = result.Stdout.Split(
             Environment.NewLine,
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

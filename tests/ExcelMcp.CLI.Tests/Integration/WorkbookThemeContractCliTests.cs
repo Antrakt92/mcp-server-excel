@@ -33,7 +33,8 @@ public sealed class WorkbookThemeContractCliTests
         if (apply)
         {
             using var args = JsonDocument.Parse(captured.Args!);
-            Assert.Equal("selected.thmx", args.RootElement.GetProperty("themePath").GetString());
+            Assert.Equal(Path.GetFullPath("selected.thmx", Environment.CurrentDirectory),
+                args.RootElement.GetProperty("themePath").GetString());
         }
         else
             Assert.Null(captured.Args);

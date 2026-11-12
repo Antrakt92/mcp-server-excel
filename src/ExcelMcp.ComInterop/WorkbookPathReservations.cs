@@ -112,6 +112,11 @@ internal sealed class WorkbookPathReservations<T>(Func<T, T, bool>? sameOwner = 
     private WorkbookFileIdentity Prepare(string key)
     {
         var identity = Resolve(key);
+        // A missing destination or a URL can only match a stable path key.
+        // An existing file can also match a claim through its physical file ID.
+        if (identity.FileKey is null)
+            return identity;
+
         // A destination may have been created since it was reserved. Keep the stable path
         // claim while learning its file ID before another hard-link name can be admitted.
         foreach (var entry in _claims) Remember(entry.Value, Resolve(entry.Key));

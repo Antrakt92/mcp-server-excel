@@ -113,7 +113,8 @@ public interface ISheetCommands
     /// <summary>
     /// Moves a worksheet to another file without requiring an existing session.
     /// Creates a temporary Excel instance, opens both files, performs the move,
-    /// saves both files, and closes them on success.
+    /// saves the destination before the source, and closes both on success.
+    /// If the source save fails after the destination save, both files may contain the sheet.
     /// Failure can retain both workbooks in a reported recovery session; inspect before retrying.
     /// Removes the sheet from the source and saves both workbooks. No tool-level undo;
     /// closing another session without saving cannot reverse this saved transfer.

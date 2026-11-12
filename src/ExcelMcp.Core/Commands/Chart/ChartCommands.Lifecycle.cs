@@ -93,72 +93,22 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
     }
 
     /// <inheritdoc />
-    public ChartInfoResult Read(IExcelBatch batch, string chartName)
+    public ChartInfoResult Read(IExcelBatch batch, string chartName, string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            // Find chart by name across all worksheets
-            Excel.Sheets? worksheets = null;
+            var found = FindChart(ctx.Book, chartName, chartSheetName);
             try
             {
-                worksheets = ctx.Book.Worksheets;
-                int wsCount = Convert.ToInt32(worksheets.Count);
-
-                for (int i = 1; i <= wsCount; i++)
-                {
-                    Excel.Worksheet? worksheet = null;
-                    Excel.Shapes? shapes = null;
-
-                    try
-                    {
-                        worksheet = (Excel.Worksheet)worksheets.Item[i];
-                        string sheetName = worksheet.Name?.ToString() ?? $"Sheet{i}";
-                        shapes = worksheet.Shapes;
-                        int shapeCount = Convert.ToInt32(shapes.Count);
-
-                        for (int j = 1; j <= shapeCount; j++)
-                        {
-                            Excel.Shape? shape = null;
-                            Excel.Chart? chart = null;
-
-                            try
-                            {
-                                shape = shapes.Item(j);
-
-                                if ((int)shape.Type != 3)
-                                {
-                                    continue;
-                                }
-
-                                string shapeName = shape.Name?.ToString() ?? string.Empty;
-                                if (!shapeName.Equals(chartName, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-
-                                chart = shape.Chart;
-                                IChartStrategy strategy = _pivotStrategy.CanHandle(chart) ? _pivotStrategy : _regularStrategy;
-                                return strategy.GetDetailedInfo(chart, chartName, sheetName, shape);
-                            }
-                            finally
-                            {
-                                ComUtilities.Release(ref chart);
-                                ComUtilities.Release(ref shape);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref shapes);
-                        ComUtilities.Release(ref worksheet);
-                    }
-                }
-
-                throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                if (found.Chart is null || found.Shape is null)
+                    throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                IChartStrategy strategy = _pivotStrategy.CanHandle(found.Chart) ? _pivotStrategy : _regularStrategy;
+                return strategy.GetDetailedInfo(found.Chart, chartName, found.SheetName, found.Shape);
             }
             finally
             {
-                ComUtilities.Release(ref worksheets);
+                ComUtilities.Release(ref found.Chart);
+                ComUtilities.Release(ref found.Shape);
             }
         });
     }
@@ -376,7 +326,8 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         double width = 400,
         double height = 300,
         string? chartName = null,
-        string? targetRange = null)
+        string? targetRange = null,
+        string? pivotSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -400,11 +351,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
             try
             {
                 // Find PivotTable
-                pivotTable = (Excel.PivotTable?)FindPivotTable(ctx.Book, pivotTableName);
-                if (pivotTable == null)
-                {
-                    throw new InvalidOperationException($"PivotTable '{pivotTableName}' not found in workbook.");
-                }
+                pivotTable = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, pivotSheetName);
 
                 // Get target worksheet
                 worksheets = (Excel.Sheets)ctx.Book.Worksheets;
@@ -461,8 +408,10 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                 pivotLayout = chart.PivotLayout;
                 linkedPivotTable = pivotLayout?.PivotTable;
 
-                string linkedPivotTableName = linkedPivotTable?.Name ?? string.Empty;
-                if (!linkedPivotTableName.Equals(pivotTableName, StringComparison.OrdinalIgnoreCase))
+                if (linkedPivotTable is null ||
+                    !string.Equals(linkedPivotTable.Name, pivotTable.Name, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(CoreLookupHelpers.GetPivotWorksheetName(linkedPivotTable),
+                        sourceWorksheet.Name, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
                         $"Excel did not link the new PivotChart to PivotTable '{pivotTableName}'.");
@@ -492,7 +441,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                     SheetName = sheetName,
                     ChartType = (ChartType)chart.ChartType,
                     IsPivotChart = true,
-                    LinkedPivotTable = linkedPivotTableName,
+                    LinkedPivotTable = linkedPivotTable.Name,
                     Left = finalLeft,
                     Top = finalTop,
                     Width = finalWidth,
@@ -577,68 +526,21 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         CreatedObjectFailure.Create("chart", createdName, sheetName, step, cause);
 
     /// <inheritdoc />
-    public OperationResult Delete(IExcelBatch batch, string chartName)
+    public OperationResult Delete(IExcelBatch batch, string chartName, string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            // Find and delete chart
-            Excel.Sheets? worksheets = null;
+            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out _, chartSheetName);
             try
             {
-                worksheets = ctx.Book.Worksheets;
-                int wsCount = Convert.ToInt32(worksheets.Count);
-
-                for (int i = 1; i <= wsCount; i++)
-                {
-                    Excel.Worksheet? worksheet = null;
-                    Excel.Shapes? shapes = null;
-
-                    try
-                    {
-                        worksheet = (Excel.Worksheet)worksheets.Item[i];
-                        shapes = worksheet.Shapes;
-                        int shapeCount = Convert.ToInt32(shapes.Count);
-
-                        for (int j = 1; j <= shapeCount; j++)
-                        {
-                            Excel.Shape? shape = null;
-
-                            try
-                            {
-                                shape = shapes.Item(j);
-
-                                if ((int)shape.Type != 3)
-                                {
-                                    continue;
-                                }
-
-                                string shapeName = shape.Name?.ToString() ?? string.Empty;
-                                if (!shapeName.Equals(chartName, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-
-                                shape.Delete();
-                                return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
-                            }
-                            finally
-                            {
-                                ComUtilities.Release(ref shape);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref shapes);
-                        ComUtilities.Release(ref worksheet);
-                    }
-                }
-
-                throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                if (shape is null)
+                    throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                shape.Delete();
+                return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             finally
             {
-                ComUtilities.Release(ref worksheets);
+                ComUtilities.Release(ref shape);
             }
         });
     }
@@ -650,92 +552,39 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
         double? left = null,
         double? top = null,
         double? width = null,
-        double? height = null)
+        double? height = null,
+        string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            // Find chart and update position/size
-            Excel.Sheets? worksheets = null;
+            Excel.Shape? shape = FindChartShape(ctx.Book, chartName, out var sheetName, chartSheetName);
+            Excel.Worksheet? worksheet = null;
             try
             {
-                worksheets = ctx.Book.Worksheets;
-                int wsCount = worksheets.Count;
-                for (int i = 1; i <= wsCount; i++)
+                if (shape is null)
+                    throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                worksheet = Utilities.WorksheetLookup.Get(ctx.Book, sheetName);
+                if (left.HasValue) shape.Left = (float)left.Value;
+                if (top.HasValue) shape.Top = (float)top.Value;
+                if (width.HasValue) shape.Width = (float)width.Value;
+                if (height.HasValue) shape.Height = (float)height.Value;
+
+                var warnings = ChartPositionHelpers.DetectCollisions(
+                    worksheet, shape.Left, shape.Top, shape.Width, shape.Height, shape.Name);
+                int chartCount = ChartPositionHelpers.CountCharts(worksheet);
+                return new OperationResult
                 {
-                    Excel.Worksheet? worksheet = null;
-                    Excel.Shapes? shapes = null;
-
-                    try
-                    {
-                        worksheet = (Excel.Worksheet)worksheets.Item[i];
-                        shapes = worksheet.Shapes;
-                        int shapeCount = shapes.Count;
-                        for (int j = 1; j <= shapeCount; j++)
-                        {
-                            Excel.Shape? shape = null;
-                            try
-                            {
-                                shape = shapes.Item(j);
-                                if ((int)shape.Type != 3)
-                                {
-                                    continue;
-                                }
-
-                                string shapeName = shape.Name?.ToString() ?? string.Empty;
-                                if (!shapeName.Equals(chartName, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-
-                                if (left.HasValue) shape.Left = (float)left.Value;
-                                if (top.HasValue) shape.Top = (float)top.Value;
-                                if (width.HasValue) shape.Width = (float)width.Value;
-                                if (height.HasValue) shape.Height = (float)height.Value;
-
-                                double finalLeft = shape.Left;
-                                double finalTop = shape.Top;
-                                double finalWidth = shape.Width;
-                                double finalHeight = shape.Height;
-                                var warnings = ChartPositionHelpers.DetectCollisions(
-                                    worksheet, finalLeft, finalTop, finalWidth, finalHeight, shapeName);
-                                int chartCount = ChartPositionHelpers.CountCharts(worksheet);
-
-                                return new OperationResult
-                                {
-                                    Success = true,
-                                    FilePath = batch.WorkbookPath,
-                                    Message = ChartPositionHelpers.FormatCollisionWarnings(warnings, chartCount)
-                                };
-                            }
-                            finally
-                            {
-                                ComUtilities.Release(ref shape);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref shapes);
-                        ComUtilities.Release(ref worksheet);
-                    }
-                }
-
-                throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
+                    Success = true,
+                    FilePath = batch.WorkbookPath,
+                    Message = ChartPositionHelpers.FormatCollisionWarnings(warnings, chartCount)
+                };
             }
             finally
             {
-                ComUtilities.Release(ref worksheets);
+                ComUtilities.Release(ref worksheet);
+                ComUtilities.Release(ref shape);
             }
         });
     }
 
-    /// <summary>
-    /// Finds a PivotTable by name across all worksheets.
-    /// Delegates to CoreLookupHelpers.TryFindPivotTable for the actual lookup.
-    /// </summary>
-    private static Excel.PivotTable? FindPivotTable(Excel.Workbook workbook, string pivotTableName)
-    {
-        CoreLookupHelpers.TryFindPivotTable(workbook, pivotTableName, out Excel.PivotTable? pivotTable);
-        return pivotTable;
-    }
 }

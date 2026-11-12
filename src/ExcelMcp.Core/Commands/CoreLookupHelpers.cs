@@ -1,4 +1,5 @@
 using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.Core.Models;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
@@ -12,7 +13,7 @@ public static class CoreLookupHelpers
     #region PivotTable Lookup
 
     /// <summary>
-    /// Tries to find a PivotTable by name across all worksheets.
+    /// Tries to find a unique PivotTable by name across all worksheets.
     /// </summary>
     /// <param name="workbook">The workbook to search</param>
     /// <param name="pivotTableName">Name of the PivotTable to find</param>
@@ -24,6 +25,8 @@ public static class CoreLookupHelpers
     public static bool TryFindPivotTable(Excel.Workbook workbook, string pivotTableName, out Excel.PivotTable? pivotTable)
     {
         pivotTable = null;
+        Excel.PivotTable? match = null;
+        string? matchSheetName = null;
         Excel.Sheets? sheets = null;
 
         try
@@ -53,9 +56,19 @@ public static class CoreLookupHelpers
 
                             if (ptName.Equals(pivotTableName, StringComparison.OrdinalIgnoreCase))
                             {
-                                pivotTable = pt;
+                                if (match is not null)
+                                {
+                                    throw new OperationFailureException(
+                                        OperationFailureCategory.Conflict,
+                                        $"PivotTable '{pivotTableName}' is ambiguous. It matches a report on worksheet " +
+                                        $"'{matchSheetName}' and a report on worksheet '{sheet.Name}'. " +
+                                        "Specify the worksheet when reading the PivotTable, or give the reports distinct names " +
+                                        "in Excel before retrying a name-only command.");
+                                }
+
+                                matchSheetName = sheet.Name;
+                                match = pt;
                                 pt = null;
-                                return true;
                             }
                         }
                         finally
@@ -70,17 +83,20 @@ public static class CoreLookupHelpers
                     ComUtilities.Release(ref sheet);
                 }
             }
+
+            pivotTable = match;
+            match = null;
+            return pivotTable is not null;
         }
         finally
         {
+            ComUtilities.Release(ref match);
             ComUtilities.Release(ref sheets);
         }
-
-        return false;
     }
 
     /// <summary>
-    /// Finds a PivotTable by name across all worksheets, throwing if not found.
+    /// Finds a unique PivotTable by name across all worksheets.
     /// </summary>
     /// <param name="workbook">The workbook to search</param>
     /// <param name="pivotTableName">Name of the PivotTable to find</param>
@@ -97,6 +113,42 @@ public static class CoreLookupHelpers
         }
 
         return pivotTable!;
+    }
+
+    internal static Excel.PivotTable FindPivotTableOnSheet(
+        Excel.Workbook workbook, string pivotTableName, string? pivotSheetName)
+    {
+        if (pivotSheetName is null)
+            return FindPivotTable(workbook, pivotTableName);
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(pivotSheetName);
+        Excel.Worksheet? sheet = null;
+        Excel.PivotTables? pivotTables = null;
+        try
+        {
+            sheet = Utilities.WorksheetLookup.Get(workbook, pivotSheetName);
+            pivotTables = (Excel.PivotTables)sheet.PivotTables();
+            return pivotTables.Item(pivotTableName);
+        }
+        finally
+        {
+            ComUtilities.Release(ref pivotTables);
+            ComUtilities.Release(ref sheet);
+        }
+    }
+
+    internal static string GetPivotWorksheetName(Excel.PivotTable pivotTable)
+    {
+        Excel.Worksheet? sheet = null;
+        try
+        {
+            sheet = (Excel.Worksheet)pivotTable.Parent;
+            return sheet.Name;
+        }
+        finally
+        {
+            ComUtilities.Release(ref sheet);
+        }
     }
 
     #endregion

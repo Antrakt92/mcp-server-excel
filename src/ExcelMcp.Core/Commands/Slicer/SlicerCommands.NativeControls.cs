@@ -9,7 +9,7 @@ public sealed partial class SlicerCommands
 {
     /// <inheritdoc />
     public SlicerStateResult CreateTimeline(IExcelBatch batch, string pivotTableName, string fieldName,
-        string slicerName, string destinationSheet, string position)
+        string slicerName, string destinationSheet, string position, string? pivotSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -22,7 +22,7 @@ public sealed partial class SlicerCommands
             Excel.Slicer? slicer = null;
             try
             {
-                pivot = CoreLookupHelpers.FindPivotTable(ctx.Book, pivotTableName);
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, pivotSheetName);
                 (sheet, anchor) = SlicerPlacement.ResolveDestination(ctx.Book, destinationSheet, position, ct);
                 if (sheet.ProtectDrawingObjects)
                     throw new InvalidOperationException("Unprotect drawing objects before creating a timeline.");
@@ -165,20 +165,24 @@ public sealed partial class SlicerCommands
         });
 
     /// <inheritdoc />
-    public SlicerStateResult ConnectPivotTable(IExcelBatch batch, string slicerName, string pivotTableName) =>
-        ChangeConnection(batch, slicerName, pivotTableName, true);
+    public SlicerStateResult ConnectPivotTable(IExcelBatch batch, string slicerName, string pivotTableName,
+        string? pivotSheetName = null) =>
+        ChangeConnection(batch, slicerName, pivotTableName, pivotSheetName, true);
 
     /// <inheritdoc />
-    public SlicerStateResult DisconnectPivotTable(IExcelBatch batch, string slicerName, string pivotTableName) =>
-        ChangeConnection(batch, slicerName, pivotTableName, false);
+    public SlicerStateResult DisconnectPivotTable(IExcelBatch batch, string slicerName, string pivotTableName,
+        string? pivotSheetName = null) =>
+        ChangeConnection(batch, slicerName, pivotTableName, pivotSheetName, false);
 
-    private static SlicerStateResult ChangeConnection(IExcelBatch batch, string slicerName, string pivotTableName, bool connect) =>
+    private static SlicerStateResult ChangeConnection(IExcelBatch batch, string slicerName, string pivotTableName,
+        string? pivotSheetName, bool connect) =>
         WithSlicer(batch, slicerName, (book, slicer, cache, ct) =>
         {
             if (cache.List)
                 throw new ArgumentException("Excel Table slicers cannot connect to PivotTables.");
             Excel.PivotTable? target = null;
             Excel.SlicerPivotTables? pivots = null;
+            Excel.PivotTable? connected = null;
             Excel.PivotTable? source = null;
             Excel.PivotCache? sourceCache = null;
             Excel.PivotCache? targetCache = null;
@@ -186,12 +190,15 @@ public sealed partial class SlicerCommands
             Excel.WorkbookConnection? targetConnection = null;
             try
             {
-                target = CoreLookupHelpers.FindPivotTable(book, pivotTableName);
                 pivots = cache.PivotTables;
-                var names = ReadConnections(cache, ct);
-                bool connected = names.Contains(target.Name, StringComparer.OrdinalIgnoreCase);
                 if (connect)
                 {
+                    target = CoreLookupHelpers.FindPivotTableOnSheet(book, pivotTableName, pivotSheetName);
+                    connected = SlicerConnections.Find(pivots, target.Name,
+                        CoreLookupHelpers.GetPivotWorksheetName(target), ct);
+                    if (connected is not null)
+                        return State(batch, slicer, cache, ct);
+
                     if (pivots.Count == 0)
                         throw new InvalidOperationException("The control has no source PivotTable connection.");
                     source = pivots[1];
@@ -212,12 +219,12 @@ public sealed partial class SlicerCommands
                         if (!compatibleDataModel)
                             throw new ArgumentException("PivotTables must share the existing native PivotCache unless both use the same workbook Data Model connection; no cache is rebuilt or replaced.");
                     }
-                    if (!connected)
-                        pivots.AddPivotTable(target);
+                    pivots.AddPivotTable(target);
                 }
                 else
                 {
-                    if (!connected)
+                    target = SlicerConnections.Find(pivots, pivotTableName, pivotSheetName, ct);
+                    if (target is null)
                         throw new ArgumentException($"PivotTable '{pivotTableName}' is not connected to this control.");
                     if (pivots.Count == 1)
                         throw new ArgumentException("Keep at least one PivotTable connection; delete the control instead to remove it.");
@@ -232,8 +239,9 @@ public sealed partial class SlicerCommands
                 ComUtilities.Release(ref targetCache);
                 ComUtilities.Release(ref sourceCache);
                 ComUtilities.Release(ref source);
-                ComUtilities.Release(ref pivots);
+                ComUtilities.Release(ref connected);
                 ComUtilities.Release(ref target);
+                ComUtilities.Release(ref pivots);
             }
         });
 
@@ -301,7 +309,8 @@ public sealed partial class SlicerCommands
         details.IsTimeline = cache.SlicerCacheType == Excel.XlSlicerCacheType.xlTimeline;
         details.IsTable = cache.List;
         details.FilterCleared = cache.FilterCleared;
-        details.ConnectedPivotTables = ReadConnections(cache, ct);
+        details.ConnectedPivotTableReferences = ReadConnections(cache, ct);
+        details.ConnectedPivotTables = details.ConnectedPivotTableReferences.Select(pivot => pivot.PivotTableName).ToList();
         Excel.Worksheet? parent = null;
         Excel.ListObject? table = null;
         object? style = null;
@@ -416,11 +425,11 @@ public sealed partial class SlicerCommands
         }
     }
 
-    private static List<string> ReadConnections(Excel.SlicerCache cache, CancellationToken ct)
+    private static List<SlicerPivotTableReference> ReadConnections(Excel.SlicerCache cache, CancellationToken ct)
     {
-        List<string> names = [];
+        List<SlicerPivotTableReference> references = [];
         if (cache.List)
-            return names;
+            return references;
         Excel.SlicerPivotTables? pivots = null;
         try
         {
@@ -432,14 +441,14 @@ public sealed partial class SlicerCommands
                 try
                 {
                     pivot = pivots[index];
-                    names.Add(pivot.Name);
+                    references.Add(new SlicerPivotTableReference(pivot.Name, CoreLookupHelpers.GetPivotWorksheetName(pivot)));
                 }
                 finally
                 {
                     ComUtilities.Release(ref pivot);
                 }
             }
-            return names;
+            return references;
         }
         finally
         {

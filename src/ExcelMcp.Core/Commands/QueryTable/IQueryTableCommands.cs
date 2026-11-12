@@ -46,7 +46,7 @@ public interface IQueryTableCommands
     OperationResult CreateText(
         IExcelBatch batch,
         [RequiredParameter] string queryTableName,
-        [RequiredParameter] string sourcePath,
+        [RequiredParameter, LocalInputFile] string sourcePath,
         [RequiredParameter] string sheetName,
         [RequiredParameter] string destinationAddress,
         string delimiter = ",",

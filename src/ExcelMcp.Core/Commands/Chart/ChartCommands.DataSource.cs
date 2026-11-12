@@ -109,59 +109,72 @@ public partial class ChartCommands
         });
     }
 
-    /// <summary>
-    /// Finds a chart by name across all worksheets.
-    /// Returns result with chart, shape, sheetName properties. Caller must release chart and shape.
-    /// </summary>
-    private static ChartFindResult FindChart(Excel.Workbook workbook, string chartName)
+    /// <summary>Finds a unique embedded chart. The caller releases the returned chart and shape.</summary>
+    private static ChartFindResult FindChart(Excel.Workbook workbook, string chartName, string? chartSheetName = null)
     {
-        Excel.Sheets? worksheets = null;
+        Excel.Shape? shape = FindChartShape(workbook, chartName, out var sheetName, chartSheetName);
         try
         {
-            worksheets = workbook.Worksheets;
-            int wsCount = Convert.ToInt32(worksheets.Count);
+            var found = new ChartFindResult { Shape = shape, Chart = shape?.Chart, SheetName = sheetName };
+            shape = null;
+            return found;
+        }
+        finally
+        {
+            ComUtilities.Release(ref shape);
+        }
+    }
 
-            for (int i = 1; i <= wsCount; i++)
+    private static Excel.Shape? FindChartShape(Excel.Workbook workbook, string chartName, out string sheetName,
+        string? chartSheetName = null)
+    {
+        sheetName = string.Empty;
+        Excel.Sheets? worksheets = null;
+        Excel.Shape? match = null;
+        try
+        {
+            if (chartSheetName is null)
+                worksheets = workbook.Worksheets;
+            else
+                ArgumentException.ThrowIfNullOrWhiteSpace(chartSheetName);
+
+            int worksheetCount = worksheets?.Count ?? 1;
+            for (int index = 1; index <= worksheetCount; index++)
             {
                 Excel.Worksheet? worksheet = null;
                 Excel.Shapes? shapes = null;
-
                 try
                 {
-                    worksheet = (Excel.Worksheet)worksheets.Item[i];
-                    string sheetName = worksheet.Name?.ToString() ?? $"Sheet{i}";
+                    worksheet = worksheets is not null
+                        ? (Excel.Worksheet)worksheets.Item[index]
+                        : Utilities.WorksheetLookup.Get(workbook, chartSheetName);
                     shapes = worksheet.Shapes;
-                    int shapeCount = Convert.ToInt32(shapes.Count);
-
-                    for (int j = 1; j <= shapeCount; j++)
+                    int shapeCount = shapes.Count;
+                    for (int item = 1; item <= shapeCount; item++)
                     {
                         Excel.Shape? shape = null;
-                        Excel.Chart? chart = null;
-
                         try
                         {
-                            shape = shapes.Item(j);
-
-                            if ((int)shape.Type != 3)
-                            {
+                            shape = shapes.Item(item);
+                            if ((int)shape.Type != 3 ||
+                                !string.Equals(shape.Name, chartName, StringComparison.OrdinalIgnoreCase))
                                 continue;
+
+                            if (match is not null)
+                            {
+                                throw new OperationFailureException(
+                                    OperationFailureCategory.Conflict,
+                                    $"Chart '{chartName}' is ambiguous. It matches a chart on worksheet " +
+                                    $"'{sheetName}' and a chart on worksheet '{worksheet.Name}'. " +
+                                    "Use chartSheetName on actions that accept it, or give the charts distinct names in Excel before retrying.");
                             }
 
-                            string shapeName = shape.Name?.ToString() ?? string.Empty;
-                            if (!shapeName.Equals(chartName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
-
-                            chart = shape.Chart;
-                            var result = new ChartFindResult { Chart = chart, Shape = shape, SheetName = sheetName };
-                            chart = null;
+                            sheetName = worksheet.Name;
+                            match = shape;
                             shape = null;
-                            return result;
                         }
                         finally
                         {
-                            ComUtilities.Release(ref chart);
                             ComUtilities.Release(ref shape);
                         }
                     }
@@ -173,10 +186,17 @@ public partial class ChartCommands
                 }
             }
 
-            return new ChartFindResult { Chart = null, Shape = null, SheetName = string.Empty };
+            if (match is null && chartSheetName is not null)
+                throw new OperationFailureException(OperationFailureCategory.NotFound,
+                    $"Chart '{chartName}' was not found on worksheet '{chartSheetName}'.");
+
+            var result = match;
+            match = null;
+            return result;
         }
         finally
         {
+            ComUtilities.Release(ref match);
             ComUtilities.Release(ref worksheets);
         }
     }

@@ -113,10 +113,10 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
     public void Close()
         => Close(force: false);
 
-    internal void Close(bool force)
+    internal void Close(bool force, bool saveChanges = false)
     {
         ObjectDisposedException.ThrowIf(_detached, this);
-        owner.Execute((_, _) => owner.CloseAttachedWorkbook(workbook.WorkbookId, force));
+        owner.Execute((_, _) => owner.CloseAttachedWorkbook(workbook.WorkbookId, force, saveChanges));
         _detached = true;
     }
 

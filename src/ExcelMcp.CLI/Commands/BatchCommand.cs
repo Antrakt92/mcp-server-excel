@@ -86,6 +86,8 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
 
         var validationErrors = new Dictionary<int, (Exception Cause, long DurationMs)>();
         var validationDurations = new long[commands.Count];
+        var boundArgs = new string?[commands.Count];
+        var callerDirectory = Environment.CurrentDirectory;
         for (int i = 0; i < commands.Count; i++)
         {
             var cmd = commands[i];
@@ -96,6 +98,9 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             try
             {
                 ServiceRegistry.ValidateCommandArguments(cmd.Command, argsJson);
+                var bound = ServiceRegistry.BindLocalInputFileArguments(cmd.Command, argsJson, callerDirectory);
+                if (!ReferenceEquals(bound, argsJson))
+                    boundArgs[i] = bound;
             }
             catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)
             {
@@ -146,15 +151,12 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
                 }
                 continue;
             }
-            var argsJson = cmd.Args.HasValue && cmd.Args.Value.ValueKind != JsonValueKind.Undefined
-                ? cmd.Args.Value.GetRawText()
-                : null;
             // Build the service request
             var request = new ServiceRequest
             {
                 Command = cmd.Command,
                 SessionId = sessionId,
-                Args = argsJson,
+                Args = boundArgs[i] ?? cmd.Args?.GetRawText(),
                 Source = "cli-batch"
             };
 

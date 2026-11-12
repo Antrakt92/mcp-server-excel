@@ -123,40 +123,7 @@ public partial class DataModelCommands
 
                 // Read all rows from the recordset
                 resultExtractionStarting?.Invoke();
-                while (!recordset.EOF)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var row = new List<object?>();
-
-                    for (int i = 0; i < fieldCount; i++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        ADODB.Field? field = null;
-                        try
-                        {
-                            field = fields[i];
-                            object? value = field.Value;
-
-                            // Convert DBNull to null
-                            if (value == DBNull.Value || value == null)
-                            {
-                                row.Add(null);
-                            }
-                            else
-                            {
-                                // Convert to JSON-friendly types
-                                row.Add(ConvertToJsonFriendly(value));
-                            }
-                        }
-                        finally
-                        {
-                            ComUtilities.Release(ref field);
-                        }
-                    }
-
-                    result.Rows.Add(row);
-                    recordset.MoveNext();
-                }
+                ReadRecordsetRows(recordset, fieldCount, result.Rows, ct);
 
                 result.RowCount = result.Rows.Count;
                 result.Success = true;
@@ -248,6 +215,41 @@ public partial class DataModelCommands
             System.Globalization.CultureInfo.InvariantCulture);
         var message = $"DAX evaluation failed (HRESULT 0x{hresult}): {failure.Message}";
         return $"{message} Engine details: {string.Join(" | ", details)}";
+    }
+
+    private static void ReadRecordsetRows(
+        ADODB._Recordset recordset, int fieldCount, List<List<object?>> rows, CancellationToken ct)
+    {
+        // Bound the marshaled SAFEARRAY by both row count and schema width.
+        int rowsPerRead = Math.Clamp(16_384 / Math.Max(1, fieldCount), 1, 256);
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (recordset.EOF)
+                return;
+
+            if (recordset.GetRows(rowsPerRead, Type.Missing, Type.Missing) is not Array
+                { Rank: 2 } values || values.GetLength(0) != fieldCount || values.GetLength(1) == 0)
+            {
+                throw new InvalidOperationException("ADO returned an unexpected recordset batch.");
+            }
+
+            int firstField = values.GetLowerBound(0);
+            int firstRow = values.GetLowerBound(1);
+            int lastRow = values.GetUpperBound(1);
+            for (int rowIndex = firstRow; rowIndex <= lastRow; rowIndex++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var row = new List<object?>(fieldCount);
+                for (int fieldIndex = 0; fieldIndex < fieldCount; fieldIndex++)
+                {
+                    var value = values.GetValue(firstField + fieldIndex, rowIndex);
+                    row.Add(value is null or DBNull ? null : ConvertToJsonFriendly(value));
+                }
+
+                rows.Add(row);
+            }
+        }
     }
 
     /// <summary>

@@ -108,6 +108,19 @@ public sealed class ServiceClient : IDisposable
                 await pipe.ConnectAsync(ToTimeoutMilliseconds(connectTimeout), connectCts.Token);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ServiceSecurity.IsServerInCurrentSession(pipe.SafePipeHandle))
+            {
+                return new ServiceResponse
+                {
+                    Success = false,
+                    Command = request.Command,
+                    SessionId = request.SessionId,
+                    ErrorCategory = "ServiceUnavailable",
+                    ErrorMessage = "The service pipe belongs to another Windows session or its session could not be verified. No request was sent."
+                };
+            }
+
             connected = true;
             HasConnected = true;
 

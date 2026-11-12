@@ -142,6 +142,10 @@ Readiness must be confirmed across that connection before ordinary commands resu
 A successful explicit save confirms Excel's saved state, not independent
 server-side upload completion.
 Save As, Save Copy As, export, and create continue to require Windows output paths.
+With overwrite disabled, live Save As checks for an existing file again just
+before calling Excel. Excel can still replace a file created between that
+check and the native save. Use Save Copy As with overwrite disabled for a
+same-format copy that refuses to replace a destination at publication.
 Save Copy As preserves the source format. For a never-saved workbook, Excel's
 actual workbook format determines the required output extension; copying does
 not give the source a saved path or save its pending edits.

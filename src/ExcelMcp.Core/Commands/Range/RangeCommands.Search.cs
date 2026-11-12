@@ -30,8 +30,6 @@ public partial class RangeCommands
         return batch.Execute((ctx, ct) =>
         {
             Excel.Range? range = null;
-            Excel.Range? foundCell = null;
-            Excel.Range? nextCell = null;
             try
             {
                 range = RangeHelpers.ResolveRange(ctx.Book, sheetName, rangeAddress, out string? specificError);
@@ -40,45 +38,23 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                var lookIn = findOptions.SearchFormulas && !findOptions.SearchValues
-                    ? Excel.XlFindLookIn.xlFormulas
-                    : Excel.XlFindLookIn.xlValues;
-                var lookAt = findOptions.MatchEntireCell
-                    ? Excel.XlLookAt.xlWhole
-                    : Excel.XlLookAt.xlPart;
-
-                foundCell = range.Find(
-                    What: searchValue,
-                    LookIn: lookIn,
-                    LookAt: lookAt,
-                    SearchOrder: Excel.XlSearchOrder.xlByRows,
-                    SearchDirection: Excel.XlSearchDirection.xlNext,
-                    MatchCase: findOptions.MatchCase
-                );
-
-                if (foundCell != null)
+                HashSet<string>? commentAddresses = null;
+                if (findOptions.SearchComments)
                 {
-                    string firstAddress = foundCell.Address;
-                    do
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        result.TotalCount++;
-                        if (result.MatchingCells.Count < maxMatches)
-                        {
-                            result.MatchingCells.Add(new RangeCell
-                            {
-                                Address = foundCell.Address,
-                                Row = foundCell.Row,
-                                Column = foundCell.Column,
-                                Value = foundCell.Value2
-                            });
-                        }
+                    commentAddresses = new(StringComparer.Ordinal);
+                    AddFindMatches(range, result, findOptions, maxMatches,
+                        Excel.XlFindLookIn.xlComments, ct, commentAddresses, readingComments: true);
+                    AddFindMatches(range, result, findOptions, maxMatches,
+                        Excel.XlFindLookIn.xlCommentsThreaded, ct, commentAddresses, readingComments: true);
+                }
 
-                        nextCell = range.FindNext(foundCell);
-                        ComUtilities.Release(ref foundCell);
-                        foundCell = nextCell;
-                        nextCell = null;
-                    } while (foundCell != null && foundCell.Address != firstAddress);
+                if (findOptions.SearchFormulas || findOptions.SearchValues || !findOptions.SearchComments)
+                {
+                    var lookIn = findOptions.SearchFormulas && !findOptions.SearchValues
+                        ? Excel.XlFindLookIn.xlFormulas
+                        : Excel.XlFindLookIn.xlValues;
+                    AddFindMatches(range, result, findOptions, maxMatches, lookIn, ct, commentAddresses,
+                        readingComments: false);
                 }
 
                 ct.ThrowIfCancellationRequested();
@@ -87,11 +63,66 @@ public partial class RangeCommands
             }
             finally
             {
-                ComUtilities.Release(ref nextCell);
-                ComUtilities.Release(ref foundCell);
                 ComUtilities.Release(ref range);
             }
         });
+    }
+
+    private static void AddFindMatches(Excel.Range range, RangeFindResult result, FindOptions options, int maxMatches,
+        Excel.XlFindLookIn lookIn, CancellationToken ct, HashSet<string>? commentAddresses, bool readingComments)
+    {
+        Excel.Range? foundCell = null;
+        Excel.Range? nextCell = null;
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            foundCell = range.Find(
+                What: result.SearchValue,
+                LookIn: lookIn,
+                LookAt: options.MatchEntireCell ? Excel.XlLookAt.xlWhole : Excel.XlLookAt.xlPart,
+                SearchOrder: Excel.XlSearchOrder.xlByRows,
+                SearchDirection: Excel.XlSearchDirection.xlNext,
+                MatchCase: options.MatchCase,
+                MatchByte: false,
+                SearchFormat: false);
+
+            string? firstAddress = null;
+            while (foundCell is not null)
+            {
+                ct.ThrowIfCancellationRequested();
+                string address = foundCell.Address;
+                if (address == firstAddress)
+                    break;
+                firstAddress ??= address;
+
+                bool newMatch = commentAddresses is null ||
+                    (readingComments ? commentAddresses.Add(address) : !commentAddresses.Contains(address));
+                if (newMatch)
+                {
+                    result.TotalCount++;
+                    if (result.MatchingCells.Count < maxMatches)
+                    {
+                        result.MatchingCells.Add(new RangeCell
+                        {
+                            Address = address,
+                            Row = foundCell.Row,
+                            Column = foundCell.Column,
+                            Value = foundCell.Value2
+                        });
+                    }
+                }
+
+                nextCell = range.FindNext(foundCell);
+                ComUtilities.Release(ref foundCell);
+                foundCell = nextCell;
+                nextCell = null;
+            }
+        }
+        finally
+        {
+            ComUtilities.Release(ref nextCell);
+            ComUtilities.Release(ref foundCell);
+        }
     }
 
     /// <inheritdoc />
@@ -108,17 +139,20 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                // Excel COM constants
-                int lookAt = replaceOptions.MatchEntireCell ? 1 : 2; // xlWhole : xlPart
-
-                range.Replace(
-                    What: findValue,
-                    Replacement: replaceValue,
-                    LookAt: lookAt,
-                    SearchOrder: 1, // xlByRows
-                    MatchCase: replaceOptions.MatchCase,
-                    MatchByte: false
-                );
+                if (replaceOptions.ReplaceAll)
+                {
+                    range.Replace(
+                        What: findValue,
+                        Replacement: replaceValue,
+                        LookAt: replaceOptions.MatchEntireCell ? Excel.XlLookAt.xlWhole : Excel.XlLookAt.xlPart,
+                        SearchOrder: Excel.XlSearchOrder.xlByRows,
+                        MatchCase: replaceOptions.MatchCase,
+                        MatchByte: false);
+                }
+                else
+                {
+                    ReplaceFirst(ctx, range, findValue, replaceValue, replaceOptions, ct);
+                }
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }

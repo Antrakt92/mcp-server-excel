@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Tests.Infrastructure;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -49,7 +50,7 @@ public sealed partial class PersistentServiceSheetTests
                 };
                 app.WorkbookBeforeSave += cancelSave;
             };
-            var sourceSaved = move && !cancelSource;
+            var targetSaved = move && cancelSource;
             var command = move ? "sheet.move-to-file" : "sheet.copy-to-file";
             RunRetainedCrossFileFailure(command,
                 new { sourceFile, sourceSheet = "TransferSheet", targetFile },
@@ -63,28 +64,28 @@ public sealed partial class PersistentServiceSheetTests
                     if (move)
                     {
                         Assert.Contains(
-                            cancelSource ? "source save was not confirmed" : "Excel confirmed the source save",
+                            cancelSource ? "Excel confirmed the target save" : "target save was not confirmed",
                             response.ErrorMessage, StringComparison.Ordinal);
                         Assert.Contains("No rollback was performed", response.ErrorMessage, StringComparison.Ordinal);
                     }
                     AssertRetainedCrossFileState(service, response, sessionId, command,
                         sourceFile, move ? ["Sheet1"] : ["TransferSheet", "Sheet1"],
-                        sourceSaved: !move || sourceSaved,
-                        targetFile, ["Sheet1", "TransferSheet"], targetSaved: false);
+                        sourceSaved: !move,
+                        targetFile, ["Sheet1", "TransferSheet"], targetSaved);
                 });
             AssertWorkbookStates(
-                sourceFile, sourceSaved ? ["Sheet1"] : ["TransferSheet", "Sheet1"],
-                sourceSaved ? null : "TransferSheet",
-                targetFile, ["Sheet1"]);
-            if (!sourceSaved)
+                sourceFile, ["TransferSheet", "Sheet1"], "TransferSheet",
+                targetFile, targetSaved ? ["Sheet1", "TransferSheet"] : ["Sheet1"],
+                targetSaved ? "TransferSheet" : null);
+            Assert.Equal(sourceBytes, File.ReadAllBytes(sourceFile));
+            if (targetSaved)
             {
-                Assert.Equal(sourceBytes, File.ReadAllBytes(sourceFile));
+                Assert.NotEqual(targetBytes, File.ReadAllBytes(targetFile));
             }
             else
             {
-                Assert.NotEqual(sourceBytes, File.ReadAllBytes(sourceFile));
+                Assert.Equal(targetBytes, File.ReadAllBytes(targetFile));
             }
-            Assert.Equal(targetBytes, File.ReadAllBytes(targetFile));
         }
         finally
         {
@@ -145,7 +146,7 @@ public sealed partial class PersistentServiceSheetTests
                         sourceFile, ["TransferSheet", "Sheet1"], sourceSaved: true,
                         targetFile, ["Sheet1"], targetSaved: true,
                         sourceReadOnly: readOnlySource, targetReadOnly: !readOnlySource);
-                });
+                }, nameof(OperationFailureException), "Permissions");
             AssertWorkbookState(sourceFile, ["TransferSheet", "Sheet1"], "TransferSheet");
             AssertWorkbookState(targetFile, ["Sheet1"]);
             Assert.Equal(sourceBytes, File.ReadAllBytes(sourceFile));
@@ -419,7 +420,8 @@ public sealed partial class PersistentServiceSheetTests
     }
 
     private static void RunRetainedCrossFileFailure(
-        string command, object arguments, Action<ExcelMcpService, ServiceResponse, string> assertions)
+        string command, object arguments, Action<ExcelMcpService, ServiceResponse, string> assertions,
+        string exceptionType = nameof(InvalidOperationException), string? errorCategory = null)
     {
         // The shared fixture proxy always selects its own workbook and throws away
         // failure responses. This owner can inspect and close only the reported batch.
@@ -434,8 +436,8 @@ public sealed partial class PersistentServiceSheetTests
                 Args = JsonSerializer.Serialize(arguments, ServiceProtocol.JsonOptions)
             }).GetAwaiter().GetResult();
             Assert.False(response.Success);
-            Assert.Equal(nameof(InvalidOperationException), response.ExceptionType);
-            Assert.Null(response.ErrorCategory);
+            Assert.Equal(exceptionType, response.ExceptionType);
+            Assert.Equal(errorCategory, response.ErrorCategory);
             Assert.Null(response.HResult);
             Assert.Equal(command, response.Command);
             Assert.Null(response.Result);

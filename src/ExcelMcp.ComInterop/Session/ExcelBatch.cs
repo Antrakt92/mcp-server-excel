@@ -97,6 +97,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     /// </summary>
     internal static Action<string, CancellationToken>? BeforeWorkbookOpenHook { get; set; }
     internal static Action<object, object>? AfterWorkbookOpenHookForTests { get; set; }
+    internal static Action? BeforeNewWorkbookSaveHookForTests { get; set; }
     internal static Func<int, ExcelProcessIdentity?>? TrackProcessIdentityHookForTests { get; set; }
 
     internal static Func<ExcelProcessIdentity, bool>? FailedStartupExitConfirmationHook { get; set; }
@@ -440,7 +441,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 "The selected workbook remains open; retry discovery after Excel becomes ready.");
     }
 
-    internal void CloseAttachedWorkbook(string workbookId, bool force = false)
+    internal void CloseAttachedWorkbook(string workbookId, bool force = false, bool saveChanges = false)
     {
         var discovery = RefreshAttachedWorkbooks();
         if (!discovery.Workbooks.Any(workbook =>
@@ -461,11 +462,14 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         var protectedView = FindProtectedView(context.Book);
         try
         {
-            if (protectedView is null)
+            if (protectedView is not null)
+                ExcelShutdownService.CloseProtectedViewWindow(protectedView);
+            else if (saveChanges)
+                ExcelShutdownService.CloseWorkbookAndConfirm(
+                    context.Book, context.App, true, context.WorkbookPath, _logger);
+            else
                 ExcelShutdownService.CloseAndQuit(
                     context.Book, null, false, context.WorkbookPath, _logger, releaseWorkbook: false);
-            else
-                ExcelShutdownService.CloseProtectedViewWindow(protectedView);
         }
         finally
         {
@@ -611,6 +615,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             Excel.Application? startupExcel = null;
             Excel.Workbook? startupPrimaryWorkbook = null;
             Dictionary<string, Excel.Workbook>? startupWorkbooks = null;
+            string? startupStagedFile = null;
+            bool startupFilePublished = false;
             Exception? executionFailure = null;
             try
             {
@@ -765,12 +771,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
                     foreach (var path in _openingLocations)
                     {
-                        Excel.Workbook wb;
+                        Excel.Workbook? wb = null;
                         string normalizedPath = WorkbookLocation.Normalize(path);
+                        string? publishedIdentity = null;
 
                         if (_createNewFile)
                         {
-                            // CREATE NEW FILE: Use Add() + SaveAs() instead of Open()
                             // Validate directory exists (do not create automatically)
                             string? directory = Path.GetDirectoryName(normalizedPath);
                             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -778,46 +784,64 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                                 throw new DirectoryNotFoundException($"Directory does not exist: '{directory}'. Create the directory first before creating Excel files.");
                             }
 
+                            startupStagedFile = WorkbookCreationPublication.ReserveStagingPath(normalizedPath);
                             Excel.Workbooks? workbooks = null;
                             try
                             {
                                 workbooks = tempExcel.Workbooks;
                                 wb = workbooks.Add();
+                                // Retain this exact object for failure cleanup even before SaveAs returns.
+                                tempWorkbooks.Add(normalizedPath, wb);
                             }
                             finally
                             {
                                 ComUtilities.Release(ref workbooks);
                             }
 
-                            // SaveAs with appropriate format
-                            if (_isMacroEnabled)
-                            {
-                                wb.SaveAs(normalizedPath, ComInteropConstants.XlOpenXmlWorkbookMacroEnabled);
-                            }
-                            else
-                            {
-                                wb.SaveAs(normalizedPath, ComInteropConstants.XlOpenXmlWorkbook);
-                            }
+                            BeforeNewWorkbookSaveHookForTests?.Invoke();
+                            _shutdownCts.Token.ThrowIfCancellationRequested();
+                            wb.SaveAs(startupStagedFile,
+                                _isMacroEnabled ? ComInteropConstants.XlOpenXmlWorkbookMacroEnabled : ComInteropConstants.XlOpenXmlWorkbook,
+                                CreateBackup: false, AddToMru: false);
+                            if (!wb.Saved || new FileInfo(startupStagedFile).Length == 0 ||
+                                !string.Equals(wb.Name, Path.GetFileName(startupStagedFile), StringComparison.OrdinalIgnoreCase))
+                                throw new IOException("Excel did not confirm the staged workbook save.");
+
+                            ExcelShutdownService.CloseWorkbookAndConfirm(wb, tempExcel, save: false, startupStagedFile, _logger);
+                            tempWorkbooks.Remove(normalizedPath);
+                            ComUtilities.Release(ref wb);
+
+                            _shutdownCts.Token.ThrowIfCancellationRequested();
+                            publishedIdentity = WorkbookCreationPublication.ReadIdentity(startupStagedFile);
+                            WorkbookCreationPublication.Publish(startupStagedFile, normalizedPath);
+                            startupFilePublished = true;
+                            startupStagedFile = null;
                         }
-                        else
+
+                        Excel.Workbooks? openingWorkbooks = null;
+                        try
                         {
-                            Excel.Workbooks? workbooks = null;
-                            try
+                            BeforeWorkbookOpenHook?.Invoke(path, _shutdownCts.Token);
+                            _shutdownCts.Token.ThrowIfCancellationRequested();
+                            if (publishedIdentity is not null)
+                                WorkbookCreationPublication.ConfirmIdentity(normalizedPath, publishedIdentity);
+                            openingWorkbooks = tempExcel.Workbooks;
+                            wb = openingWorkbooks.Open(
+                                path, UpdateLinks: 0, ReadOnly: _openReadOnly,
+                                IgnoreReadOnlyRecommended: true, Notify: false, AddToMru: false);
+                            tempWorkbooks[normalizedPath] = wb;
+                            if (publishedIdentity is not null)
                             {
-                                BeforeWorkbookOpenHook?.Invoke(path, _shutdownCts.Token);
-                                _shutdownCts.Token.ThrowIfCancellationRequested();
-                                workbooks = tempExcel.Workbooks;
-                                wb = workbooks.Open(
-                                    path, UpdateLinks: 0, ReadOnly: _openReadOnly,
-                                    IgnoreReadOnlyRecommended: true, Notify: false, AddToMru: false);
-                            }
-                            finally
-                            {
-                                ComUtilities.Release(ref workbooks);
+                                WorkbookCreationPublication.ConfirmIdentity(normalizedPath, publishedIdentity);
+                                if (wb.ReadOnly)
+                                    throw new IOException("Excel opened the newly published workbook read-only.");
                             }
                         }
+                        finally
+                        {
+                            ComUtilities.Release(ref openingWorkbooks);
+                        }
 
-                        tempWorkbooks[normalizedPath] = wb;
                         AfterWorkbookOpenHookForTests?.Invoke(tempExcel, wb);
                         if (normalizedPath == _workbookPath)
                         {
@@ -904,11 +928,13 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
             catch (Exception ex)
             {
-                executionFailure = ex;
+                executionFailure = startupFilePublished && !started.Task.IsCompleted
+                    ? new WorkbookCreationPublicationException(_workbookPath, filePublished: true, ex)
+                    : ex;
                 lock (_statusLock)
                     _staCleanupPending = true;
-                FinishOperation(ex);
-                started.TrySetException(ex);
+                FinishOperation(executionFailure);
+                started.TrySetException(executionFailure);
             }
             finally
             {
@@ -996,6 +1022,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                     startupWorkbooks = null;
                     startupPrimaryWorkbook = null;
                     startupExcel = null;
+                    if (startupStagedFile is not null)
+                        WorkbookCreationPublication.DeleteStagingFile(startupStagedFile, _logger);
                     BeforeApplicationLeaseReleaseHookForTests?.Invoke();
                     _applicationLease?.Dispose();
                     _applicationLease = null;
@@ -1354,7 +1382,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             throw new InvalidOperationException("Workbooks not initialized");
 
         string normalizedPath = WorkbookLocation.Normalize(filePath);
-        if (_workbooks.TryGetValue(normalizedPath, out var workbook))
+        if (!_macroReopenQuarantined && _workbooks.TryGetValue(normalizedPath, out var workbook))
         {
             return workbook;
         }
@@ -1385,7 +1413,18 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     /// </summary>
     public T Execute<T>(
         Func<ExcelContext, CancellationToken, T> operation,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ExecuteCore(operation, cancellationToken, allowQuarantinedReopen: false);
+
+    internal T ExecuteForRetainedWorkbook<T>(
+        Func<ExcelContext, CancellationToken, T> operation,
+        CancellationToken cancellationToken = default) =>
+        ExecuteCore(operation, cancellationToken, allowQuarantinedReopen: true);
+
+    private T ExecuteCore<T>(
+        Func<ExcelContext, CancellationToken, T> operation,
+        CancellationToken cancellationToken,
+        bool allowQuarantinedReopen)
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
         cancellationToken.ThrowIfCancellationRequested();
@@ -1424,6 +1463,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             using var closeTimingContext = SessionDiagnostics.UseCloseTimings(closeTimings);
             if (_operationTimedOut)
                 throw new ExcelBusyException("An earlier operation exceeded its wait. This queued operation was not executed.");
+            if (!allowQuarantinedReopen && MacroReopenQuarantine is { } quarantine)
+                throw new InvalidOperationException(quarantine);
             lock (_statusLock)
             {
                 ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
@@ -1693,6 +1734,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
+        ThrowIfWorkbookUnavailable();
         if (OperationStatus.ExecutionPending)
             throw new ExcelBusyException("Cannot save: Excel work is still pending. The workbook remains open.");
         ExcelBusyException.ThrowIfNotReady(GetExecutionPreflightState(), "save", this);
@@ -1868,7 +1910,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         return WorkbookRefreshProbe.Read(_excel!, workbook);
     }
 
-    public void Close()
+    public void Close() => Close(saveChanges: false);
+
+    internal void Close(bool saveChanges)
     {
         lock (_disposeLock)
         {
@@ -1880,14 +1924,17 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 return;
             }
 
-            Execute((_, _) =>
+            ExecuteForRetainedWorkbook((_, _) =>
             {
                 ForgetWorkbooksClosedInExcel();
+                if (_workbooks!.Count > 0 && MacroReopenQuarantine is { } quarantine)
+                    throw new InvalidOperationException(quarantine);
                 ExcelBusyException.ThrowIfNotReady(ReadRefreshState(), "close", this);
-                CloseOwnedWorkbooksBeforeShutdown();
+                CloseOwnedWorkbooksBeforeShutdown(saveChanges: saveChanges);
                 Interlocked.Exchange(ref _disposed, 1);
                 _shutdownCts.Cancel();
                 _workQueue.Writer.TryComplete();
+                return 0;
             });
             CompleteDispose();
         }
@@ -1908,7 +1955,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             var shutdownWait = _operationTimeout < ComInteropConstants.ExcelQuitTimeout
                 ? _operationTimeout
                 : ComInteropConstants.ExcelQuitTimeout;
-            ExcelBatchWait.Execute(this, shutdownWait, (_, _) =>
+            ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, shutdownWait, (_, _) =>
             {
                 ForgetWorkbooksClosedInExcel();
                 ExcelBusyException.ThrowIfNotReady(ReadRefreshState(), "shutdown", this);
@@ -1917,20 +1964,21 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 {
                     // Native prompts protect edits made after the saved-state check.
                     _excel.DisplayAlerts = true;
-                    CloseOwnedWorkbooksBeforeShutdown(onlySaved: true);
+                    if (!_macroReopenQuarantined)
+                        CloseOwnedWorkbooksBeforeShutdown(onlySaved: true);
                     if (_workbooks!.Count > 0)
                     {
                         _excel.Visible = true;
                         if (!_excel.Visible)
-                            throw new InvalidOperationException("Cannot hand over unsaved workbooks: Excel visibility was not confirmed.");
+                            throw new InvalidOperationException("Cannot hand over retained workbooks: Excel visibility was not confirmed.");
                         UpdateConfirmedVisibility(true, _applicationLease!.VisibilityRevision);
                         if (_originalDisplayAlerts is { } displayAlerts)
                             _excel.DisplayAlerts = displayAlerts;
                         if (_excelProcessIdentity is not { } identity)
-                            throw new InvalidOperationException("Cannot hand over unsaved workbooks without a confirmed Excel process identity.");
+                            throw new InvalidOperationException("Cannot hand over retained workbooks without a confirmed Excel process identity.");
                         _leaveOwnedApplicationOpen = true;
                         _ownedProcessLeftOpen = true;
-                        _logger.LogInformation("Leaving unsaved workbook(s) open and visible without saving or discarding changes");
+                        _logger.LogInformation("Leaving retained workbook(s) open and visible without saving or discarding changes");
                     }
                 }
                 catch (Exception shutdownFailure)
@@ -1957,7 +2005,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     }
 
     internal string? FindOwnedWorkbookPath(OpenWorkbookInfo selected) =>
-        ExcelBatchWait.Execute(this, TimeSpan.FromSeconds(2),
+        ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, TimeSpan.FromSeconds(2),
             (_, _) => FindOwnedWorkbookPathOnExcelThread(selected));
 
     internal string? FindOwnedWorkbookPathOnExcelThread(OpenWorkbookInfo selected)
@@ -2060,7 +2108,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         }
     }
 
-    private void CloseOwnedWorkbooksBeforeShutdown(bool onlySaved = false)
+    private void CloseOwnedWorkbooksBeforeShutdown(bool onlySaved = false, bool saveChanges = false)
     {
         if (_excel is null || _workbooks is null)
             throw new InvalidOperationException("Owned Excel workbooks are not initialized.");
@@ -2074,7 +2122,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             try
             {
                 ExcelShutdownService.CloseWorkbookAndConfirm(
-                    workbook, _excel, onlySaved ? null : false, entry.Key, _logger);
+                    workbook, _excel, onlySaved ? null : saveChanges, entry.Key, _logger);
             }
             catch (Exception ex) when (_closedWorkbookPathsDuringShutdown.Count > 0)
             {
@@ -2125,7 +2173,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             if (_disposed != 0 || _attachedApplication is not null
                 || GetExecutionPreflightState() != WorkbookRefreshState.Ready)
                 return false;
-            return ExcelBatchWait.Execute(this, timeout, (_, _) =>
+            return ExcelBatchWait.Execute(ExecuteForRetainedWorkbook, timeout, (_, _) =>
                 _excel is not null && _workbooks is { Count: > 0 }
                 && _workbooks.Values.All(workbook => !ExcelShutdownService.IsWorkbookOpen(_excel, workbook)));
         }

@@ -228,6 +228,7 @@ public static class ServiceInfoExtractor
     private static ParameterInfo ExtractParameterInfo(IParameterSymbol param, XmlDocumentation? methodDoc)
     {
         bool isFileOrValue = false;
+        bool isLocalInputFile = false;
         string? fileSuffix = null;
         bool isFromString = false;
         string? exposedName = null;
@@ -250,6 +251,10 @@ public static class ServiceInfoExtractor
                 {
                     fileSuffix = "File";
                 }
+            }
+            else if (attrName == "LocalInputFileAttribute")
+            {
+                isLocalInputFile = true;
             }
             else if (attrName == "FromStringAttribute")
             {
@@ -353,7 +358,8 @@ public static class ServiceInfoExtractor
             allowsEmptyString,
             isJsonObject: param.Type.TypeKind == TypeKind.Class &&
                           param.Type.SpecialType == SpecialType.None,
-            allowsWhitespace: allowsWhitespace);
+            allowsWhitespace: allowsWhitespace,
+            isLocalInputFile: isLocalInputFile);
     }
 
     private static XmlDocumentation? ExtractXmlDocumentation(IMethodSymbol method)

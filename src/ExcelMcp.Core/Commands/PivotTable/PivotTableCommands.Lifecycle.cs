@@ -360,7 +360,7 @@ public partial class PivotTableCommands
     /// <summary>
     /// Deletes a PivotTable
     /// </summary>
-    public OperationResult Delete(IExcelBatch batch, string pivotTableName)
+    public OperationResult Delete(IExcelBatch batch, string pivotTableName, string? sheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -369,7 +369,7 @@ public partial class PivotTableCommands
 
             try
             {
-                pivot = FindPivotTable(ctx.Book, pivotTableName);
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, sheetName);
                 tableRange = pivot.TableRange2;
 
                 // Delete the PivotTable
@@ -393,23 +393,32 @@ public partial class PivotTableCommands
     /// <summary>
     /// Refreshes a PivotTable
     /// </summary>
-    public PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null)
+    public PivotTableRefreshResult Refresh(IExcelBatch batch, string pivotTableName, TimeSpan? timeout = null,
+        string? sheetName = null)
     {
-        return batch.Execute((ctx, ct) =>
+        return timeout.HasValue
+            ? ExcelBatchWait.Execute(batch, timeout.Value, RefreshPivot)
+            : batch.Execute(RefreshPivot);
+
+        PivotTableRefreshResult RefreshPivot(ExcelContext ctx, CancellationToken ct)
         {
             Excel.PivotTable? pivot = null;
             Excel.PivotCache? pivotCache = null;
 
             try
             {
-                pivot = FindPivotTable(ctx.Book, pivotTableName);
+                ct.ThrowIfCancellationRequested();
+                pivot = CoreLookupHelpers.FindPivotTableOnSheet(ctx.Book, pivotTableName, sheetName);
                 pivotCache = pivot.PivotCache();
 
                 int previousRecordCount = pivotCache.RecordCount;
 
-                // Refresh the PivotTable
-                pivot.RefreshTable();
+                ct.ThrowIfCancellationRequested();
+                if (!pivot.RefreshTable())
+                    throw new InvalidOperationException(
+                        $"Excel reported that PivotTable '{pivotTableName}' did not refresh. Inspect the report before retrying.");
 
+                ct.ThrowIfCancellationRequested();
                 int currentRecordCount = pivotCache.RecordCount;
 
                 return new PivotTableRefreshResult
@@ -428,7 +437,7 @@ public partial class PivotTableCommands
                 ComUtilities.Release(ref pivotCache);
                 ComUtilities.Release(ref pivot);
             }
-        });
+        }
     }
 
     /// <summary>

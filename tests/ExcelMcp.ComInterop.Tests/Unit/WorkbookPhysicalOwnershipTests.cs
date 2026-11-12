@@ -51,6 +51,84 @@ public sealed class WorkbookPhysicalOwnershipTests
     }
 
     [Fact]
+    public void Reservations_DanglingKnownPathBlocksUncertainAliasesButAllowsMissingDestination()
+    {
+        WithDirectory((root, actual, _) =>
+        {
+            var original = Path.Combine(actual, "source.xlsx");
+            var linked = Path.Combine(root, "linked.xlsx");
+            var unrelated = Path.Combine(root, "other.xlsx");
+            File.WriteAllText(original, "owned");
+            Link(linked, original);
+            var claims = new WorkbookPathReservations<string>();
+            Assert.True(claims.TryAdd(original, "original"));
+            File.Delete(original);
+
+            WithDanglingDirectory(root, actual, () =>
+            {
+                Assert.True(claims.TryAdd(unrelated, "other"));
+                Assert.True(claims.TryGetValue(unrelated, out var otherOwner));
+                Assert.Equal("other", otherOwner);
+                Assert.Throws<IOException>(() => claims.TryAdd(linked, "duplicate"));
+                Assert.Throws<IOException>(() => claims.TryAdd(original, "unresolved"));
+                Assert.True(claims.TryRemove(new(original, "original")));
+                Assert.True(claims.TryAdd(linked, "new-owner"));
+            });
+        });
+    }
+
+    [Fact]
+    public void Reservations_DanglingReplacementPathDoesNotAdmitUnconfirmedHardLink()
+    {
+        WithDirectory((root, actual, _) =>
+        {
+            var original = Path.Combine(actual, "source.xlsx");
+            var replacement = Path.Combine(root, "replacement.xlsx");
+            var linked = Path.Combine(root, "linked.xlsx");
+            File.WriteAllText(original, "owned");
+            File.WriteAllText(replacement, "replacement");
+            var claims = new WorkbookPathReservations<string>();
+            Assert.True(claims.TryAdd(original, "original"));
+            File.Move(replacement, original, overwrite: true);
+            Link(linked, original);
+            File.Delete(original);
+
+            WithDanglingDirectory(root, actual, () =>
+            {
+                Assert.Throws<IOException>(() => claims.TryAdd(linked, "unconfirmed"));
+                Assert.True(claims.TryRemove(new(original, "original")));
+                Assert.True(claims.TryAdd(linked, "new-owner"));
+            });
+        });
+    }
+
+    [Fact]
+    public void Reservations_DanglingProspectivePathBlocksUncertainExistingFileButAllowsMissingAndRemote()
+    {
+        WithDirectory((root, actual, _) =>
+        {
+            var pending = Path.Combine(actual, "pending.xlsx");
+            var existing = Path.Combine(root, "existing.xlsx");
+            var newPath = Path.Combine(root, "new.xlsx");
+            const string remote = "https://example.com/new.xlsx";
+            File.WriteAllText(existing, "unrelated");
+            var claims = new WorkbookPathReservations<string>();
+            Assert.True(claims.TryAdd(pending, "pending"));
+
+            WithDanglingDirectory(root, actual, () =>
+            {
+                Assert.Throws<IOException>(() => claims.TryAdd(existing, "existing"));
+                Assert.True(claims.TryAdd(newPath, "new"));
+                Assert.False(claims.TryAdd(newPath, "duplicate"));
+                Assert.True(claims.TryAdd(remote, "remote"));
+                Assert.False(claims.TryAdd(remote, "duplicate"));
+                Assert.True(claims.TryRemove(new(pending, "pending")));
+                Assert.True(claims.TryAdd(existing, "existing"));
+            });
+        });
+    }
+
+    [Fact]
     public void Reservations_SaveAsAliasKeepsDestinationAfterAtomicReplacement()
     {
         WithDirectory((root, actual, alias) =>
@@ -172,6 +250,22 @@ public sealed class WorkbookPhysicalOwnershipTests
         if (primary is not null && cleanup is not null) throw new AggregateException(primary, cleanup);
         if (primary is not null || cleanup is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((primary ?? cleanup)!).Throw();
+    }
+
+    private static void WithDanglingDirectory(string root, string path, Action body)
+    {
+        Directory.Delete(path);
+        try
+        {
+            CreateJunction(path, Path.Combine(root, "absent-directory"));
+            body();
+        }
+        finally
+        {
+            // Remove the junction entry itself from this fixture root.
+            if (new DirectoryInfo(path).LinkTarget is not null)
+                Directory.Delete(path);
+        }
     }
 
     private static void CreateJunction(string alias, string target)

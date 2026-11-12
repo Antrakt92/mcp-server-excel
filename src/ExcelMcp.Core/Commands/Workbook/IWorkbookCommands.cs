@@ -179,7 +179,7 @@ public interface IWorkbookCommands
     /// <param name="batch">Excel batch session.</param>
     /// <param name="themePath">Absolute path of the existing .thmx file. No theme file is created or copied.</param>
     [ServiceAction("apply-theme")]
-    WorkbookThemeResult ApplyTheme(IExcelBatch batch, [RequiredParameter] string themePath);
+    WorkbookThemeResult ApplyTheme(IExcelBatch batch, [RequiredParameter, LocalInputFile] string themePath);
 
     /// <summary>Lists built-in and/or custom workbook document properties. Each property reports valueAvailable and valueError. An unreadable built-in value can be undefined or its getter can have failed; valueAvailable=false does not prove absence. Inspect the native error rather than interpreting a null value as empty metadata.</summary>
     /// <param name="batch">Excel batch session</param>

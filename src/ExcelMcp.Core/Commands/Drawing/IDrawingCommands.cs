@@ -106,7 +106,7 @@ public interface IDrawingCommands
     DrawingObjectResult AddImage(
         IExcelBatch batch,
         [RequiredParameter] string sheetName,
-        [RequiredParameter] string imagePath,
+        [RequiredParameter, LocalInputFile] string imagePath,
         string? name = null,
         double left = 20,
         double top = 20,

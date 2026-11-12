@@ -13,6 +13,57 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
 [Trait("RequiresExcel", "false")]
 public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixture)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelativeInputFile_IsRejectedWithoutDispatch(bool batch)
+    {
+        Dictionary<string, object?> arguments = batch
+            ? Arguments("""[{"command":"powerquery.evaluate","args":{"mCodeFile":"relative.m"}}]""")
+            : new() { ["action"] = "evaluate", ["workbook_session_id"] = "recording-session", ["m_code_file"] = "relative.m" };
+        var call = await fixture.CallSequenceAsync(batch ? "batch" : "powerquery", arguments,
+            RecordingToolTest.Success("""{"success":true}"""));
+
+        Assert.Empty(call.Requests);
+        Assert.True(call.Result.IsError);
+        using var output = Parse(call.Result);
+        var failure = batch ? output.RootElement.GetProperty("results")[0] : output.RootElement;
+        Assert.Equal("InvalidInput", failure.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", failure.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("drawing", "drawing.add-image", """{"sheet_name":"Data","image_path":"relative.png"}""",
+        """{"sheetName":"Data","imagePath":"relative.png"}""")]
+    [InlineData("worksheet_style", "worksheetstyle.add-image", """{"sheet_name":"Data","cell_address":"A1","image_path":"relative.png"}""",
+        """{"sheetName":"Data","cellAddress":"A1","imagePath":"relative.png"}""")]
+    [InlineData("querytable", "querytable.create-text",
+        """{"query_table_name":"Example","sheet_name":"Data","destination_address":"A1","source_path":"relative.csv"}""",
+        """{"queryTableName":"Example","sheetName":"Data","destinationAddress":"A1","sourcePath":"relative.csv"}""")]
+    [InlineData("workbook", "workbook.apply-theme", """{"theme_path":"relative.thmx"}""", """{"themePath":"relative.thmx"}""")]
+    public async Task LocalFileActions_RejectRelativePathsBeforeDispatch(
+        string tool, string command, string directArgs, string batchArgs)
+    {
+        var direct = JsonSerializer.Deserialize<Dictionary<string, object?>>(directArgs)!;
+        direct["action"] = command[(command.IndexOf('.') + 1)..];
+        direct["workbook_session_id"] = "recording-session";
+        var directCall = await fixture.CallSequenceAsync(tool, direct, RecordingToolTest.Success("""{"success":true}"""));
+        Assert.Empty(directCall.Requests);
+        Assert.True(directCall.Result.IsError);
+        using var directOutput = Parse(directCall.Result);
+        Assert.Equal("InvalidInput", directOutput.RootElement.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", directOutput.RootElement.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var batch = Arguments($$"""[{"command":"{{command}}","args":{{batchArgs}}}]""");
+        var batchCall = await fixture.CallSequenceAsync("batch", batch, RecordingToolTest.Success("""{"success":true}"""));
+        Assert.Empty(batchCall.Requests);
+        Assert.True(batchCall.Result.IsError);
+        using var batchOutput = Parse(batchCall.Result);
+        var failure = batchOutput.RootElement.GetProperty("results")[0];
+        Assert.Equal("InvalidInput", failure.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", failure.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Discovery_AdvertisesDefaultsAndNestedEntryNames()
     {
@@ -526,6 +577,41 @@ public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixt
         expected["index"] = 0;
         expected["command"] = "session.list";
         Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(expected), item));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PartialSessionList_UsesMcpSessionIdsAndPreservesFailureState(bool batch)
+    {
+        var response = new ServiceResponse
+        {
+            Success = false,
+            ErrorCategory = "ServiceUnavailable",
+            ErrorMessage = "One worker is unavailable.",
+            PartialState = """
+                {"complete":false,"sessions":[{"sessionId":"healthy","auditOnly":true,"operationPending":false}],
+                "count":1,"recentExcelExits":[{"processId":1234,"exitCode":7}]}
+                """
+        };
+        var arguments = batch ? Arguments("""[{"command":"session.list"}]""") : new() { ["action"] = "list" };
+        var call = await fixture.CallSequenceAsync(batch ? "batch" : "file_read", arguments, response);
+
+        RecordingToolTest.AssertRequest(Assert.Single(call.Requests), "session.list", null, null);
+        Assert.True(call.Result.IsError);
+        using var output = Parse(call.Result);
+        var item = batch ? Assert.Single(output.RootElement.GetProperty("results").EnumerateArray()) : output.RootElement;
+        Assert.Equal("ServiceUnavailable", item.GetProperty("errorCategory").GetString());
+        Assert.Equal("One worker is unavailable.", item.GetProperty("errorMessage").GetString());
+        var state = item.GetProperty("partialState");
+        Assert.False(state.GetProperty("complete").GetBoolean());
+        Assert.Equal(1, state.GetProperty("count").GetInt32());
+        var session = Assert.Single(state.GetProperty("sessions").EnumerateArray());
+        Assert.Equal("healthy", session.GetProperty("workbook_session_id").GetString());
+        Assert.False(session.TryGetProperty("sessionId", out _));
+        Assert.True(session.GetProperty("auditOnly").GetBoolean());
+        Assert.False(session.GetProperty("operationPending").GetBoolean());
+        Assert.Equal(7, Assert.Single(state.GetProperty("recentExcelExits").EnumerateArray()).GetProperty("exitCode").GetInt32());
     }
 
     private static Dictionary<string, object?> Arguments(string commands, bool stopOnError = false) => new()

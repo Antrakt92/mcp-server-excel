@@ -158,7 +158,7 @@ public partial class SheetCommands
         }
     }
 
-    private static void ValidateNewSheetName(string name)
+    internal static void ValidateNewSheetName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) ||
             name.Length > 31 ||
@@ -174,7 +174,7 @@ public partial class SheetCommands
         }
     }
 
-    private static void EnsureSheetNameAvailable(
+    internal static void EnsureSheetNameAvailable(
         Excel.Workbook workbook, string name, CancellationToken cancellationToken, string? currentName = null)
     {
         Excel.Sheets? sheets = null;
@@ -351,8 +351,8 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Source sheet '{sourceSheet}' not found in '{Path.GetFileName(sourceFile)}'");
                 }
 
-                // Handle positioning
-                targetSheets = targetWb.Worksheets;
+                // Worksheet.Index is a tab index, including chart sheets.
+                targetSheets = targetWb.Sheets;
                 int? copiedSheetPosition = null;
 
                 if (targetSheetName is not null)
@@ -385,8 +385,8 @@ public partial class SheetCommands
                 }
                 else
                 {
-                    // Copy to end of target workbook
-                    Excel.Worksheet? lastSheet = (Excel.Worksheet)targetSheets[targetSheets.Count];
+                    // The last tab can be a chart sheet.
+                    object? lastSheet = targetSheets[targetSheets.Count];
                     try
                     {
                         sourceSheetObj.Copy(After: lastSheet);
@@ -521,22 +521,22 @@ public partial class SheetCommands
                     }
                 }
 
-                // Save both workbooks (source lost a sheet, target gained one)
-                var sourceSaveCompleted = false;
+                // Persist the destination before saving the deletion in the source.
+                var targetSaveCompleted = false;
                 try
                 {
                     ExcelShutdownService.SaveWorkbookWithTimeout(
-                        sourceWb, Path.GetFileName(sourceFile), batch.Logger, ct);
-                    sourceSaveCompleted = true;
-                    ExcelShutdownService.SaveWorkbookWithTimeout(
                         targetWb, Path.GetFileName(targetFile), batch.Logger, ct);
+                    targetSaveCompleted = true;
+                    ExcelShutdownService.SaveWorkbookWithTimeout(
+                        sourceWb, Path.GetFileName(sourceFile), batch.Logger, ct);
                 }
                 catch (InvalidOperationException ex)
                 {
                     throw new InvalidOperationException(
-                        (sourceSaveCompleted
-                            ? "Worksheet move: Excel confirmed the source save, but the target save was not confirmed. "
-                            : "Worksheet move changed both workbooks in memory, but the source save was not confirmed. ") +
+                        (targetSaveCompleted
+                            ? "Worksheet move: Excel confirmed the target save, but the source save was not confirmed. Both files may contain the worksheet. "
+                            : "Worksheet move changed both workbooks in memory, but the target save was not confirmed. The source save was not attempted. ") +
                         "Inspect the reported partial state and any recovery session before retrying. " +
                         "No rollback was performed. " + ex.Message, ex);
                 }
@@ -547,7 +547,7 @@ public partial class SheetCommands
             {
                 ComUtilities.Release(ref targetPositionSheet);
                 ComUtilities.Release(ref targetSheets);
-                // Note: sourceSheetObj has been moved, don't release it
+                ComUtilities.Release(ref sourceSheetObj);
             }
         });
     }

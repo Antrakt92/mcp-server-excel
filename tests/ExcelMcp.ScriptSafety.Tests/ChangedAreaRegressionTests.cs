@@ -53,6 +53,35 @@ public sealed class ChangedAreaRegressionTests
     }
 
     [Fact]
+    public async Task ClientExamplesBriefingAndOlapFixture_SelectTheirOwners()
+    {
+        var run = await ValidationSelectionTests.RunCasesAsync(
+        [
+            ["examples/mcp-configs/claude-desktop-config.json", "Docs"],
+            ["examples/mcp-configs/cline-mcp-config.json", "Docs"],
+            ["examples/mcp-configs/cursor-mcp-config.json", "Docs"],
+            ["examples/mcp-configs/vscode-mcp-config.json", "Docs"],
+            ["examples/mcp-configs/windsurf-mcp-config.json", "Docs"],
+            ["samples/world-bank-briefing/.gitignore", "Docs"],
+            ["samples/world-bank-briefing/WDI_Briefing_2000-2024.pptx", "Docs"],
+            ["samples/world-bank-briefing/WDI_Development_2000-2024.xlsx", "Docs"],
+            ["scripts/olap_test_cube.py", "AutomationSafety"]
+        ], """
+            $path, $owner = $case
+            $plan = Get-ValidationPlan -Paths $path
+            if ($owner -eq 'Docs' -and (-not $plan.Docs -or $plan.Excel)) {
+                throw "Documentation owner missing for $path."
+            }
+            if ($owner -eq 'AutomationSafety' -and
+                ($plan.ToolingFilters.ScriptSafety -notmatch 'Feature=AutomationSafety' -or
+                    'python' -notin $plan.CodeQlLanguages -or $plan.Excel)) {
+                throw "Synthetic OLAP fixture coverage missing for $path."
+            }
+            """);
+        Assert.True(run.ExitCode == 0, run.Output);
+    }
+
+    [Fact]
     public async Task Contracts_SelectBothGeneratedAdaptersAndAreaLabels()
     {
         var run = await ValidationSelectionTests.RunCasesAsync(

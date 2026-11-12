@@ -5,12 +5,18 @@ internal static class ExcelBatchWait
     internal static T Execute<T>(
         IExcelBatch batch,
         TimeSpan timeout,
+        Func<ExcelContext, CancellationToken, T> operation) =>
+        Execute(batch.Execute, timeout, operation);
+
+    internal static T Execute<T>(
+        Func<Func<ExcelContext, CancellationToken, T>, CancellationToken, T> execute,
+        TimeSpan timeout,
         Func<ExcelContext, CancellationToken, T> operation)
     {
         using var deadline = new CancellationTokenSource(timeout);
         try
         {
-            return batch.Execute(operation, deadline.Token);
+            return execute(operation, deadline.Token);
         }
         catch (OperationCanceledException ex) when (
             deadline.IsCancellationRequested && ex.CancellationToken == deadline.Token)

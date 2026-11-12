@@ -1,5 +1,8 @@
 # Build portable fork packages
 
+The upstream release, MCP Registry, and plugin workflows run only in the upstream repository.
+Use the portable build below for this fork's GitHub Releases.
+
 From a clean checkout, use Windows, PowerShell 7.4 or later, and the SDK pinned in `global.json`.
 For a new release, select an unused fork version from the full change range first:
 
@@ -46,6 +49,8 @@ When using an isolated importer, set the process environment variable
 parameter to direct script calls; explicit importer arguments still take
 precedence, and Microsoft signature/version checks remain mandatory. Without
 this variable, direct script tests use the standard Developer Pack location.
+
+Fork 5.0.0 includes upstream 2.6.12. Build the clean merged source with `-Version 5.0.0` and follow the [verification procedure](VERIFICATION-5.0.0.md). See the [fork changelog](CHANGELOG.md) for the MCP path, batch, trace, and CLI pipe changes.
 
 Fork 4.1.0 retains upstream 2.6.11 and exposes 445 operations. Build clean,
 committed release source with `-Version 4.1.0`, then follow

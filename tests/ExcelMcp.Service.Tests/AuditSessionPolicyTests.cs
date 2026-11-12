@@ -1,3 +1,7 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+using System.Text.Json;
+using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
 
 namespace Sbroenne.ExcelMcp.Service.Tests;
@@ -9,6 +13,28 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Speed", "Fast")]
 public sealed class AuditSessionPolicyTests
 {
+    [Fact]
+    public async Task ForbiddenFileInput_ReturnsAuditRefusalBeforeFileExistenceCheck()
+    {
+        using var service = new ExcelMcpService();
+        const string session = "audit-fixture";
+        var field = typeof(SessionManager).GetField("_auditSessions", BindingFlags.Instance | BindingFlags.NonPublic);
+        var auditSessions = Assert.IsType<ConcurrentDictionary<string, byte>>(field?.GetValue(service.SessionManager));
+        Assert.True(auditSessions.TryAdd(session, 0));
+        var missingFile = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.bas");
+
+        var response = await service.ProcessAsync(new ServiceRequest
+        {
+            Command = "vba.import",
+            SessionId = session,
+            Args = JsonSerializer.Serialize(new { moduleName = "TestModule", vbaCodeFile = missingFile })
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("Permissions", response.ErrorCategory);
+        Assert.Contains("Audit session", response.ErrorMessage, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("range.get-values")]
     [InlineData("range.get-used-range")]

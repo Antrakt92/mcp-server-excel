@@ -7,25 +7,8 @@ namespace Sbroenne.ExcelMcp.Core.Commands.PivotTable;
 
 public partial class PivotTableCommands
 {
-    private static Excel.PivotTable FindPivotTable(Excel.Workbook workbook, string sheetName, string pivotTableName)
-    {
-        Excel.Sheets? sheets = null;
-        Excel.Worksheet? sheet = null;
-        Excel.PivotTables? pivotTables = null;
-        try
-        {
-            sheets = (Excel.Sheets)workbook.Worksheets;
-            sheet = (Excel.Worksheet)sheets[sheetName];
-            pivotTables = (Excel.PivotTables)sheet.PivotTables();
-            return pivotTables.Item(pivotTableName);
-        }
-        finally
-        {
-            ComUtilities.Release(ref pivotTables);
-            ComUtilities.Release(ref sheet);
-            ComUtilities.Release(ref sheets);
-        }
-    }
+    private static Excel.PivotTable FindPivotTable(Excel.Workbook workbook, string sheetName, string pivotTableName) =>
+        CoreLookupHelpers.FindPivotTableOnSheet(workbook, pivotTableName, sheetName);
 
     private static List<PivotFieldSelectionSnapshot> GetFieldSelectionSnapshots(
         bool isOlap,

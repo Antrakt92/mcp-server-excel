@@ -182,7 +182,7 @@ public interface IPivotTableFieldCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable</param>
     /// <param name="fieldName">Name of the field to filter</param>
-    /// <param name="selectedValues">Values to show (others will be hidden)</param>
+    /// <param name="selectedValues">Values to show. For regular PivotTables, supply at least one exact native member name.</param>
     /// <returns>Applied filter state and affected row count</returns>
     [ServiceAction("set-field-filter")]
     PivotFieldFilterResult SetFieldFilter(IExcelBatch batch, string pivotTableName,

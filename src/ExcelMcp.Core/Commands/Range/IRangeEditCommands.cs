@@ -244,7 +244,8 @@ public interface IRangeEditCommands
     RangeFindResult Find(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, [RequiredParameter] string searchValue, FindOptions? findOptions = null, int maxMatches = 10);
 
     /// <summary>
-    /// Replaces text/values in range.
+    /// Replaces text or values in a range. With replaceAll=false, replaces one occurrence in the first
+    /// matching cell in row-major order. First-only partial matches require literal text or formulas.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet containing the range</param>

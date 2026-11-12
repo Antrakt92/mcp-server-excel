@@ -418,9 +418,6 @@ public static class ExcelShutdownService
         ArgumentNullException.ThrowIfNull(logger);
 
         var fileName = Path.GetFileName(filePath);
-        if (save == true)
-            SaveWorkbookWithTimeout(workbook, fileName, logger);
-
         CloseWorkbookWithRetry(workbook, save, fileName, logger);
         if (IsWorkbookOpen(excel, workbook))
         {
@@ -441,6 +438,16 @@ public static class ExcelShutdownService
 
         for (int attempt = 1; attempt <= maxCloseAttempts; attempt++)
         {
+            if (save == true)
+            {
+                EnsureSaveOnCloseAvailable(workbook, fileName);
+                if (!workbook.Saved)
+                {
+                    SaveWorkbookWithTimeout(workbook, fileName, logger);
+                    EnsureSaveOnCloseAvailable(workbook, fileName);
+                }
+            }
+
             try
             {
                 logger.LogDebug("Closing workbook {FileName} (save={Save}, attempt {Attempt})", fileName, save, attempt);
@@ -483,6 +490,24 @@ public static class ExcelShutdownService
                 throw new InvalidOperationException(
                     $"Workbook close could not be confirmed for '{fileName}'. Excel has not been asked to quit.", ex);
             }
+        }
+    }
+
+    private static void EnsureSaveOnCloseAvailable(Excel.Workbook workbook, string fileName)
+    {
+        Excel.Windows? windows = null;
+        try
+        {
+            // Excel can ignore Close(SaveChanges: true) when the workbook has multiple windows.
+            windows = workbook.Windows;
+            if (windows.Count > 1)
+                throw new ExcelBusyException(
+                    $"Cannot save and close '{fileName}' while it has multiple open windows. " +
+                    "The workbook remains open. Close its extra windows before retrying.");
+        }
+        finally
+        {
+            ComUtilities.Release(ref windows);
         }
     }
 

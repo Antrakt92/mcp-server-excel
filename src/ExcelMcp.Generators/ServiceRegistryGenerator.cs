@@ -1035,7 +1035,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             {
                 var fileValueJsonName = char.ToLowerInvariant(p.Name[0]) + p.Name.Substring(1);
                 props.Add($"{fileValueJsonName} = {p.Name}");
-                props.Add($"{fileValueJsonName}{p.FileSuffix} = {p.Name}{p.FileSuffix}");
+                var fileName = p.Name + p.FileSuffix;
+                props.Add($"{fileValueJsonName}{p.FileSuffix} = {BindFilePathExpression(fileName, fileName, cli: true)}");
                 continue;
             }
 
@@ -1053,11 +1054,15 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             // Use ExposedName for JSON property names when FromString specifies alternate name
             var propName = p.ExposedName ?? p.Name;
             var jsonName = char.ToLowerInvariant(propName[0]) + propName.Substring(1);
-            props.Add($"{jsonName} = {valueName}");
+            var expression = p.IsLocalInputFile ? BindFilePathExpression(valueName, jsonName, cli: true) : valueName;
+            props.Add($"{jsonName} = {expression}");
         }
 
         return $"new {{ {string.Join(", ", props)} }}";
     }
+
+    private static string BindFilePathExpression(string value, string parameter, bool cli) =>
+        $"Sbroenne.ExcelMcp.Core.Utilities.ParameterTransforms.BindLocalInputFile({value}, \"{parameter}\", {(cli ? "System.Environment.CurrentDirectory" : "null")})";
 
     private static void GenerateForwardMethod(StringBuilder sb, ServiceInfo info, MethodInfo method)
     {
@@ -1130,7 +1135,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
                 if (p.IsFileOrValue)
                 {
                     sb.AppendLine($"                {StringHelper.ToPascalCase(p.Name)} = {p.Name},");
-                    sb.AppendLine($"                {StringHelper.ToPascalCase(p.Name)}{p.FileSuffix} = {p.Name}{p.FileSuffix},");
+                    var fileName = p.Name + p.FileSuffix;
+                    sb.AppendLine($"                {StringHelper.ToPascalCase(p.Name)}{p.FileSuffix} = {BindFilePathExpression(fileName, StringHelper.ToSnakeCase(fileName), cli: false)},");
                     continue;
                 }
 
@@ -1146,6 +1152,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
                 }
                 // Use ExposedName for property name when FromString attribute specifies an alternate name
                 var propertyName = p.ExposedName ?? p.Name;
+                if (p.IsLocalInputFile)
+                    valueExpr = BindFilePathExpression(valueExpr, StringHelper.ToSnakeCase(propertyName), cli: false);
                 sb.AppendLine($"                {StringHelper.ToPascalCase(propertyName)} = {valueExpr},");
             }
             sb.AppendLine("            });");
@@ -1463,6 +1471,24 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             }
         }
         sb.AppendLine("            _ => throw new System.ArgumentException($\"Unknown contract: {tool}.{action}.\")");
+        sb.AppendLine("        };");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    /// <summary>Applies entry-point path rules to the action's declared local file inputs.</summary>");
+        sb.AppendLine("    public static string? BindLocalInputFileArguments(string command, string? argsJson, string? callerDirectory)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        if (argsJson is null) return null;");
+        sb.AppendLine("        return command switch");
+        sb.AppendLine("        {");
+        foreach (var category in categories)
+        foreach (var method in category.Methods)
+        {
+            var inputs = method.Parameters.Select(parameter => parameter.LocalInputFileParameterName)
+                .OfType<string>().ToList();
+            if (inputs.Count > 0)
+                sb.AppendLine($"            \"{category.Category}.{method.ActionName}\" => Sbroenne.ExcelMcp.Core.Utilities.ParameterTransforms.BindLocalInputFiles(argsJson, callerDirectory, {BuildStringArrayExpression(inputs)}),");
+        }
+        sb.AppendLine("            _ => argsJson");
         sb.AppendLine("        };");
         sb.AppendLine("    }");
         sb.AppendLine();

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Sbroenne.ExcelMcp.Core.Models;
+using Sbroenne.ExcelMcp.Generated;
 
 // Re-export shared types from ComInterop for CLI internal use
 using SharedProtocol = Sbroenne.ExcelMcp.ComInterop.ServiceClient.ServiceProtocol;
@@ -93,23 +95,49 @@ public sealed class ServiceResponse
     /// <summary>JSON-serialized result data.</summary>
     public string? Result { get; init; }
 
-    internal ServiceResponse WithCompletionFailure(ServiceRequest request, Exception error) => new()
+    internal ServiceResponse WithCompletionFailure(ServiceRequest request, Exception error)
     {
-        Success = false,
-        Command = request.Command,
-        SessionId = request.SessionId,
-        ErrorCategory = "ServiceUnavailable",
-        ExceptionType = error.GetType().Name,
-        ErrorMessage = $"{error.GetType().Name}: {error.Message}",
-        InnerError = ErrorMessage,
-        Result = Result,
-        PartialState = JsonSerializer.Serialize(new
+        bool completionUnconfirmed;
+        string? result = Result;
+        try
         {
-            outcome = "completed",
-            response = this,
-            message = "The workbook request finished, but recording its completion failed. Do not repeat workbook changes."
-        }, ServiceProtocol.JsonOptions)
-    };
+            completionUnconfirmed = ResultJson.Read(Result, request.Command, delivered: Success,
+                category: ErrorCategory, partialState: PartialState,
+                contract: ServiceRegistry.GetResultContract(request.Command)).MayStillBeRunning;
+        }
+        catch (JsonException)
+        {
+            // Invalid response JSON leaves completion unconfirmed. Keep it only in the original reply.
+            completionUnconfirmed = true;
+            result = null;
+        }
+        catch (ArgumentException)
+        {
+            // A JSON object with duplicate keys can fail when its fields are accessed.
+            completionUnconfirmed = true;
+            result = null;
+        }
+
+        return new ServiceResponse
+        {
+            Success = false,
+            Command = request.Command,
+            SessionId = request.SessionId,
+            ErrorCategory = "ServiceUnavailable",
+            ExceptionType = error.GetType().Name,
+            ErrorMessage = $"{error.GetType().Name}: {error.Message}",
+            InnerError = ErrorMessage,
+            Result = result,
+            PartialState = JsonSerializer.Serialize(new
+            {
+                outcome = completionUnconfirmed ? "unknown" : "completed",
+                response = this,
+                message = completionUnconfirmed
+                    ? "Workbook completion could not be confirmed, and recording the response failed. Inspect the affected session before continuing."
+                    : "The workbook request finished, but recording its completion failed. Do not repeat workbook changes."
+            }, ServiceProtocol.JsonOptions)
+        };
+    }
 
     internal ServiceResponse WithCloseTimings(IReadOnlyDictionary<string, double> timings)
     {

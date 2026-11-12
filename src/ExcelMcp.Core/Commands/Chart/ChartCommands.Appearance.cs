@@ -41,7 +41,7 @@ public partial class ChartCommands
 
     /// <inheritdoc />
     public OperationResult SetTitle(IExcelBatch batch, string chartName, string title,
-        double? left = null, double? top = null, ChartTitleAlignment? alignment = null)
+        double? left = null, double? top = null, ChartTitleAlignment? alignment = null, string? chartSheetName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(chartName);
         ArgumentNullException.ThrowIfNull(title);
@@ -55,8 +55,7 @@ public partial class ChartCommands
             throw new ArgumentException("Position and alignment cannot be set when hiding the title.", nameof(title));
         return batch.Execute((ctx, ct) =>
         {
-            // Find chart by name
-            var findResult = FindChart(ctx.Book, chartName);
+            var findResult = FindChart(ctx.Book, chartName, chartSheetName);
             if (findResult.Chart == null)
             {
                 throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
@@ -1330,12 +1329,12 @@ public partial class ChartCommands
     }
 
     /// <inheritdoc />
-    public OperationResult FitToRange(IExcelBatch batch, string chartName, string sheetName, string rangeAddress)
+    public OperationResult FitToRange(IExcelBatch batch, string chartName, string sheetName, string rangeAddress,
+        string? chartSheetName = null)
     {
         return batch.Execute((ctx, ct) =>
         {
-            // Find chart by name
-            var findResult = FindChart(ctx.Book, chartName);
+            var findResult = FindChart(ctx.Book, chartName, chartSheetName);
             if (findResult.Chart is null || findResult.Shape is null)
             {
                 throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");

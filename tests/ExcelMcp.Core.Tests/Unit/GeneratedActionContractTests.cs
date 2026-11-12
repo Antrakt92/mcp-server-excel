@@ -771,6 +771,18 @@ public sealed class GeneratedActionContractTests
         }
     }
 
+    [Theory]
+    [InlineData("powerquery.evaluate", "mCodeFile", @"\\server\share\query.m")]
+    [InlineData("range.set-values", "valuesFile", @"C:\Inputs\values.json")]
+    [InlineData("session.open", "filePath", "https://example.test/report.xlsx")]
+    [InlineData("chart.export-image", "targetPath", "relative.png")]
+    public void LocalInputPathPolicy_PreservesAbsoluteInputsAndOtherPathContracts(
+        string command, string field, string value)
+    {
+        var argsJson = JsonSerializer.Serialize(new Dictionary<string, string> { [field] = value });
+        Assert.Equal(argsJson, ServiceRegistry.BindLocalInputFileArguments(command, argsJson, callerDirectory: null));
+    }
+
     [Fact]
     public void RawDispatch_ConvertsIntegerTimeoutSecondsExactlyOnce()
     {

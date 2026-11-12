@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Sbroenne.ExcelMcp.Core.Commands;
 using Sbroenne.ExcelMcp.Core.Commands.PowerQueryTrace;
 using Sbroenne.ExcelMcp.Core.Commands.Settings;
@@ -158,6 +159,122 @@ public sealed class PowerQueryTraceCommandsTests
 
         Assert.Equal(2, result.FilesRead);
         Assert.Equal(0, result.EntriesMatched);
+    }
+
+    [Fact]
+    public void TraceReader_ListReturnsNewestFilesWithExplicitTruncationAndMatchedTotals()
+    {
+        using var folder = new TemporaryFolder();
+        const int count = 513;
+        var now = new DateTime(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+        for (int process = 1; process <= count; process++)
+        {
+            var path = Path.Combine(folder.Path, $"EXCEL.{process}.2026-10-15T07-27-19-661979.log");
+            File.WriteAllText(path, "log");
+            File.SetLastWriteTimeUtc(path, now.AddSeconds(process));
+        }
+
+        var result = new PowerQueryTraceReader(folder.Path).List(processId: null, sinceUtc: null);
+        var json = JsonSerializer.SerializeToElement(result, JsonSerializerOptions.Web);
+        Assert.True(result.Success);
+        Assert.Equal(512, result.Files.Count);
+        Assert.Equal(count, result.Files[0].ProcessId);
+        Assert.Equal(2, result.Files[^1].ProcessId);
+        Assert.Equal(count * 3, result.TotalSizeBytes);
+        Assert.True(json.GetProperty("truncated").GetBoolean());
+        Assert.Equal(count, json.GetProperty("matchingFileCount").GetInt32());
+        Assert.NotEmpty(json.GetProperty("scanWarnings").EnumerateArray());
+    }
+
+    [Fact]
+    public void TraceReader_SummarySkipsOversizedLineWithoutLosingSubsequentLinesOrEmittingCursor()
+    {
+        using var folder = new TemporaryFolder();
+        var oversized = TraceLine("run/" + new string('x', 256 * 1024), 42, null, "00:00:02", null);
+        var next = TraceLine("run/next", 42, null, "00:00:02", null);
+        File.WriteAllText(Path.Combine(folder.Path, "EXCEL.42.2026-10-15T07-27-19-661979.log"), oversized + "\r\n" + next);
+
+        var result = new PowerQueryTraceReader(folder.Path).Summarize(new PowerQueryTraceFilter(ProcessId: 42));
+        var json = JsonSerializer.SerializeToElement(result, JsonSerializerOptions.Web);
+        Assert.True(result.Success);
+        Assert.Equal(1, result.EntriesMatched);
+        Assert.Equal(1, result.UnreadableLines);
+        Assert.Null(result.TraceCursor);
+        Assert.True(json.GetProperty("truncated").GetBoolean());
+        Assert.Contains(result.Findings, finding => finding.Contains("line limit", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TraceReader_PidFilteredListReportsIncompleteHostDetectionAtPeekLimit()
+    {
+        using var folder = new TemporaryFolder();
+        var timestamp = "2026-10-15T07-27-19-661979";
+        var path = Path.Combine(folder.Path, $"Microsoft.Mashup.Container.Loader.100.{timestamp}.log");
+        File.WriteAllLines(path, Enumerable.Repeat("host unavailable", 50)
+            .Append(TraceLine("run/host", 100, "42", "00:00:02", null)));
+
+        var result = new PowerQueryTraceReader(folder.Path).List(processId: 42, sinceUtc: null);
+        var json = JsonSerializer.SerializeToElement(result, JsonSerializerOptions.Web);
+        Assert.Empty(result.Files);
+        Assert.True(json.GetProperty("truncated").GetBoolean());
+        Assert.NotEmpty(json.GetProperty("scanWarnings").EnumerateArray());
+    }
+
+    [Fact]
+    public void TraceReader_SummaryStopsAfterNewest256Files()
+    {
+        using var folder = new TemporaryFolder();
+        var now = new DateTime(2026, 10, 15, 8, 0, 0, DateTimeKind.Utc);
+        for (int process = 1; process <= 257; process++)
+        {
+            var path = Path.Combine(folder.Path, $"EXCEL.{process}.2026-10-15T07-27-19-661979.log");
+            File.WriteAllText(path, TraceLine("run/excel", process, null, "00:00:02", null));
+            File.SetLastWriteTimeUtc(path, now.AddSeconds(process));
+        }
+
+        var result = new PowerQueryTraceReader(folder.Path).Summarize(new PowerQueryTraceFilter());
+
+        Assert.True(result.Truncated);
+        Assert.Equal(256, result.FilesRead);
+        Assert.Equal(256, result.EntriesMatched);
+        Assert.Null(result.TraceCursor);
+        Assert.Null(result.QuietGaps);
+        Assert.Contains(result.Findings, finding => finding.Contains("256-file", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TraceLineReader_RespectsExactCharacterAndLineLimitsAcrossCrLf()
+    {
+        using var folder = new TemporaryFolder();
+        var path = Path.Combine(folder.Path, "sample.log");
+        var first = new string('x', 4095);
+        File.WriteAllText(path, first + "\r\nkeep\rskip", System.Text.Encoding.Unicode);
+        var scanLimits = 0;
+        var budget = new PowerQueryTraceReadBudget(characters: first.Length + 2 + 5 + 2, lines: 2);
+
+        var lines = PowerQueryTraceLineReader.Read(path, budget, fileCharacters: int.MaxValue, fileLines: int.MaxValue,
+            () => scanLimits++, () => throw new InvalidOperationException("The input has no oversized line.")).ToArray();
+
+        Assert.Collection(lines, line => Assert.Equal(first, line), line => Assert.Equal("keep", line));
+        Assert.Equal(1, scanLimits);
+        Assert.Equal(0, budget.RemainingLines);
+    }
+
+    [Fact]
+    public void TraceLineReader_DoesNotParseUnterminatedFragmentAtCharacterLimit()
+    {
+        using var folder = new TemporaryFolder();
+        var path = Path.Combine(folder.Path, "sample.log");
+        File.WriteAllText(path, "first\nsecond");
+        var scanLimits = 0;
+        var budget = new PowerQueryTraceReadBudget(characters: 8, lines: 10);
+
+        var lines = PowerQueryTraceLineReader.Read(path, budget, fileCharacters: int.MaxValue, fileLines: int.MaxValue,
+            () => scanLimits++, () => throw new InvalidOperationException("The input has no oversized line.")).ToArray();
+
+        Assert.Equal("first", Assert.Single(lines));
+        Assert.Equal(1, scanLimits);
+        Assert.Equal(0, budget.RemainingCharacters);
     }
 
     [Fact]

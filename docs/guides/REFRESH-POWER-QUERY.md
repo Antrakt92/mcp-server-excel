@@ -102,9 +102,20 @@ unchanged; inspect `traceSummary.errorMessage` and `traceNote` separately.
 
 For traces collected outside a refresh call, use MCP `powerquery_trace_read`
 actions `list` and `summarize` or CLI `powerquerytrace list` and
-`powerquerytrace summarize`. `traceCursor` can be passed back as `since` to
-read only newer entries. Query text and exception messages are omitted unless
+`powerquerytrace summarize`. After a complete summary, pass `traceCursor` back
+as `since` to read only newer entries. Query text and exception messages are omitted unless
 `include_query_text: true` is explicitly requested.
+
+The list returns up to 512 of the newest matches. `matchingFileCount` and
+`totalSizeBytes` cover all matches identified by the scan. Trace commands scan
+at most 10,000 files in the folder. Container host detection reads up to 50
+lines or 256 Ki characters per file and 8 Mi characters across the scan.
+Summaries read up to 256 matched files, 100,000 lines, or 32 Mi characters, and
+skip individual lines longer than 256 Ki characters. When a limit makes the
+results incomplete, `truncated` is true and the reason appears in `scanWarnings`
+for a list or `findings` for a summary. An incomplete summary keeps the observed
+activity and errors but omits the cursor and quiet gaps. Narrow the process or
+time filter to inspect a smaller trace window.
 
 ## Test M code before you save it
 

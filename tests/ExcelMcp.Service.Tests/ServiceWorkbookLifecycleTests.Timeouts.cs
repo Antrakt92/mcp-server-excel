@@ -900,6 +900,77 @@ public sealed partial class ServiceWorkbookLifecycleTests
     [InlineData("workbook.save-copy-as", "xlsx")]
     [InlineData("workbook.export-fixed-format", "pdf")]
     [InlineData("workbook.export-fixed-format", "xps")]
+    [InlineData("chart.export-image", "png")]
+    public async Task Output_DestinationAppearsBeforeCommit_PreservesConcurrentFile(string command, string extension)
+    {
+        if (extension is "pdf" or "xps")
+            FixedFormatExportPrerequisite.RequireUsableDefaultPrinter();
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var path = Path.Join(directory, "output-source.xlsx");
+            var target = Path.Join(directory, $"new-output.{extension}");
+            var session = await CreateSessionAsync(service, path);
+            sessions[session] = 0;
+            await WriteMarkerAsync(service, session, "source remains open");
+            const string chartName = "PublicationChart";
+            if (extension == "png")
+            {
+                var chart = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "chart.create-from-range",
+                    SessionId = session,
+                    Args = JsonSerializer.Serialize(new
+                    {
+                        sheetName = "Sheet1",
+                        sourceRangeAddress = "A1:A2",
+                        chartType = "ColumnClustered",
+                        chartName
+                    }, ServiceProtocol.JsonOptions)
+                });
+                Assert.True(chart.Success, chart.ErrorMessage);
+            }
+
+            string? staged = null;
+            const string concurrentContents = "Another writer owns this destination";
+            ServiceResponse response;
+            try
+            {
+                WorkbookCommands.BeforeOutputCommitHookForTests = writePath =>
+                {
+                    staged = writePath;
+                    File.WriteAllText(target, concurrentContents);
+                };
+                response = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = command,
+                    SessionId = session,
+                    Args = extension switch
+                    {
+                        "xlsx" => JsonSerializer.Serialize(new { targetPath = target }, ServiceProtocol.JsonOptions),
+                        "png" => JsonSerializer.Serialize(new { targetPath = target, chartName }, ServiceProtocol.JsonOptions),
+                        _ => JsonSerializer.Serialize(new { targetPath = target, formatType = extension }, ServiceProtocol.JsonOptions)
+                    }
+                });
+            }
+            finally
+            {
+                WorkbookCommands.BeforeOutputCommitHookForTests = null;
+            }
+
+            Assert.False(response.Success);
+            Assert.Contains("already exists", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(staged);
+            Assert.NotEqual(target, staged);
+            Assert.False(File.Exists(staged));
+            Assert.Equal(concurrentContents, await File.ReadAllTextAsync(target));
+            Assert.Equal("source remains open", await ReadMarkerAsync(service, session));
+        });
+    }
+
+    [Theory]
+    [InlineData("workbook.save-copy-as", "xlsx")]
+    [InlineData("workbook.export-fixed-format", "pdf")]
+    [InlineData("workbook.export-fixed-format", "xps")]
     public async Task Output_WaitExpires_CompletesCommitAndTemporaryCleanupOnOriginalCallback(
         string command, string extension)
     {

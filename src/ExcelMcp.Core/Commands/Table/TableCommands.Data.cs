@@ -17,168 +17,146 @@ public partial class TableCommands
     public OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, string? rowsFile = null)
     {
         ValidateRequiredTableName(tableName);
-
-        // Resolve rows from inline parameter or file
         var resolvedRows = ParameterTransforms.ResolveValuesOrFile(rows, rowsFile, "rows");
+        if (resolvedRows.Count == 0)
+            throw new ArgumentException("No data to append", nameof(rows));
 
         return batch.Execute((ctx, ct) =>
         {
             Excel.ListObject? table = null;
             Excel.Worksheet? sheet = null;
-            Excel.Range? dataBodyRange = null;
-            Excel.Range? dataRows = null;
-            Excel.ListColumns? listColumns = null;
             Excel.Range? tableRange = null;
-            Excel.Range? cells = null;
-            int originalCalculation = -1;
-            bool calculationChanged = false;
-            Exception? operationFailure = null;
+            Excel.Range? expandedRange = null;
+            Excel.ListRows? listRows = null;
+            Excel.Range? body = null;
+            Excel.Range? bodyCells = null;
+            Excel.Range? firstNewCell = null;
+            Excel.Range? destination = null;
+            bool expansionAttempted = false;
+            bool writeAttempted = false;
 
             try
             {
                 table = FindTable(ctx.Book, tableName);
-
-                sheet = (Excel.Worksheet)(object)table.Parent;
-
-                // Validate data
-                if (resolvedRows.Count == 0)
+                sheet = (Excel.Worksheet)table.Parent;
+                tableRange = table.Range;
+                var (tableHeight, columnCount) = RangeHelpers.GetDimensions(tableRange);
+                for (int index = 0; index < resolvedRows.Count; index++)
                 {
-                    throw new ArgumentException("No data to append", nameof(rows));
-                }
-
-                // Get current table size
-                int currentRow;
-                dataBodyRange = table.DataBodyRange;
-                if (dataBodyRange != null)
-                {
-                    dataRows = dataBodyRange.Rows;
-                    currentRow = dataBodyRange.Row + dataRows.Count;
-                }
-                else
-                {
-                    // Table has only headers
-                    Excel.Range? headerRange = null;
-                    try
-                    {
-                        headerRange = table.HeaderRowRange;
-                        currentRow = headerRange.Row + 1;
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref headerRange);
-                    }
-                }
-
-                listColumns = table.ListColumns;
-                int columnCount = listColumns.Count;
-                for (int rowIndex = 0; rowIndex < resolvedRows.Count; rowIndex++)
-                {
-                    var row = resolvedRows[rowIndex];
+                    ct.ThrowIfCancellationRequested();
+                    var row = resolvedRows[index];
                     if (row is null || row.Count != columnCount)
                     {
                         throw new ArgumentException(
-                            $"Append row {rowIndex + 1} must have {columnCount} columns to match table '{tableName}'.",
+                            $"Append row {index + 1} must have {columnCount} columns to match table '{tableName}'.",
                             nameof(rows));
                     }
                 }
-                tableRange = table.Range;
-                int tableRow = tableRange.Row;
-                int tableColumn = tableRange.Column;
-                cells = sheet.Cells;
+
+                listRows = table.ListRows;
+                int originalRowCount = listRows.Count;
+                bool showTotals = table.ShowTotals;
+                // An empty table's Range can include its blank insert row, which ListRows excludes.
+                int dataAndHeaderHeight = originalRowCount == 0 && !showTotals
+                    ? (table.ShowHeaders ? 1 : 0)
+                    : tableHeight;
+                int lastTableRow = tableRange.Row + dataAndHeaderHeight - 1;
+                int firstColumn = tableRange.Column;
                 int rowsToAdd = resolvedRows.Count;
-
-                // Calculation suppressed here (not in ExcelWriteGuard) because Data Model ops need it enabled
-                originalCalculation = (int)ctx.App.Calculation;
-                if (originalCalculation != -4135) // xlCalculationManual
+                EnsureAppendSpace(ctx, sheet, lastTableRow, firstColumn, rowsToAdd, columnCount);
+                var values = (object[,])Array.CreateInstance(typeof(object), [rowsToAdd, columnCount], [1, 1]);
+                for (int row = 0; row < rowsToAdd; row++)
                 {
-                    ctx.App.Calculation = (Excel.XlCalculation)(-4135);
-                    calculationChanged = true;
+                    ct.ThrowIfCancellationRequested();
+                    for (int column = 0; column < columnCount; column++)
+                        values[row + 1, column + 1] = RangeHelpers.ConvertToCellValue(resolvedRows[row][column]);
                 }
 
-                // Write data to cells below the table
-                for (int i = 0; i < resolvedRows.Count; i++)
-                {
-                    var rowValues = resolvedRows[i];
-                    for (int j = 0; j < columnCount; j++)
-                    {
-                        Excel.Range? cell = null;
-                        try
-                        {
-                            cell = (Excel.Range)cells[currentRow + i, tableColumn + j];
-                            cell.Value2 = RangeHelpers.ConvertToCellValue(rowValues[j]);
-                        }
-                        finally
-                        {
-                            ComUtilities.Release(ref cell);
-                        }
-                    }
-                }
+                expandedRange = tableRange.Resize[dataAndHeaderHeight + rowsToAdd, columnCount];
+                ct.ThrowIfCancellationRequested();
+                expansionAttempted = true;
+                table.Resize(expandedRange);
 
-                // Restore calculation before Resize (table operations may need recalculation)
-                if (calculationChanged && originalCalculation != -1)
-                {
-                    ctx.App.Calculation = (Excel.XlCalculation)originalCalculation;
-                    calculationChanged = false;
-                }
+                body = table.DataBodyRange;
+                int expectedRows = originalRowCount + rowsToAdd;
+                int actualRows = listRows.Count;
+                var bodySize = body is null ? (Rows: 0, Columns: 0) : RangeHelpers.GetDimensions(body);
+                bool actualTotals = table.ShowTotals;
+                if (actualRows != expectedRows || bodySize != (expectedRows, columnCount) || actualTotals != showTotals)
+                    throw new InvalidOperationException(
+                        $"Excel returned {actualRows} table rows and a {bodySize.Rows} by {bodySize.Columns} data range " +
+                        $"(totals visible: {actualTotals}); expected {expectedRows} rows and {columnCount} columns " +
+                        $"(totals visible: {showTotals}).");
 
-                // Resize table to include new rows
-                int newLastRow = currentRow + rowsToAdd - 1;
-                int newLastCol = tableColumn + columnCount - 1;
-                Excel.Range? firstCell = null;
-                Excel.Range? lastCell = null;
-                string newRangeAddress;
-                try
-                {
-                    firstCell = (Excel.Range)cells[tableRow, tableColumn];
-                    lastCell = (Excel.Range)cells[newLastRow, newLastCol];
-                    newRangeAddress = $"{firstCell.Address}:{lastCell.Address}";
-                }
-                finally
-                {
-                    ComUtilities.Release(ref lastCell);
-                    ComUtilities.Release(ref firstCell);
-                }
+                bodyCells = body!.Cells;
+                firstNewCell = bodyCells[originalRowCount + 1, 1];
+                if (firstNewCell.Row != lastTableRow + (showTotals ? 0 : 1) || firstNewCell.Column != firstColumn)
+                    throw new InvalidOperationException("Excel moved the new data rows outside the expected append location.");
 
-                Excel.Range? resizeRange = null;
-                try
-                {
-                    resizeRange = sheet.Range[newRangeAddress];
-                    table.Resize(resizeRange);
-                }
-                finally
-                {
-                    ComUtilities.Release(ref resizeRange);
-                }
-
+                destination = firstNewCell.Resize[rowsToAdd, columnCount];
+                ct.ThrowIfCancellationRequested();
+                writeAttempted = true;
+                destination.Value2 = values;
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (expansionAttempted && CreatedObjectFailure.CanReport(ex))
             {
-                operationFailure = ex;
-                throw;
+                string state = writeAttempted
+                    ? "Writing the new rows began. Their values may have changed."
+                    : "Writing the supplied values did not begin. Excel may have filled formulas in the new rows.";
+                throw new InvalidOperationException(
+                    $"Append to table '{tableName}' failed after table expansion began. " +
+                    $"{state} Inspect the table before retrying. {ex.Message}", ex);
             }
             finally
             {
-                try
-                {
-                    if (calculationChanged && originalCalculation != -1)
-                    {
-                        OperationCleanup.Run(() => ctx.App.Calculation = (Excel.XlCalculation)originalCalculation,
-                            operationFailure);
-                    }
-                }
-                finally
-                {
-                    ComUtilities.Release(ref cells);
-                    ComUtilities.Release(ref tableRange);
-                    ComUtilities.Release(ref listColumns);
-                    ComUtilities.Release(ref dataRows);
-                    ComUtilities.Release(ref dataBodyRange);
-                    ComUtilities.Release(ref sheet);
-                    ComUtilities.Release(ref table);
-                }
+                ComUtilities.Release(ref destination);
+                ComUtilities.Release(ref firstNewCell);
+                ComUtilities.Release(ref bodyCells);
+                ComUtilities.Release(ref body);
+                ComUtilities.Release(ref expandedRange);
+                ComUtilities.Release(ref listRows);
+                ComUtilities.Release(ref tableRange);
+                ComUtilities.Release(ref sheet);
+                ComUtilities.Release(ref table);
             }
         });
+    }
+
+    private static void EnsureAppendSpace(ExcelContext context, Excel.Worksheet sheet, int lastTableRow,
+        int firstColumn, int rowsToAdd, int columnCount)
+    {
+        Excel.Range? sheetRows = null;
+        Excel.Range? cells = null;
+        Excel.Range? anchor = null;
+        Excel.Range? expansion = null;
+        Excel.WorksheetFunction? functions = null;
+        try
+        {
+            sheetRows = sheet.Rows;
+            if ((long)lastTableRow + rowsToAdd > sheetRows.Count)
+                throw new ArgumentException("The requested table append exceeds the worksheet row boundary.");
+
+            cells = sheet.Cells;
+            anchor = cells[lastTableRow + 1, firstColumn];
+            expansion = anchor.Resize[rowsToAdd, columnCount];
+            functions = context.App.WorksheetFunction;
+            if (RangeMergeDiscovery.GetMergeCellsState((object)expansion.MergeCells) != false ||
+                functions.CountA(expansion) != 0)
+            {
+                throw new OperationFailureException(
+                    OperationFailureCategory.Conflict,
+                    $"Table expansion would reach occupied or merged cells on worksheet '{sheet.Name}' at {expansion.Address}.");
+            }
+        }
+        finally
+        {
+            ComUtilities.Release(ref functions);
+            ComUtilities.Release(ref expansion);
+            ComUtilities.Release(ref anchor);
+            ComUtilities.Release(ref cells);
+            ComUtilities.Release(ref sheetRows);
+        }
     }
 
     /// <inheritdoc />
@@ -233,14 +211,11 @@ public partial class TableCommands
                 }
 
                 object? rawValues = dataBodyRange.Value2;
-                if (rawValues == null)
-                {
-                    result.Success = true;
-                    result.RowCount = 0;
-                    return result;
-                }
+                if (rawValues is null && RangeHelpers.GetDimensions(dataBodyRange) != (1, 1))
+                    throw new InvalidOperationException("Excel did not return values for the table's data range.");
 
-                listRows = table.ListRows;
+                if (visibleOnly)
+                    listRows = table.ListRows;
                 int listRowCount = listRows?.Count ?? 0;
 
                 if (rawValues is object[,] array2D)
@@ -250,16 +225,9 @@ public partial class TableCommands
 
                     for (int r = 1; r <= rows; r++)
                     {
-                        bool includeRow = !visibleOnly;
-                        if (!includeRow)
-                        {
-                            includeRow = IsListRowVisible(listRows, listRowCount, r);
-                        }
-
-                        if (!includeRow)
-                        {
+                        ct.ThrowIfCancellationRequested();
+                        if (visibleOnly && !IsListRowVisible(listRows, listRowCount, r))
                             continue;
-                        }
 
                         var row = new List<object?>(cols);
                         for (int c = 1; c <= cols; c++)
@@ -271,8 +239,7 @@ public partial class TableCommands
                 }
                 else
                 {
-                    bool includeRow = !visibleOnly || IsListRowVisible(listRows, listRowCount, 1);
-                    if (includeRow)
+                    if (!visibleOnly || IsListRowVisible(listRows, listRowCount, 1))
                     {
                         result.Data.Add([rawValues]);
                     }

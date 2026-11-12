@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using Microsoft.Win32.SafeHandles;
 using Microsoft.Extensions.Hosting;
 using Nerdbank.Streams;
 using StreamJsonRpc;
@@ -31,6 +32,7 @@ internal sealed class DaemonHost : BackgroundService
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _activeRequests;
     private bool _disposed;
+    internal Func<SafePipeHandle, uint?>? ReadClientSessionIdForTests { get; set; }
 
     internal DaemonHost(
         Func<ServiceRequest, Task<ServiceResponse>> requestHandler,
@@ -83,6 +85,12 @@ internal sealed class DaemonHost : BackgroundService
                 server = _serverFactory(pipeName);
                 await server.WaitForConnectionAsync(_shutdownCts.Token);
                 currentBackoff = InitialBackoff;
+                var readSessionId = ReadClientSessionIdForTests ?? ServiceSecurity.ReadClientSessionId;
+                if (readSessionId(server.SafePipeHandle) != ServiceSecurity.CurrentWindowsSessionId)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Daemon refused a pipe connection from an unverified Windows session.");
+                    continue;
+                }
                 if (_activeConnectionTasks.Count >= _maximumConnections)
                 {
                     System.Diagnostics.Trace.TraceWarning("Daemon connection capacity reached; refusing a new connection.");

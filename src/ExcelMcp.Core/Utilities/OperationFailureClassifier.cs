@@ -46,6 +46,7 @@ public static class OperationFailureClassifier
             var category = current switch
             {
                 OperationFailureException failure => failure.ErrorCategory.ToString(),
+                WorkbookCreationPublicationException { FilePublished: false } => "Conflict",
                 PowerQueryCommandException query => query.ErrorCategory,
                 TimeoutException => "Timeout",
                 OperationCanceledException => "Cancelled",

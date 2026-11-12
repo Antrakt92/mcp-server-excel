@@ -98,6 +98,8 @@ Read a module with `vba_read` action `view` before a full replacement. Pass its
 returned `sourceHash` as `expected_source_hash` to `vba` action `replace-module`,
 with `module_name` and the new `vba_code` or `vba_code_file`. CLI uses
 `vba replace-module --expected-source-hash` and `--vba-code-file`.
+Use absolute Windows input file paths in MCP, including in batch entries.
+The CLI resolves relative input file paths against its working directory.
 
 A stale fingerprint refuses the edit before deletion. Successful edits read
 back the actual stored source. A failed edit reports its phase, observed module

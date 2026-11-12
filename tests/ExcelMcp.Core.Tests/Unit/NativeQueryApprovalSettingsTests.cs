@@ -97,7 +97,7 @@ public sealed class NativeQueryApprovalSettingsTests
         var settings = new NativeQueryApprovalSettings(archivePath);
 
         var exception = Assert.Throws<IOException>(() =>
-            settings.Write(required: false, isExcelRunning: () => false));
+            settings.ExecuteUpdate(() => settings.Write(required: false, isExcelRunning: () => false)));
 
         Assert.Contains("original archive was not replaced", exception.Message, StringComparison.Ordinal);
         Assert.Contains("The backup is", exception.Message, StringComparison.Ordinal);
@@ -172,6 +172,145 @@ public sealed class NativeQueryApprovalSettingsTests
         Assert.Equal(2, processCheckCount);
         Assert.Single(Directory.GetFiles(folder.Path, "*.bak"));
         Assert.Single(Directory.GetFiles(folder.Path, "User.zip"));
+    }
+
+    [Fact]
+    public void Set_WhenAnotherWriterReplacesTheArchive_PreservesTheirChanges()
+    {
+        using var folder = new TemporaryFolder();
+        string archivePath = Path.Combine(folder.Path, "User.zip");
+        string concurrentPath = Path.Combine(folder.Path, "Concurrent.zip");
+        CreateArchive(archivePath, SettingsXml("l0"), [1, 2, 3]);
+        CreateArchive(concurrentPath, SettingsXml("l0"), [4, 5, 6]);
+        byte[] original = File.ReadAllBytes(archivePath);
+        byte[] concurrent = File.ReadAllBytes(concurrentPath);
+        int processCheckCount = 0;
+        var settings = new NativeQueryApprovalSettings(archivePath);
+        var commands = new SettingsCommands(null, settings, () =>
+        {
+            if (++processCheckCount == 2)
+                File.Copy(concurrentPath, archivePath, overwrite: true);
+            return false;
+        });
+
+        var exception = Assert.Throws<IOException>(() =>
+            commands.SetNativeQueryApproval(required: false, confirm: true));
+
+        Assert.Contains("changed while", exception.InnerException?.Message, StringComparison.Ordinal);
+        Assert.Equal(2, processCheckCount);
+        Assert.Equal(concurrent, File.ReadAllBytes(archivePath));
+        Assert.Equal(original, File.ReadAllBytes(Assert.Single(Directory.GetFiles(folder.Path, "*.bak"))));
+        Assert.Empty(Directory.GetFiles(folder.Path, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task Set_ConcurrentMatchingRequestReadsCommittedStateBeforeDecidingToWrite()
+    {
+        using var folder = new TemporaryFolder();
+        var archivePath = Path.Combine(folder.Path, "User.zip");
+        CreateArchive(archivePath, SettingsXml("l0"));
+        var preparing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        int checks = 0;
+        var first = new SettingsCommands(null, new NativeQueryApprovalSettings(archivePath), () =>
+        {
+            if (Interlocked.Increment(ref checks) == 2)
+            {
+                preparing.TrySetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(4)));
+            }
+            return false;
+        });
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondCheckedExcel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new SettingsCommands(null, new NativeQueryApprovalSettings(archivePath), () =>
+        {
+            secondCheckedExcel.TrySetResult();
+            return false;
+        });
+        var firstUpdate = Task.Run(() => first.SetNativeQueryApproval(required: false, confirm: true));
+        Task<NativeQueryApprovalResult>? secondUpdate = null;
+        try
+        {
+            await preparing.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            secondUpdate = Task.Run(() =>
+            {
+                secondStarted.TrySetResult();
+                return second.SetNativeQueryApproval(required: false, confirm: true);
+            });
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            await Task.WhenAny(secondCheckedExcel.Task, Task.Delay(TimeSpan.FromMilliseconds(500)));
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        var changed = await firstUpdate.WaitAsync(TimeSpan.FromSeconds(5));
+        var unchanged = await secondUpdate!.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(changed.PreviousRequired);
+        Assert.NotNull(changed.BackupPath);
+        Assert.False(unchanged.PreviousRequired);
+        Assert.False(unchanged.Required);
+        Assert.Null(unchanged.BackupPath);
+        Assert.False(secondCheckedExcel.Task.IsCompleted);
+        Assert.Single(Directory.GetFiles(folder.Path, "*.bak"));
+    }
+
+    [Fact]
+    public async Task Set_ConcurrentOppositeRequestWaitsForFirstReadback()
+    {
+        using var folder = new TemporaryFolder();
+        var archivePath = Path.Combine(folder.Path, "User.zip");
+        CreateArchive(archivePath, SettingsXml("l0"));
+        var verifying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var firstSettings = new NativeQueryApprovalSettings(archivePath);
+        int reads = 0;
+        firstSettings.BeforeReadForTests = () =>
+        {
+            if (Interlocked.Increment(ref reads) == 2)
+            {
+                verifying.TrySetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(4)));
+            }
+        };
+        var first = new SettingsCommands(null, firstSettings, () => false);
+        var second = new SettingsCommands(null, new NativeQueryApprovalSettings(archivePath), () => false);
+        var firstUpdate = Task.Run(() => first.SetNativeQueryApproval(required: false, confirm: true));
+        Task<NativeQueryApprovalResult>? secondUpdate = null;
+        try
+        {
+            await verifying.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            secondUpdate = Task.Run(() =>
+            {
+                secondStarted.TrySetResult();
+                return second.SetNativeQueryApproval(required: true, confirm: true);
+            });
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            var whileVerifying = await Task.WhenAny(secondUpdate, Task.Delay(TimeSpan.FromMilliseconds(500)));
+            Assert.NotSame(secondUpdate, whileVerifying);
+        }
+        finally
+        {
+            release.Set();
+            try
+            {
+                await firstUpdate.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                if (secondUpdate is not null)
+                    await secondUpdate.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+
+        Assert.False((await firstUpdate).Required);
+        var restored = await secondUpdate!;
+        Assert.False(restored.PreviousRequired);
+        Assert.True(restored.Required);
+        Assert.True(second.GetNativeQueryApproval().Required);
     }
 
     [Fact]
@@ -316,6 +455,8 @@ public sealed class NativeQueryApprovalSettingsTests
             ReadCount++;
             return Snapshot;
         }
+
+        public T ExecuteUpdate<T>(Func<T> update) => update();
 
         public string Write(bool required, Func<bool> isExcelRunning)
         {

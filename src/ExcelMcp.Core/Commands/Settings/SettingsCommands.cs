@@ -78,7 +78,11 @@ public sealed class SettingsCommands : ISettingsCommands
                 "Pass required=true or required=false. The approval requirement must not be omitted.");
         }
 
-        bool requestedRequired = required.Value;
+        return _nativeQueryApprovalSettings.ExecuteUpdate(() => UpdateNativeQueryApproval(required.Value));
+    }
+
+    private NativeQueryApprovalResult UpdateNativeQueryApproval(bool requestedRequired)
+    {
         NativeQueryApprovalSnapshot previous = _nativeQueryApprovalSettings.Read();
         if (previous.Required == requestedRequired)
         {

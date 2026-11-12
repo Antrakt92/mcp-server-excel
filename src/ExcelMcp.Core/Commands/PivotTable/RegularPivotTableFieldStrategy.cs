@@ -460,53 +460,121 @@ public class RegularPivotTableFieldStrategy : IPivotTableFieldStrategy
     /// <inheritdoc/>
     public PivotFieldFilterResult SetFieldFilter(Excel.PivotTable pivot, string fieldName, List<string> filterValues, string workbookPath)
     {
+        ArgumentNullException.ThrowIfNull(filterValues);
+        if (filterValues.Count == 0 || filterValues.Any(string.IsNullOrEmpty))
+            throw new ArgumentException("Select at least one nonempty PivotTable member name.", nameof(filterValues));
+
+        var requested = filterValues.ToHashSet(StringComparer.Ordinal);
         Excel.PivotField? field = null;
         Excel.PivotItems? pivotItems = null;
+        bool mutationStarted = false;
         try
         {
             field = GetFieldForManipulation(pivot, fieldName);
+            var orientation = field.Orientation;
+            if (orientation is not (Excel.XlPivotFieldOrientation.xlRowField or
+                Excel.XlPivotFieldOrientation.xlColumnField or Excel.XlPivotFieldOrientation.xlPageField))
+                throw new ArgumentException("Place the field in Rows, Columns, or Filters before selecting members.", nameof(fieldName));
 
-            // Clear all existing filters first
+            pivotItems = (Excel.PivotItems)field.PivotItems();
+            var availableItems = ReadPivotFilterItemNames(pivotItems, visibleOnly: false);
+            var availableNames = availableItems.ToHashSet(StringComparer.Ordinal);
+            string? unknown = requested.FirstOrDefault(name => !availableNames.Contains(name));
+            if (unknown is not null)
+                throw new ArgumentException($"PivotTable field '{fieldName}' has no member named '{unknown}'.", nameof(filterValues));
+
+            bool isPage = orientation == Excel.XlPivotFieldOrientation.xlPageField;
+            bool multiplePages = isPage && field.EnableMultiplePageItems;
+            bool showAll = requested.SetEquals(availableNames);
+            mutationStarted = true;
             field.ClearAllFilters();
 
-            // Set visibility based on filter values
-            pivotItems = (Excel.PivotItems)field.PivotItems();
-            var availableItems = new List<string>();
-
-            for (int i = 1; i <= pivotItems.Count; i++)
+            List<string> selected;
+            if (isPage && !multiplePages && !showAll && requested.Count == 1)
             {
-                Excel.PivotItem? item = null;
+                Excel.PivotItem? page = null;
                 try
                 {
-                    item = pivotItems.Item(i);
-                    string itemName = item.Name?.ToString() ?? "";
-                    availableItems.Add(itemName);
-                    item.Visible = filterValues.Contains(itemName);
+                    field.CurrentPage = requested.Single();
+                    page = (Excel.PivotItem)field.CurrentPage;
+                    selected = [page.Name];
                 }
                 finally
                 {
-                    ComUtilities.Release(ref item);
+                    ComUtilities.Release(ref page);
                 }
             }
+            else
+            {
+                if (isPage && !multiplePages && !showAll)
+                    field.EnableMultiplePageItems = true;
 
-            // NOTE: No RefreshTable() needed - Filter changes persist without refresh
-            // (Verified by diagnostic test: Filter_WithoutRefresh_VerifyPersistence)
+                foreach (string name in availableItems)
+                {
+                    if (requested.Contains(name))
+                        continue;
+
+                    Excel.PivotItem? item = null;
+                    try
+                    {
+                        item = pivotItems.Item(name);
+                        if (!string.Equals(item.Name, name, StringComparison.Ordinal))
+                            throw new InvalidOperationException("Excel returned a different member while applying the filter.");
+                        item.Visible = false;
+                    }
+                    finally
+                    {
+                        ComUtilities.Release(ref item);
+                    }
+                }
+                selected = ReadPivotFilterItemNames(pivotItems, visibleOnly: true);
+            }
+
+            if (!requested.SetEquals(selected))
+                throw new InvalidOperationException("Excel returned a different member selection after applying the filter.");
 
             return new PivotFieldFilterResult
             {
                 Success = true,
                 FieldName = fieldName,
-                SelectedItems = filterValues,
+                SelectedItems = selected,
                 AvailableItems = availableItems,
-                ShowAll = false,
+                ShowAll = showAll,
                 FilePath = workbookPath
             };
+        }
+        catch (Exception ex) when (mutationStarted && CreatedObjectFailure.CanReport(ex))
+        {
+            throw new InvalidOperationException(
+                $"Filtering PivotTable field '{fieldName}' failed after Excel began changing the filter. " +
+                "Existing filters may have been cleared or the selection may be partial. Read the field before retrying.", ex);
         }
         finally
         {
             ComUtilities.Release(ref pivotItems);
             ComUtilities.Release(ref field);
         }
+    }
+
+    private static List<string> ReadPivotFilterItemNames(Excel.PivotItems items, bool visibleOnly)
+    {
+        int count = items.Count;
+        var names = new List<string>(count);
+        for (int index = 1; index <= count; index++)
+        {
+            Excel.PivotItem? item = null;
+            try
+            {
+                item = items.Item(index);
+                if (!visibleOnly || item.Visible)
+                    names.Add(item.Name);
+            }
+            finally
+            {
+                ComUtilities.Release(ref item);
+            }
+        }
+        return names;
     }
 
     /// <inheritdoc/>

@@ -186,6 +186,7 @@ public interface IChartConfigCommands
     /// <param name="left">Optional finite horizontal position in points from the chart's left edge; switches to custom title placement</param>
     /// <param name="top">Optional finite vertical position in points from the chart's top edge; switches to custom title placement</param>
     /// <param name="alignment">Optional Left, Center, or Right paragraph alignment within the title, independent of its position</param>
+    /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>
     [ServiceAction("set-title")]
     OperationResult SetTitle(
         IExcelBatch batch,
@@ -193,7 +194,8 @@ public interface IChartConfigCommands
         [RequiredParameter, AllowEmptyString] string title,
         double? left = null,
         double? top = null,
-        ChartTitleAlignment? alignment = null);
+        ChartTitleAlignment? alignment = null,
+        string? chartSheetName = null);
 
     /// <summary>
     /// Formats the line of an existing regular-chart or PivotChart axis.

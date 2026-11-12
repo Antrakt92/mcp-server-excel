@@ -74,11 +74,22 @@ public sealed class PowerQueryTraceListResult : ResultBase
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? ProcessId { get; set; }
 
-    /// <summary>Matching trace files, newest first.</summary>
+    /// <summary>Up to 512 matching files, newest first within the scanned files.</summary>
     public List<PowerQueryTraceFileInfo> Files { get; set; } = [];
 
-    /// <summary>Total size of the matching files in bytes.</summary>
+    /// <summary>Total size of matching files identified by the scan, including matches omitted from the list.</summary>
     public long TotalSizeBytes { get; set; }
+
+    /// <summary>Number of matching files identified by the scan, including matches omitted from the list.</summary>
+    public int MatchingFileCount { get; set; }
+
+    /// <summary>Whether the file list or scan hit a limit. See ScanWarnings for the reason.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Truncated { get; set; }
+
+    /// <summary>Limits that prevented returning a complete file list.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ScanWarnings { get; set; }
 }
 
 /// <summary>
@@ -268,13 +279,17 @@ public sealed class PowerQueryTraceSummaryResult : ResultBase
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int UnreadableLines { get; set; }
 
+    /// <summary>Whether a scan limit made the summary incomplete. Details are included in Findings.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Truncated { get; set; }
+
     /// <summary>Length of the window in seconds.</summary>
     public double WindowSeconds { get; set; }
 
     /// <summary>Seconds in the window where Power Query recorded activity.</summary>
     public double PowerQueryBusySeconds { get; set; }
 
-    /// <summary>Seconds in the window without Power Query activity (time spent elsewhere, for example in Excel or the Data Model).</summary>
+    /// <summary>Seconds in the window without Power Query activity. Unavailable when Truncated is true.</summary>
     public double OutsidePowerQuerySeconds { get; set; }
 
     /// <summary>Number of query evaluations.</summary>
@@ -311,8 +326,8 @@ public sealed class PowerQueryTraceSummaryResult : ResultBase
     public List<PowerQueryTraceIssue>? Issues { get; set; }
 
     /// <summary>
-    /// End time of the newest matched entry in UTC (ISO 8601). Pass it as since on the next
-    /// summarize call to read only newer activity.
+    /// End time of the newest matched entry in UTC (ISO 8601), available after a complete scan.
+    /// Pass it as since on the next summarize call to read only newer activity.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? TraceCursor { get; set; }
