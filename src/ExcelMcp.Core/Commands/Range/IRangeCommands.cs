@@ -403,7 +403,7 @@ public class FindOptions
     /// <summary>Whether to search in values</summary>
     public bool SearchValues { get; set; } = true;
 
-    /// <summary>Whether to search in comments</summary>
+    /// <summary>Whether to include notes and threaded comments. Set both cell search flags false to search comments only.</summary>
     public bool SearchComments { get; set; }
 }
 
