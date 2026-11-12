@@ -7,6 +7,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Workbook;
 
 public partial class WorkbookCommands
 {
+    internal static Action<string>? BeforeNativeSaveAsHookForTests { get; set; }
     internal static Action<string>? BeforeOutputCommitHookForTests { get; set; }
 
     /// <inheritdoc />
@@ -42,6 +43,8 @@ public partial class WorkbookCommands
             try
             {
                 context.App.DisplayAlerts = false;
+                BeforeNativeSaveAsHookForTests?.Invoke(normalizedPath);
+                ThrowIfOutputFileExists(normalizedPath, overwrite);
                 context.Book.SaveAs(
                     normalizedPath,
                     ToExcelFileFormat(resolvedFormat),
@@ -233,15 +236,16 @@ public partial class WorkbookCommands
             throw new DirectoryNotFoundException($"Output directory does not exist: '{directory}'.");
         }
 
-        if (File.Exists(normalizedPath))
-        {
-            if (!overwrite)
-            {
-                throw new IOException($"Output file already exists: '{normalizedPath}'.");
-            }
-        }
-
+        ThrowIfOutputFileExists(normalizedPath, overwrite);
         return normalizedPath;
+    }
+
+    private static void ThrowIfOutputFileExists(string normalizedPath, bool overwrite)
+    {
+        if (!overwrite && File.Exists(normalizedPath))
+        {
+            throw new IOException($"Output file already exists: '{normalizedPath}'.");
+        }
     }
 
     internal static string CreateOutputStagingPath(string normalizedPath)
