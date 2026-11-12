@@ -206,14 +206,11 @@ public static partial class ExcelFileTool
 
     internal static JsonObject ConvertSessionResult(ResultJson outcome, string action, string? filePath = null)
     {
-        if (!outcome.Success)
-        {
-            if (filePath is not null)
-                outcome.Error!["filePath"] = filePath;
-            return JsonNode.Parse(outcome.ToToolJson())!.AsObject();
-        }
+        if (!outcome.Success && filePath is not null)
+            outcome.Error!["filePath"] = filePath;
         var result = JsonNode.Parse(outcome.ToToolJson())!.AsObject();
-        if (action == "list" && result["sessions"] is JsonArray sessions)
+        var listing = outcome.Success ? result : result["partialState"] as JsonObject;
+        if (action == "list" && listing?["sessions"] is JsonArray sessions)
         {
             foreach (var session in sessions.OfType<JsonObject>())
             {
@@ -221,6 +218,8 @@ public static partial class ExcelFileTool
                     session["workbook_session_id"] = sessionIdentifier;
             }
         }
+        if (!outcome.Success)
+            return result;
         var id = result["sessionId"]?.GetValue<string>();
         if (action is "open" or "create" or "attach" && string.IsNullOrWhiteSpace(id))
             throw new InvalidOperationException("Workbook startup returned no session ID.");
