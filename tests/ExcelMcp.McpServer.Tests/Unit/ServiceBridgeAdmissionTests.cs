@@ -15,6 +15,47 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 public sealed class ServiceBridgeAdmissionTests
 {
     [Fact]
+    public async Task SessionStatusUsesBoundedAdmissionIndependentOfWorkbookWork()
+    {
+        var backend = new Backend();
+        using var bridge = new Bridge(() => backend, maxOutstandingDispatches: 1);
+        var workbook = bridge.SendAsync("sheet.list", "workbook");
+        try
+        {
+            await Started(backend);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("session.discover", args: new Poison())).ErrorCategory);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("session.test", args: new Poison())).ErrorCategory);
+            backend.Fast = true;
+            Assert.True((await bridge.SendAsync("session.list")).Success);
+            await Started(backend);
+            Assert.Equal("session.list", backend.Requests["new2"].Command);
+            Assert.False(workbook.IsCompleted);
+
+            backend.Fast = false;
+            var firstStatus = bridge.SendAsync("session.list");
+            await Started(backend);
+            var secondStatus = bridge.SendAsync("service.status");
+            await Started(backend);
+            Assert.Equal("service.status", backend.Requests["new4"].Command);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("session.list", args: new Poison())).ErrorCategory);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("service.ping", args: new Poison())).ErrorCategory);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("sheet.list", "other", new Poison())).ErrorCategory);
+            backend.Complete("new3");
+            backend.Complete("new4");
+            Assert.True((await firstStatus.WaitAsync(TimeSpan.FromSeconds(3))).Success);
+            Assert.True((await secondStatus.WaitAsync(TimeSpan.FromSeconds(3))).Success);
+            Assert.False(workbook.IsCompleted);
+        }
+        finally
+        {
+            backend.Complete("new3");
+            backend.Complete("new4");
+            backend.Complete("workbook");
+            await workbook.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+    }
+
+    [Fact]
     public async Task SaturationRejectsWithoutSerializationAndCancellationKeepsPendingWorkOwned()
     {
         var backend = new Backend();

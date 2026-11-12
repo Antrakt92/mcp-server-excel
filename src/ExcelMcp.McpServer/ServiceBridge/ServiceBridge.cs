@@ -35,6 +35,7 @@ public sealed class ServiceBridge : IDisposable
     private IServiceBridgeBackend? _current;
     private bool _disposed;
     private readonly SemaphoreSlim _dispatchSlots;
+    private readonly SemaphoreSlim _statusDispatchSlots = new(2, 2);
 
     internal ServiceBridge(Func<IServiceBridgeBackend> serviceFactory, ILogger<ServiceBridge>? logger = null,
         int maxOutstandingDispatches = 8)
@@ -98,7 +99,10 @@ public sealed class ServiceBridge : IDisposable
         }
         lock (_stateLock)
             ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_dispatchSlots.Wait(0))
+        // These controller-local reads never take a worker's execution slot.
+        var slots = command is "session.list" or "service.status" or "service.ping"
+            ? _statusDispatchSlots : _dispatchSlots;
+        if (!slots.Wait(0))
             return new ServiceResponse
             {
                 Success = false,
@@ -107,7 +111,7 @@ public sealed class ServiceBridge : IDisposable
                 ErrorCategory = "ServiceBusy",
                 ErrorMessage = "The service has reached its outstanding operation limit. Wait for active operations to finish."
             };
-        var lease = new DispatchLease(_dispatchSlots);
+        var lease = new DispatchLease(slots);
         try
         {
             return await SendAdmittedAsync(command, sessionId, args, timeoutSeconds, cancellationToken, lease);
