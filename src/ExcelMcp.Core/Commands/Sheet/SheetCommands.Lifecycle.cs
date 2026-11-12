@@ -521,22 +521,22 @@ public partial class SheetCommands
                     }
                 }
 
-                // Save both workbooks (source lost a sheet, target gained one)
-                var sourceSaveCompleted = false;
+                // Persist the destination before saving the deletion in the source.
+                var targetSaveCompleted = false;
                 try
                 {
                     ExcelShutdownService.SaveWorkbookWithTimeout(
-                        sourceWb, Path.GetFileName(sourceFile), batch.Logger, ct);
-                    sourceSaveCompleted = true;
-                    ExcelShutdownService.SaveWorkbookWithTimeout(
                         targetWb, Path.GetFileName(targetFile), batch.Logger, ct);
+                    targetSaveCompleted = true;
+                    ExcelShutdownService.SaveWorkbookWithTimeout(
+                        sourceWb, Path.GetFileName(sourceFile), batch.Logger, ct);
                 }
                 catch (InvalidOperationException ex)
                 {
                     throw new InvalidOperationException(
-                        (sourceSaveCompleted
-                            ? "Worksheet move: Excel confirmed the source save, but the target save was not confirmed. "
-                            : "Worksheet move changed both workbooks in memory, but the source save was not confirmed. ") +
+                        (targetSaveCompleted
+                            ? "Worksheet move: Excel confirmed the target save, but the source save was not confirmed. Both files may contain the worksheet. "
+                            : "Worksheet move changed both workbooks in memory, but the target save was not confirmed. The source save was not attempted. ") +
                         "Inspect the reported partial state and any recovery session before retrying. " +
                         "No rollback was performed. " + ex.Message, ex);
                 }
@@ -547,7 +547,7 @@ public partial class SheetCommands
             {
                 ComUtilities.Release(ref targetPositionSheet);
                 ComUtilities.Release(ref targetSheets);
-                // Note: sourceSheetObj has been moved, don't release it
+                ComUtilities.Release(ref sourceSheetObj);
             }
         });
     }
