@@ -37,6 +37,7 @@ env:
 
 jobs:
   resolve:
+    if: github.repository == 'sbroenne/mcp-server-excel'
     name: Resolve Exact Release
     runs-on: ubuntu-24.04
     outputs:

@@ -26,6 +26,7 @@ env:
 
 jobs:
   version:
+    if: github.repository == 'sbroenne/mcp-server-excel'
     name: Calculate Version
     runs-on: ubuntu-24.04
     outputs:

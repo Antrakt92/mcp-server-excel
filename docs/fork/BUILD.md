@@ -1,5 +1,8 @@
 # Build portable fork packages
 
+The upstream release, MCP Registry, and plugin workflows run only in the upstream repository.
+Use the portable build below for this fork's GitHub Releases.
+
 From a clean checkout, use Windows, PowerShell 7.4 or later, and the SDK pinned in `global.json`.
 For a new release, select an unused fork version from the full change range first:
 
