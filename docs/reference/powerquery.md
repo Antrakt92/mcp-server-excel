@@ -204,8 +204,8 @@ Create only if it is absent. Do not blindly delete/rebuild it.
 For surviving `SalesQuery` and corrected code in a known `query.m` file:
 
 ```mcp
-powerquery(action: 'evaluate', workbook_session_id: sessionId, m_code_file: 'query.m')
-powerquery(action: 'update', workbook_session_id: sessionId, query_name: 'SalesQuery', m_code_file: 'query.m', refresh: false)
+powerquery(action: 'evaluate', workbook_session_id: sessionId, m_code_file: 'C:/Queries/query.m')
+powerquery(action: 'update', workbook_session_id: sessionId, query_name: 'SalesQuery', m_code_file: 'C:/Queries/query.m', refresh: false)
 powerquery_read(action: 'get-load-config', workbook_session_id: sessionId, query_name: 'SalesQuery')
 ```
 

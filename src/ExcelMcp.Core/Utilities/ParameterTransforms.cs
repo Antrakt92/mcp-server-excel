@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Sbroenne.ExcelMcp.Core.Commands.Range;
 
@@ -397,8 +398,8 @@ public static class ParameterTransforms
     }
 
     /// <summary>
-    /// Validates file-or-value shape and file existence without reading content.
-    /// Content is resolved exactly once immediately before Core dispatch.
+    /// Validates file-or-value shape without accessing the file system.
+    /// The execution owner resolves the file after session policy checks.
     /// </summary>
     public static void ValidateFileOrValueInput(
         string? directValue,
@@ -407,13 +408,6 @@ public static class ParameterTransforms
         bool required)
     {
         ValidateFileOrValuePair(directValue, filePath, parameterName);
-        if (!string.IsNullOrWhiteSpace(filePath) && !File.Exists(filePath))
-        {
-            throw new FileNotFoundException(
-                $"File for '{parameterName}' was not found: {filePath}",
-                filePath);
-        }
-
         if (required
             && string.IsNullOrWhiteSpace(directValue)
             && string.IsNullOrWhiteSpace(filePath))
@@ -422,6 +416,39 @@ public static class ParameterTransforms
                 $"{parameterName} is required.",
                 parameterName);
         }
+    }
+
+    /// <summary>Resolves a CLI input against its caller directory. MCP requires an absolute input path.</summary>
+    public static string? BindLocalInputFile(string? path, string parameterName, string? callerDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(path) || Path.IsPathFullyQualified(path))
+            return path;
+        if (callerDirectory is null)
+            throw new ArgumentException($"'{parameterName}' must be an absolute Windows input file path.", parameterName);
+        return Path.GetFullPath(path, callerDirectory);
+    }
+
+    /// <summary>Applies local input path policy only to the action's declared file fields.</summary>
+    public static string BindLocalInputFiles(string argsJson, string? callerDirectory, string[] parameterNames)
+    {
+        using var document = JsonDocument.Parse(argsJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            return argsJson;
+
+        JsonObject? bound = null;
+        foreach (string name in parameterNames)
+        {
+            if (!document.RootElement.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+                continue;
+            var path = value.GetString();
+            var resolved = BindLocalInputFile(path, name, callerDirectory);
+            if (!string.Equals(path, resolved, StringComparison.Ordinal))
+            {
+                bound ??= JsonObject.Create(document.RootElement)!;
+                bound[name] = resolved;
+            }
+        }
+        return bound?.ToJsonString() ?? argsJson;
     }
 
     /// <summary>

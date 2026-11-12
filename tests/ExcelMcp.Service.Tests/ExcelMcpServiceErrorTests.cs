@@ -542,7 +542,7 @@ public sealed partial class ExcelMcpServiceErrorTests
     }
 
     [Fact]
-    public async Task ProcessAsync_ValidatesFileInputBeforeSessionLookup()
+    public async Task ProcessAsync_RejectsMissingSessionBeforeResolvingFileInput()
     {
         using var service = new ExcelMcpService();
         var missingPath = Path.Join(Path.GetTempPath(), $"{Guid.NewGuid():N}.m");
@@ -555,9 +555,9 @@ public sealed partial class ExcelMcpServiceErrorTests
         });
 
         Assert.False(response.Success);
-        Assert.Contains("not found", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(missingPath, response.ErrorMessage, StringComparison.Ordinal);
-        Assert.DoesNotContain("session", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("SessionNotFound", response.ErrorCategory);
+        Assert.Contains("missing-session", response.ErrorMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain(missingPath, response.ErrorMessage, StringComparison.Ordinal);
     }
 
     [Fact]

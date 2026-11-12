@@ -145,7 +145,7 @@ public interface IRangeCommands
     /// <param name="valuesFile">Path to a JSON or CSV file containing the values. JSON: 2D array. CSV: rows/columns. Alternative to inline values parameter.</param>
     /// <param name="overwritePolicy">reject-nonempty (default) checks all direct destinations and rejects existing content, including formulas displaying blank. allow permits intentional replacement, not bypassing Excel protection. Inspection failure stops the operation; no rollback or interactive-edit isolation.</param>
     [ServiceAction("set-values")]
-    OperationResult SetValues(IExcelBatch batch, [AllowEmptyString] string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? values = null, string? valuesFile = null, [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty);
+    OperationResult SetValues(IExcelBatch batch, [AllowEmptyString] string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? values = null, [LocalInputFile] string? valuesFile = null, [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty);
 
     // === FORMULA OPERATIONS ===
 
@@ -198,7 +198,7 @@ public interface IRangeCommands
     /// <param name="referenceStyle">a1 (default) or r1c1 native formula notation; relative R1C1 references use each destination cell</param>
     [ServiceAction("set-formulas")]
     OperationResult SetFormulas(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress,
-        List<List<object?>>? formulas = null, string? formulasFile = null,
+        List<List<object?>>? formulas = null, [LocalInputFile] string? formulasFile = null,
         [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty,
         [FromString] FormulaReferenceStyle referenceStyle = FormulaReferenceStyle.A1);
 
@@ -217,7 +217,7 @@ public interface IRangeCommands
     /// <param name="formulas">2D array of cells to validate. Formulas need the '=' prefix; text, numbers, true/false, and null are valid constants.</param>
     /// <param name="formulasFile">Path to a JSON file containing the cells to validate. Alternative to inline formulas parameter.</param>
     [ServiceAction("validate-formulas")]
-    RangeFormulaValidationResult ValidateFormulas(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? formulas = null, string? formulasFile = null);
+    RangeFormulaValidationResult ValidateFormulas(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? formulas = null, [LocalInputFile] string? formulasFile = null);
 
     // === CLEAR OPERATIONS ===
 
@@ -311,7 +311,7 @@ public interface IRangeCommands
     /// <param name="formats">2D array of format codes - same dimensions as target range (e.g., [['#,##0.00', '0.00%'], ['mm/dd/yyyy', 'General']]). Optional if formatsFile is provided.</param>
     /// <param name="formatsFile">Path to a JSON file containing 2D array of format codes. Alternative to inline formats parameter.</param>
     [ServiceAction("set-number-formats")]
-    OperationResult SetNumberFormats(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, List<List<string>>? formats = null, string? formatsFile = null);
+    OperationResult SetNumberFormats(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, List<List<string>>? formats = null, [LocalInputFile] string? formatsFile = null);
 
     // === DISCOVERY OPERATIONS ===
 

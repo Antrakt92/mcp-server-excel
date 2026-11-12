@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.CLI.Tests.Helpers;
+using Sbroenne.ExcelMcp.Core.Utilities;
 using Sbroenne.ExcelMcp.Service;
 using Xunit;
 using Xunit.Abstractions;
@@ -267,7 +268,7 @@ public sealed class GeneratedActionContractCliTests : IDisposable
     }
 
     [Fact]
-    public async Task RawBatch_ReportsMissingFileAliasesAsIndexedValidationErrors()
+    public async Task RawBatch_ReportsMissingFileAliasesAsIndexedWorkerErrors()
     {
         var firstMissingPath = Path.Join(_tempDirectory, "missing-first.m");
         var secondMissingPath = Path.Join(_tempDirectory, "missing-second.m");
@@ -288,9 +289,25 @@ public sealed class GeneratedActionContractCliTests : IDisposable
                 }
             }));
 
-        var result = await InProcessCliHelper.RunWithServiceAsync(["batch", "--input", inputPath]);
+        var received = new List<string>();
+        var result = await InProcessCliHelper.RunAsync(["batch", "--input", inputPath], request =>
+        {
+            using var args = JsonDocument.Parse(request.Args!);
+            var file = args.RootElement.GetProperty("mCodeFile").GetString()!;
+            received.Add(file);
+            var failure = Assert.Throws<FileNotFoundException>(() =>
+                ParameterTransforms.ResolveFileOrValue(null, file, "mCode"));
+            return new ServiceResponse
+            {
+                Success = false,
+                ErrorMessage = failure.Message,
+                ErrorCategory = OperationFailureClassifier.Classify(failure),
+                ExceptionType = failure.GetType().Name
+            };
+        });
 
         Assert.Equal(1, result.ExitCode);
+        Assert.Equal([firstMissingPath, secondMissingPath], received);
         var outputLines = result.Stdout.Split(
             Environment.NewLine,
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

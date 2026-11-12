@@ -97,7 +97,10 @@ public sealed class ParameterInfo
     public bool HasDefault { get; }
     public string? DefaultValue { get; }
     public bool IsFileOrValue { get; }
+    public bool IsLocalInputFile { get; }
     public string? FileSuffix { get; }
+    public string? LocalInputFileParameterName =>
+        IsFileOrValue ? Name + FileSuffix : IsLocalInputFile ? ExposedName ?? Name : null;
     public bool IsFromString { get; }
     public string? ExposedName { get; }
     public bool IsRequired { get; }
@@ -131,13 +134,15 @@ public sealed class ParameterInfo
         bool isRequired = false, bool isEnum = false,
         string? xmlDocDescription = null, string? enumTypeName = null,
         IReadOnlyList<EnumAliasInfo>? enumAliases = null, bool isParams = false,
-        bool allowsEmptyString = false, bool isJsonObject = false, bool allowsWhitespace = false)
+        bool allowsEmptyString = false, bool isJsonObject = false, bool allowsWhitespace = false,
+        bool isLocalInputFile = false)
     {
         Name = name;
         TypeName = typeName;
         HasDefault = hasDefault;
         DefaultValue = defaultValue;
         IsFileOrValue = isFileOrValue;
+        IsLocalInputFile = isLocalInputFile;
         FileSuffix = fileSuffix;
         IsFromString = isFromString;
         ExposedName = exposedName;

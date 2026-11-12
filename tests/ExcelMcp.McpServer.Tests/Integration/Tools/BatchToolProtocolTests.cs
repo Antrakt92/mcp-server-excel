@@ -13,6 +13,25 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
 [Trait("RequiresExcel", "false")]
 public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixture)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelativeInputFile_IsRejectedWithoutDispatch(bool batch)
+    {
+        Dictionary<string, object?> arguments = batch
+            ? Arguments("""[{"command":"powerquery.evaluate","args":{"mCodeFile":"relative.m"}}]""")
+            : new() { ["action"] = "evaluate", ["workbook_session_id"] = "recording-session", ["m_code_file"] = "relative.m" };
+        var call = await fixture.CallSequenceAsync(batch ? "batch" : "powerquery", arguments,
+            RecordingToolTest.Success("""{"success":true}"""));
+
+        Assert.Empty(call.Requests);
+        Assert.True(call.Result.IsError);
+        using var output = Parse(call.Result);
+        var failure = batch ? output.RootElement.GetProperty("results")[0] : output.RootElement;
+        Assert.Equal("InvalidInput", failure.GetProperty("errorCategory").GetString());
+        Assert.Contains("absolute", failure.GetProperty("errorMessage").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Discovery_AdvertisesDefaultsAndNestedEntryNames()
     {

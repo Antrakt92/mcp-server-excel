@@ -45,6 +45,7 @@ public static partial class ExcelBatchTool
     /// Run a known sequence of commands one at a time in one MCP call.
     /// Uses the excelcli batch entry format: command is group.action (range.get-values, sheet.list, session.open),
     /// args uses Service camelCase keys (sheetName, rangeAddress), and each entry may override sessionId.
+    /// Local code, data and formula input files require absolute Windows paths.
     /// Only commands exposed by MCP tools are accepted; service lifecycle commands and nested batches are rejected.
     /// Tool action and parameter descriptions give the exact batch command and argument names.
     /// Supply JSON arrays and objects directly, not strings containing JSON.
@@ -209,7 +210,9 @@ public static partial class ExcelBatchTool
                 throw new ArgumentException("sessionId must be a non-empty string.");
             if (entry.Args is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Null) })
                 throw new ArgumentException("args must be a JSON object or null.");
-            validateArguments(command, entry.Args?.GetRawText());
+            var argsJson = entry.Args?.GetRawText();
+            validateArguments(command, argsJson);
+            ServiceRegistry.BindLocalInputFileArguments(command, argsJson, callerDirectory: null);
             return null;
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)

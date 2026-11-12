@@ -487,6 +487,9 @@ public class McpToolGenerator : IIncrementalGenerator
             if (description is not null)
                 description = RenderMcpParameterNames(description, exposedParams);
             description = $"{description} Batch args key: {ep.Name}.".Trim();
+            if (info.Methods.Any(method => method.Parameters.Any(parameter =>
+                    parameter.LocalInputFileParameterName == ep.Name)))
+                description += " Use an absolute Windows input file path.";
 
             // Determine MCP type and conversion
             if (pInfo != null && pInfo.IsEnum && pInfo.EnumTypeName != null)

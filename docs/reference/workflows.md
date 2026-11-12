@@ -202,6 +202,10 @@ the previous output must change root business-field lookups to `data`, batch
 
 ### Running a batch job
 
+MCP batch entries require absolute Windows paths for code, data, and formula
+input files. CLI batch entries resolve relative input paths against the CLI's
+working directory. ExcelMCP checks the file when that command runs.
+
 This example assumes authorized edits and save/close of a workbook opened
 exclusively for the job. `$path` is the supplied path, `Sales` already exists,
 and target cells have been inspected. `commands.json` is a job-owned file.

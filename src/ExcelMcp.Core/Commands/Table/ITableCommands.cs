@@ -124,7 +124,7 @@ public interface ITableCommands
     /// <param name="rowsFile">Path to a JSON or CSV file containing the rows to append. Every row must match the table's column count. JSON: 2D array. CSV: rows/columns. Alternative to inline rows parameter.</param>
     /// <exception cref="InvalidOperationException">Table not found or append failed</exception>
     [ServiceAction("append")]
-    OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, string? rowsFile = null);
+    OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, [LocalInputFile] string? rowsFile = null);
 
     /// <summary>
     /// Retrieves data rows from a table, optionally limited to currently visible rows.
