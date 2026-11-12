@@ -35,22 +35,32 @@ public partial class PowerQueryCommands
                                 $"Power Query at index {i} did not expose a name.");
                         string formula = query.Formula?.ToString() ?? string.Empty;
                         string preview = formula.Length > 80 ? formula[..77] + "..." : formula;
-                        var loadState = DetectLoadState(ctx.Book, name, ct);
-
                         result.Queries.Add(new PowerQueryInfo
                         {
                             Name = name,
                             FormulaPreview = preview,
-                            CharacterCount = formula.Length,
-                            LoadMode = loadState.LoadMode,
-                            TargetSheet = loadState.TargetSheet,
-                            IsConnectionOnly = loadState.IsConnectionOnly,
-                            IsLoadedToDataModel = loadState.IsLoadedToDataModel
+                            CharacterCount = formula.Length
                         });
                     }
                     finally
                     {
                         ComUtilities.Release(ref query);
+                    }
+                }
+
+                if (result.Queries.Count > 0)
+                {
+                    var names = result.Queries.Select(query => query.Name);
+                    var sheets = FindLoadedSheets(ctx.Book, new HashSet<string>(names, StringComparer.OrdinalIgnoreCase), ct);
+                    var modelQueries = FindModelQueries(ctx.Book, new HashSet<string>(names, StringComparer.OrdinalIgnoreCase), ct);
+                    foreach (var query in result.Queries)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var loadState = GetLoadState(sheets.GetValueOrDefault(query.Name), modelQueries.Contains(query.Name));
+                        query.LoadMode = loadState.LoadMode;
+                        query.TargetSheet = loadState.TargetSheet;
+                        query.IsConnectionOnly = loadState.IsConnectionOnly;
+                        query.IsLoadedToDataModel = loadState.IsLoadedToDataModel;
                     }
                 }
 

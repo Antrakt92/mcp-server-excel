@@ -206,6 +206,30 @@ public sealed class PersistentServicePowerQueryReadContractTests(
     }
 
     [Fact]
+    public void List_LoadChanges_UpdateOnlyTheExactQuery()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var first = $"Read_{suffix}";
+        var second = $"{first}_Extended";
+        var firstSheet = $"First_{suffix}";
+        var secondSheet = $"Second_{suffix}";
+        const string code = "#table(type table [Value = Int64.Type], {{1}})";
+        var batch = _fixture.BatchToken;
+        CreateTracked(batch, first, code, PowerQueryLoadMode.ConnectionOnly);
+        CreateTracked(batch, second, code, PowerQueryLoadMode.LoadToTable, secondSheet);
+
+        var before = RequireSuccess(_queries.List(batch));
+        Assert.Null(Assert.Single(before.Queries, query => query.Name == first).TargetSheet);
+        Assert.Equal(secondSheet, Assert.Single(before.Queries, query => query.Name == second).TargetSheet);
+
+        _fixture.RegisterSheetForCleanup(firstSheet);
+        RequireSuccess(_queries.LoadTo(batch, first, PowerQueryLoadMode.LoadToTable, firstSheet));
+        var after = RequireSuccess(_queries.List(batch));
+        Assert.Equal(firstSheet, Assert.Single(after.Queries, query => query.Name == first).TargetSheet);
+        Assert.Equal(secondSheet, Assert.Single(after.Queries, query => query.Name == second).TargetSheet);
+    }
+
+    [Fact]
     public void List_UnexecutedInvalidMQuery_ReturnsCompactMetadata()
     {
         var queryName = $"InvalidRead_{Guid.NewGuid():N}";
