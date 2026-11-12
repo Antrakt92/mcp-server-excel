@@ -53,7 +53,7 @@ public interface IPivotTableCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable</param>
-    /// <param name="sheetName">Exact worksheet containing the selected PivotTable. Optional for read; required for share-cache, get-connection, and set-connection.</param>
+    /// <param name="sheetName">Exact worksheet containing the selected PivotTable. Optional for read, delete, and refresh. Required for share-cache, get-connection, and set-connection.</param>
     /// <param name="maxSelectedMembers">Maximum member names returned across all fields (1 through 1000; default 100).</param>
     /// <returns>All fields with positions, aggregation functions, filter states</returns>
     [ServiceAction("read")]

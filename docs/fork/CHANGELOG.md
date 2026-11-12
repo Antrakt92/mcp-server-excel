@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.0.0) | 2026-11-12 | Workbook and file safety, faster DAX reads, and recoverable Excel sessions |
 | [4.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.1.0) | 2026-11-05 | Native exit history, clearer failure diagnostics and safer disconnected batches |
 | [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and worksheet screenshot fixes |
 | [3.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.6.0) | 2026-11-03 | Native VBA project password configuration and verified dialog cleanup |
@@ -21,6 +22,51 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.0.0 — 2026-11-12
+
+This release fixes cases where ExcelMCP could lose a worksheet or a query load, change the wrong named object, or say a workbook was saved when the save was unconfirmed. It includes upstream ExcelMCP 2.6.12.
+
+### Upgrade notes
+
+- Use absolute Windows paths for MCP arguments that refer to local input files. CLI code, data, formula, query, image, and theme input paths resolve from the directory where the command or batch was submitted. Inline JSON and query text remain supported.
+- Split MCP batches into groups of at most 128 commands. When accumulated results reach 8 MiB and more commands remain, the batch keeps the result that reached the limit and stops before the next command. Check `stopReason`, `stoppedEarly`, `executedCount`, and the per-command results before resuming.
+- Power Query trace lists return up to 512 matches. Large scans report the limit they reached. Use a newer `since` or a process filter to narrow the scan. The list has no pagination for older matches. Incomplete summaries omit the continuation cursor.
+- If a chart or PivotTable name is duplicated, supply a worksheet selector where available. MCP uses `chart_sheet_name` for charts, `sheet_name` for PivotTables, and `pivot_sheet_name` for slicer PivotTable membership. CLI uses the corresponding kebab-case option. Rename the object before using an action that has no selector.
+- The default CLI pipe now belongs to the current Windows sign-in session. Close and save work through the matching installation before switching versions. A same-session legacy daemon can be reached explicitly with its old pipe name when needed.
+
+### Workbooks and files
+
+- A cross-file worksheet move saves the destination before removing and saving the source. If the source save then fails, the error reports that a copy may exist in both files.
+- A worksheet copied next to a chart tab is renamed using the full tab order. The existing worksheet and chart keep their names.
+- Save and close persists edits that arrive after the first save. If Excel vetoes the final save or cannot safely close a workbook with multiple windows, the workbook remains available for inspection. Retrying a closed session with save enabled requires an explicit save receipt.
+- New workbooks, workbook copies, PDF and XPS exports, and chart images use a staging file before publication. With overwrite disabled, a file created by another process remains intact. If creation publishes the workbook but Excel cannot reopen it, the error gives the published path and confirms that no session was established. An output already in Excel can still publish after the caller times out. Inspect the session and destination before retrying.
+- Live Save As checks the destination again immediately before handing off to Excel. Excel's native Save As still has a narrow race with outside writers. Use Save Copy As with overwrite disabled for an atomic same-format snapshot.
+- If opening VBA code moves a reopened workbook to another file, the original session is quarantined. Excel retains the live workbook, and session status identifies its verified current location.
+
+### Ranges, tables, queries and reports
+
+- First-only range replacement changes one match. Partial first-only replacements accept literal text and escaped wildcards. Use whole-cell matching for wildcard patterns. Find can search Excel notes and threaded comments and counts a matching cell once.
+- Table append checks the full expansion area and preserves totals and neighboring cells. Table reads keep an existing single blank row, and unfiltered reads skip row visibility calls.
+- Power Query checks the requested destination before removing earlier loads. Listing queries scans worksheet and Data Model destinations once per request. ExcelMCP serializes its native-query approval reads, writes and verification. It detects external archive changes where possible and keeps displaced bytes for recovery.
+- Chart and PivotTable operations reject duplicate workbook-wide names. Supported operations can select a worksheet explicitly. Slicer membership is checked against the selected PivotTable.
+- Ordinary PivotTable filters validate all member names before changing the current filter and return what Excel applied. Single-PivotTable refresh honors the requested wait deadline and reports a native refusal.
+- Upstream 2.6.12 adds readable blocking-dialog details to errors, improves workbook and Power Query refresh-all reporting for separate PivotCaches, and includes a short Excel CLI quick-start in the upstream plugin.
+
+### Performance
+
+- DAX and DMV rows are read in bounded ADO batches. On this Windows machine, a warm DAX query returning 1,500 rows by four columns took a median of 8.48 seconds on baseline `e79838b8` and 31.0 milliseconds with batching, about 273 times faster for that query. Each build was measured 14 times with the same synthetic workbook and query.
+- MCP initialization fell from 5,125 to 2,419 bytes in an isolated stdio comparison of the guidance change. Both runs listed 64 tools and returned equally sized discovery responses.
+
+### Service and MCP
+
+- Batches stop on uncertain completion and retain the original response for recovery. Partial MCP session lists use `workbook_session_id` consistently.
+- A cancelled MCP call can return promptly while its worker finishes. Its admission slot remains held until then, and local status reads have reserved capacity.
+- The controller preserves exact worker recovery and exit records, reclaims dead utility slots, and reconciles cancellation around worker claims without releasing an unconfirmed workbook.
+
+### Dependencies and build
+
+The portable runtime uses the same .NET package versions as 4.1.0. Upstream updated the Actions pins for .NET setup 6.0.0 → 6.1.0, CodeQL init/analyze 4.39.1 → 4.39.3, and Agentic Workflows setup 1.0.1 → 1.1.0. Test-only Python pins moved to pytest-asyncio 1.4.1.post1 and pytest-skill-engineering 1.0.8. The fork's CI mappings now cover the MCP examples, briefing assets, and synthetic OLAP helper. Upstream publishing workflows are scoped to the upstream repository.
 
 ## 4.1.0 — 2026-11-05
 

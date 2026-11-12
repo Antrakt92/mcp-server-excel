@@ -13,11 +13,11 @@ For development packages only. Records dirty source explicitly in the manifest.
 .PARAMETER NoRestore
 Passes --no-restore to dotnet publish when the win-x64 assets are already restored.
 .EXAMPLE
-pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 4.1.0 -OutputDirectory artifacts/fork/4.1.0
+pwsh -NoProfile -File scripts/Build-ForkRelease.ps1 -Version 5.0.0 -OutputDirectory artifacts/fork/5.0.0
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = '4.1.0',
+    [string]$Version = '5.0.0',
     [string]$OutputDirectory,
     [string]$DotNetExecutable = 'dotnet',
     [switch]$AllowDirtySource,
