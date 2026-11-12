@@ -351,8 +351,8 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Source sheet '{sourceSheet}' not found in '{Path.GetFileName(sourceFile)}'");
                 }
 
-                // Handle positioning
-                targetSheets = targetWb.Worksheets;
+                // Worksheet.Index is a tab index, including chart sheets.
+                targetSheets = targetWb.Sheets;
                 int? copiedSheetPosition = null;
 
                 if (targetSheetName is not null)
@@ -385,8 +385,8 @@ public partial class SheetCommands
                 }
                 else
                 {
-                    // Copy to end of target workbook
-                    Excel.Worksheet? lastSheet = (Excel.Worksheet)targetSheets[targetSheets.Count];
+                    // The last tab can be a chart sheet.
+                    object? lastSheet = targetSheets[targetSheets.Count];
                     try
                     {
                         sourceSheetObj.Copy(After: lastSheet);
