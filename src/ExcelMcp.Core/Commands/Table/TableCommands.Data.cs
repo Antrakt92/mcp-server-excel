@@ -18,6 +18,8 @@ public partial class TableCommands
     {
         ValidateRequiredTableName(tableName);
         var resolvedRows = ParameterTransforms.ResolveValuesOrFile(rows, rowsFile, "rows");
+        if (resolvedRows.Count == 0)
+            throw new ArgumentException("No data to append", nameof(rows));
 
         return batch.Execute((ctx, ct) =>
         {
