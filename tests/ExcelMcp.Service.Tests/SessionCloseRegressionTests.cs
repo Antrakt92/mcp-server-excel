@@ -6,6 +6,8 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Commands;
+using Sbroenne.ExcelMcp.Service.Rpc;
+using Sbroenne.ExcelMcp.Service.Workers;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -18,6 +20,48 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Speed", "Medium")]
 public sealed partial class SessionCloseRegressionTests
 {
+    [Theory(Timeout = 15000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkerShutdown_UnconfirmedReleaseKeepsItsRecoveryRegistration(bool ownsExcel)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-worker-release-");
+        var registry = new WorkerRegistry(directory.FullName);
+        var identity = WorkerProcess.Current;
+        var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", identity, identity,
+            "generation", WorkerRegistry.Build, new ExcelProcessIdentity(identity.ProcessId, identity.StartedAtUtcFileTime),
+            OwnsExcel: ownsExcel);
+        using var service = new ExcelMcpService();
+        var batch = new FakeBatch
+        {
+            WorkbookPath = CreateFakeWorkbookPath(),
+            DisposeException = new IOException("Synthetic Excel teardown remains unconfirmed.")
+        };
+        RegisterSession(service, "retained", batch, addKnownSessionId: true);
+        using var host = new ExcelWorkerHost(registration, service, registry);
+        var run = host.RunAsync();
+        try
+        {
+            var worker = new ExcelWorkerClient(registration, identity, registration.Generation);
+            var response = await worker.ReleaseAsync(CancellationToken.None);
+            Assert.True(response.Success);
+            Assert.Contains("Synthetic Excel teardown remains unconfirmed.", response.PartialState);
+            Assert.False(worker.Registration.ReleaseConfirmed);
+            Assert.Equal(1, batch.DisposeCalls);
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(registration, registry.Read(registration.PipeName));
+            Assert.Equal(registration, Assert.Single(registry.Read()));
+        }
+        finally
+        {
+            GetPrivateField<DaemonHost>(host, "_server").RequestShutdown();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            registry.Remove(registration.PipeName);
+            directory.Delete();
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

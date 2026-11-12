@@ -103,7 +103,9 @@ internal sealed class ExcelWorkerHost : IDisposable
             SessionManager.ExcelProcessIdentityReleased -= RecordRelease;
             SessionManager.ExcelProcessObservationRecorded -= RecordObservation;
         }
-        if (!_registration.ReleaseConfirmed)
+        // Confirmed records wait for controller acknowledgement. Incomplete shutdown keeps
+        // the recorded process identity available for explicit recovery after this worker exits.
+        if (!_registration.ReleaseConfirmed && !_registration.OwnsExcel && !_service.SessionManager.HasActiveConnections)
             _registry.Remove(_registration.PipeName);
     }
 
