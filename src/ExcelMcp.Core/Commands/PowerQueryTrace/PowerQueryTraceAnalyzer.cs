@@ -281,7 +281,7 @@ internal sealed partial class PowerQueryTraceAnalyzer
         return "error";
     }
 
-    public PowerQueryTraceSummaryResult Build()
+    public PowerQueryTraceSummaryResult Build(bool truncated = false)
     {
         var result = new PowerQueryTraceSummaryResult
         {
@@ -291,6 +291,7 @@ internal sealed partial class PowerQueryTraceAnalyzer
             FilesRead = _files,
             EntriesMatched = _entries,
             UnreadableLines = _unreadable,
+            Truncated = truncated,
             Evaluations = _evaluations.Count,
             DataSourceCalls = _sources.Values.Sum(s => s.Calls)
         };
@@ -306,30 +307,16 @@ internal sealed partial class PowerQueryTraceAnalyzer
 
         if (_entries == 0)
         {
-            result.Findings.Add(
-                "No Power Query trace entries matched. Tracing may be switched off, the Excel process may have started before tracing was switched on, or nothing ran in Power Query during this time.");
+            if (!truncated)
+                result.Findings.Add(
+                    "No Power Query trace entries matched. Tracing may be switched off, the Excel process may have started before tracing was switched on, or nothing ran in Power Query during this time.");
             AddUnreadableFinding(result);
             return result;
         }
 
-        var cursor = _lastEnd!.Value;
-        if (_filter.UntilUtc is DateTime until && cursor > until)
-        {
-            cursor = until;
-        }
-        result.TraceCursor = cursor.ToString("o", CultureInfo.InvariantCulture);
-
         var merged = MergeIntervals(result.WindowStartUtc, result.WindowEndUtc);
         double busy = merged.Sum(i => (i.End - i.Start).TotalSeconds);
         result.PowerQueryBusySeconds = Round(busy);
-        result.OutsidePowerQuerySeconds = Round(Math.Max(0, result.WindowSeconds - busy));
-
-        var gaps = FindGaps(merged, result.WindowStartUtc, result.WindowEndUtc);
-        result.QuietGaps = NullIfEmpty(gaps
-            .OrderByDescending(g => g.Seconds)
-            .Take(_top)
-            .OrderBy(g => g.StartUtc)
-            .ToList());
 
         result.Activities = NullIfEmpty(_activities.Values
             .OrderByDescending(a => a.End - a.Start)
@@ -394,6 +381,24 @@ internal sealed partial class PowerQueryTraceAnalyzer
             .Take(_top)
             .ToList());
 
+        if (truncated)
+        {
+            result.Findings.Add("Counts and timings cover only the trace entries that could be read.");
+            AddUnreadableFinding(result);
+            return result;
+        }
+
+        var cursor = _lastEnd!.Value;
+        if (_filter.UntilUtc is DateTime until && cursor > until)
+            cursor = until;
+        result.TraceCursor = cursor.ToString("o", CultureInfo.InvariantCulture);
+        result.OutsidePowerQuerySeconds = Round(Math.Max(0, result.WindowSeconds - busy));
+        var gaps = FindGaps(merged, result.WindowStartUtc, result.WindowEndUtc);
+        result.QuietGaps = NullIfEmpty(gaps
+            .OrderByDescending(g => g.Seconds)
+            .Take(_top)
+            .OrderBy(g => g.StartUtc)
+            .ToList());
         AddFindings(result, gaps);
         return result;
     }
@@ -423,7 +428,8 @@ internal sealed partial class PowerQueryTraceAnalyzer
                 $"{calls} data-source commands took {Format(Round(total))} s in total. " +
                 $"Slowest source: {slowest.Key.Kind} with {slowest.Value.Calls} commands, {Format(Round(slowest.Value.TotalSeconds))} s in total, longest {Format(Round(slowest.Value.MaxSeconds))} s.");
 
-            foreach (var source in sources.Where(s => s.Value.CommandCounts.Values.Any(c => c > 1)))
+            foreach (var source in sources.Where(s => s.Value.CommandCounts.Values.Any(c => c > 1))
+                .OrderByDescending(s => s.Value.TotalSeconds).Take(_top))
             {
                 int repeated = source.Value.CommandCounts.Values.Sum(c => c - 1);
                 findings.Add(
@@ -431,7 +437,8 @@ internal sealed partial class PowerQueryTraceAnalyzer
                     "Power Query often runs a native query twice: once to read the column layout and once for the data.");
             }
 
-            foreach (var source in sources.Where(s => s.Value.Calls >= 5 && s.Value.ConnectionOpens >= s.Value.Calls))
+            foreach (var source in sources.Where(s => s.Value.Calls >= 5 && s.Value.ConnectionOpens >= s.Value.Calls)
+                .OrderByDescending(s => s.Value.TotalSeconds).Take(_top))
             {
                 findings.Add(
                     $"{source.Value.ConnectionOpens} {source.Key.Kind} connections were opened for {source.Value.Calls} commands, so every command opened its own connection.");

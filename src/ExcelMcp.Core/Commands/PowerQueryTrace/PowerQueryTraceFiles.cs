@@ -34,6 +34,16 @@ internal static class PowerQueryTraceFiles
 internal sealed class PowerQueryTraceReader
 {
     private const int ContainerHostPeekLineCount = 50;
+    private const int ContainerHostPeekCharacters = 256 * 1024;
+    private const int HeaderScanCharacters = 8 * 1024 * 1024;
+    private const int MaxScannedFiles = 10_000;
+    private const int MaxListedFiles = 512;
+    private const int MaxSummarizedFiles = 256;
+    private const int SummaryScanCharacters = 32 * 1024 * 1024;
+    private const int SummaryScanLines = 100_000;
+    private const string HeaderLimit = "Container host detection reached its 50-line, 256 Ki-character per-file, or 8 Mi-character total scan limit. Some containers could not be attributed.";
+    private const string LineLimit = "At least one trace line exceeded the 256 Ki-character line limit and was skipped.";
+    private const string SummaryLimit = "The summary reached its 32 Mi-character or 100,000-line scan limit.";
     private readonly string _traceFolder;
     private readonly Func<int, bool> _isProcessRunning;
 
@@ -49,13 +59,12 @@ internal sealed class PowerQueryTraceReader
         DateTime? processStartedUtc = null)
     {
         var files = new List<PowerQueryTraceFileInfo>();
-        foreach (var file in PowerQueryTraceFiles.EnumerateTraceFiles(_traceFolder))
+        var warnings = new HashSet<string>(StringComparer.Ordinal);
+        var headers = new PowerQueryTraceReadBudget(HeaderScanCharacters, int.MaxValue);
+        int matchingFileCount = 0;
+        long totalSizeBytes = 0;
+        foreach (var (file, kind, fileProcessId, startedUtc) in ScanTraceFiles(warnings))
         {
-            if (!PowerQueryTraceFileName.TryParse(file.Name, out string kind, out int fileProcessId, out DateTime? startedUtc))
-            {
-                continue;
-            }
-
             if (processStartedUtc is DateTime processStart &&
                 (startedUtc is not DateTime fileStart || fileStart < processStart))
             {
@@ -74,7 +83,7 @@ internal sealed class PowerQueryTraceReader
                 }
                 else
                 {
-                    hostProcessId = FindHostProcessId(file.FullName, requestedProcessId);
+                    hostProcessId = FindHostProcessId(file.FullName, requestedProcessId, headers, warnings);
                     if (hostProcessId != requestedProcessId)
                     {
                         continue;
@@ -83,7 +92,7 @@ internal sealed class PowerQueryTraceReader
             }
             else if (kind == PowerQueryTraceFileName.ContainerKind && sinceUtc.HasValue)
             {
-                hostProcessId = FindHostProcessId(file.FullName, expectedProcessId: null);
+                hostProcessId = FindHostProcessId(file.FullName, expectedProcessId: null, headers, warnings);
             }
 
             DateTime lastWriteUtc = file.LastWriteTimeUtc;
@@ -96,6 +105,11 @@ internal sealed class PowerQueryTraceReader
                 continue;
             }
 
+            long sizeBytes = file.Length;
+            matchingFileCount++;
+            totalSizeBytes += sizeBytes;
+            if (files.Count >= MaxListedFiles)
+                continue;
             files.Add(new PowerQueryTraceFileInfo
             {
                 FileName = file.Name,
@@ -104,34 +118,48 @@ internal sealed class PowerQueryTraceReader
                 HostProcessId = hostProcessId,
                 StartedUtc = startedUtc,
                 LastWriteUtc = lastWriteUtc,
-                SizeBytes = file.Length
+                SizeBytes = sizeBytes
             });
         }
 
-        files.Sort(static (left, right) => right.LastWriteUtc.CompareTo(left.LastWriteUtc));
+        if (matchingFileCount > MaxListedFiles)
+            warnings.Add("The file list shows the 512 newest matching files from the scan.");
         return new PowerQueryTraceListResult
         {
             Success = true,
             TraceFolder = _traceFolder,
             ProcessId = processId,
             Files = files,
-            TotalSizeBytes = files.Sum(file => file.SizeBytes)
+            TotalSizeBytes = totalSizeBytes,
+            MatchingFileCount = matchingFileCount,
+            Truncated = warnings.Count > 0,
+            ScanWarnings = warnings.Count == 0 ? null : warnings.ToList()
         };
     }
 
     public PowerQueryTraceSummaryResult Summarize(PowerQueryTraceFilter filter)
     {
         var analyzer = new PowerQueryTraceAnalyzer(filter);
-        foreach (var file in SelectFilesForSummary(filter))
+        var warnings = new HashSet<string>(StringComparer.Ordinal);
+        var headers = new PowerQueryTraceReadBudget(HeaderScanCharacters, int.MaxValue);
+        var budget = new PowerQueryTraceReadBudget(SummaryScanCharacters, SummaryScanLines);
+        int filesRead = 0;
+        foreach (var file in SelectFilesForSummary(filter, headers, warnings))
         {
+            if (filesRead >= MaxSummarizedFiles)
+            {
+                warnings.Add("The summary reached its 256-file limit.");
+                break;
+            }
+            if (budget.RemainingCharacters <= 0 || budget.RemainingLines <= 0)
+            {
+                warnings.Add(SummaryLimit);
+                break;
+            }
+            filesRead++;
             analyzer.AddFileRead();
-            using var stream = new FileStream(
-                file.FullName,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
-            while (reader.ReadLine() is { } line)
+            foreach (var line in PowerQueryTraceLineReader.Read(file.FullName, budget, int.MaxValue, int.MaxValue,
+                () => warnings.Add(SummaryLimit), () => warnings.Add(LineLimit)))
             {
                 if (PowerQueryTraceLineParser.TryParse(line, out var entry) && entry != null)
                 {
@@ -144,18 +172,17 @@ internal sealed class PowerQueryTraceReader
             }
         }
 
-        return analyzer.Build();
+        var summary = analyzer.Build(truncated: warnings.Count > 0);
+        if (summary.Truncated)
+            summary.Findings.InsertRange(0, warnings);
+        return summary;
     }
 
-    private IEnumerable<FileInfo> SelectFilesForSummary(PowerQueryTraceFilter filter)
+    private IEnumerable<FileInfo> SelectFilesForSummary(PowerQueryTraceFilter filter,
+        PowerQueryTraceReadBudget headers, HashSet<string> warnings)
     {
-        foreach (var file in PowerQueryTraceFiles.EnumerateTraceFiles(_traceFolder))
+        foreach (var (file, kind, fileProcessId, startedUtc) in ScanTraceFiles(warnings))
         {
-            if (!PowerQueryTraceFileName.TryParse(file.Name, out string kind, out int fileProcessId, out DateTime? startedUtc))
-            {
-                continue;
-            }
-
             if (filter.UntilUtc is DateTime until && startedUtc is DateTime start && start > until)
             {
                 continue;
@@ -177,7 +204,7 @@ internal sealed class PowerQueryTraceReader
 
                 if (kind == PowerQueryTraceFileName.ContainerKind)
                 {
-                    hostProcessId = FindHostProcessId(file.FullName, processId);
+                    hostProcessId = FindHostProcessId(file.FullName, processId, headers, warnings);
                     if (hostProcessId != processId)
                     {
                         continue;
@@ -190,7 +217,7 @@ internal sealed class PowerQueryTraceReader
                 (startedUtc is not DateTime started || started < since))
             {
                 hostProcessId ??= kind == PowerQueryTraceFileName.ContainerKind
-                    ? FindHostProcessId(file.FullName, expectedProcessId: null)
+                    ? FindHostProcessId(file.FullName, expectedProcessId: null, headers, warnings)
                     : null;
                 if (!_isProcessRunning(fileProcessId) &&
                     (hostProcessId is not int hostPid || !_isProcessRunning(hostPid)))
@@ -203,11 +230,37 @@ internal sealed class PowerQueryTraceReader
         }
     }
 
-    private static int? FindHostProcessId(string filePath, int? expectedProcessId)
+    private IEnumerable<(FileInfo File, string Kind, int ProcessId, DateTime? StartedUtc)> ScanTraceFiles(HashSet<string> warnings)
     {
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
-        for (int i = 0; i < ContainerHostPeekLineCount && reader.ReadLine() is { } line; i++)
+        if (!Directory.Exists(_traceFolder))
+            return [];
+
+        var candidates = new List<(FileInfo File, string Kind, int ProcessId, DateTime? StartedUtc)>();
+        int scanned = 0;
+        foreach (var file in new DirectoryInfo(_traceFolder).EnumerateFiles())
+        {
+            if (++scanned > MaxScannedFiles)
+            {
+                warnings.Add("The trace directory scan reached its 10,000-file limit. Older or newer files may be missing.");
+                break;
+            }
+            if (PowerQueryTraceFileName.TryParse(file.Name, out var kind, out var processId, out var startedUtc))
+                candidates.Add((file, kind, processId, startedUtc));
+        }
+        return candidates.OrderByDescending(item => item.File.LastWriteTimeUtc)
+            .ThenBy(item => item.File.Name, StringComparer.Ordinal);
+    }
+
+    private static int? FindHostProcessId(string filePath, int? expectedProcessId,
+        PowerQueryTraceReadBudget headers, HashSet<string> warnings)
+    {
+        if (headers.RemainingCharacters <= 0)
+        {
+            warnings.Add(HeaderLimit);
+            return null;
+        }
+        foreach (var line in PowerQueryTraceLineReader.Read(filePath, headers, ContainerHostPeekCharacters,
+            ContainerHostPeekLineCount, () => warnings.Add(HeaderLimit), () => warnings.Add(LineLimit)))
         {
             if (PowerQueryTraceLineParser.TryParse(line, out var entry) &&
                 entry?.HostProcessId is int hostProcessId &&

@@ -233,13 +233,17 @@ public partial class PowerQueryCommands
         }
 
         var notes = new List<string>();
-        if (summary.EntriesMatched == 0)
+        if (summary.Truncated)
+        {
+            notes.Add("The trace summary covers only part of the trace data. See traceSummary.findings for the scan limits reached.");
+        }
+        else if (summary.EntriesMatched == 0)
         {
             notes.Add(
                 "No trace entries were found. Power Query reads tracing when Excel starts. Enable it with `excelcli settings set-pq-tracing --enabled true` (MCP: `settings`, action `set-pq-tracing` with `enabled=true`), restart Excel, then refresh again. This setting applies to the current Windows user and is not changed when a workbook or session closes. The refresh did not restart Excel.");
         }
 
-        if (elapsed >= TimeSpan.FromSeconds(60))
+        if (!summary.Truncated && elapsed >= TimeSpan.FromSeconds(60))
         {
             notes.Add("This refresh took at least 60 seconds; use the trace summary to inspect data-source time and quiet gaps.");
         }
