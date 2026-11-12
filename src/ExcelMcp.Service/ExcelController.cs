@@ -30,7 +30,7 @@ internal sealed class ExcelController : IDisposable
     private readonly SemaphoreSlim _discovery = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _newWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
-    private enum SessionEnd { Closed, WorkerExited }
+    private enum SessionEnd { Closed, SavedAndClosed, WorkerExited }
     private readonly ConcurrentDictionary<string, SessionEnd> _closedSessions = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _stop = new();
     private readonly DaemonHost _host;
@@ -187,15 +187,9 @@ internal sealed class ExcelController : IDisposable
                 && request.SessionId is { } sessionId && _sessions.TryGetValue(sessionId, out var owner))
                 worker = owner;
             else if (request.Command == "session.close" && request.SessionId is { } closedId
-                && _closedSessions.TryGetValue(closedId, out var end) && end == SessionEnd.Closed)
-                return new ServiceResponse
-                {
-                    Success = true,
-                    Command = request.Command,
-                    SessionId = closedId,
-                    Result = JsonSerializer.Serialize(new { success = true, sessionId = closedId, message = "Session already closed." },
-                        ServiceProtocol.JsonOptions)
-                }.WithCloseTimings(new Dictionary<string, double>());
+                && _closedSessions.TryGetValue(closedId, out var end) && end is SessionEnd.Closed or SessionEnd.SavedAndClosed)
+                return ExcelMcpService.AlreadyClosedResponse(request, saved: end == SessionEnd.SavedAndClosed)
+                    .WithCloseTimings(new Dictionary<string, double>());
             else if (!ExcelMcpService.IsSessionlessCommand(request.Command) && request.SessionId is { } lostId
                 && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd == SessionEnd.WorkerExited)
                 return CreateWorkerError(request,
@@ -274,6 +268,14 @@ internal sealed class ExcelController : IDisposable
             if (!execution.Accepted)
                 foreach (var path in reservedPaths)
                     _paths.TryRemove(new KeyValuePair<string, PathReservation>(path, reservation));
+            if (execution.Accepted && response.Success && request.Command == "session.close"
+                && request.SessionId is { } savedSession && response.Result is { } result
+                && JsonNode.Parse(result)?["saved"]?.GetValueKind() == JsonValueKind.True)
+            {
+                // Polling can observe the closed session and release its worker before this reply is published.
+                // Only an explicit worker receipt confirms that both save and close completed.
+                _closedSessions[savedSession] = SessionEnd.SavedAndClosed;
+            }
             var applied = ApplyWorkerSnapshot(worker);
             lock (_shutdownLock)
             {
@@ -310,7 +312,7 @@ internal sealed class ExcelController : IDisposable
                 }
                 if (response.Success && request.Command == "session.close" && request.SessionId is { } closed)
                 {
-                    _closedSessions[closed] = SessionEnd.Closed;
+                    _closedSessions.TryAdd(closed, SessionEnd.Closed);
                     _sessions.TryRemove(closed, out _);
                     foreach (var path in _paths.Where(path => path.Value.SessionId == closed))
                         _paths.TryRemove(path.Key, out _);
@@ -536,7 +538,7 @@ internal sealed class ExcelController : IDisposable
                 foreach (var removed in _sessions.Where(entry => entry.Value == worker
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
-                    _closedSessions[removed.Key] = SessionEnd.Closed;
+                    _closedSessions.TryAdd(removed.Key, SessionEnd.Closed);
                     _sessions.TryRemove(removed);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
                         _paths.TryRemove(path);
@@ -843,7 +845,7 @@ internal sealed class ExcelController : IDisposable
             var sessions = _sessions.Where(entry => entry.Value == worker).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
             foreach (var session in sessions)
             {
-                _closedSessions[session] = SessionEnd.WorkerExited;
+                _closedSessions.TryAdd(session, SessionEnd.WorkerExited);
                 _sessions.TryRemove(session, out _);
             }
             foreach (var path in _paths.Where(entry => entry.Value.Token == registration.PipeName

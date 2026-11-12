@@ -16,7 +16,7 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Feature", "ServiceDaemon")]
 [Trait("RequiresExcel", "false")]
 [Trait("Speed", "Medium")]
-public sealed class SessionCloseRegressionTests
+public sealed partial class SessionCloseRegressionTests
 {
     [Theory]
     [InlineData(false)]
@@ -789,7 +789,7 @@ public sealed class SessionCloseRegressionTests
         return (T)field!.GetValue(instance)!;
     }
 
-    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState
+    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState, IExcelBatchTeardownState
     {
         public WorkbookRefreshState RefreshState { get; set; } = WorkbookRefreshState.Ready;
         public int RefreshProbeCalls { get; private set; }
@@ -813,6 +813,7 @@ public sealed class SessionCloseRegressionTests
         public Action? BeforeDispose { get; set; }
         public Exception? SaveException { get; set; }
         public bool IsAlive { get; set; } = true;
+        public bool TeardownConfirmed { get; set; }
         public int DisposeCalls { get; private set; }
         public int ExecuteCalls { get; private set; }
         public bool BlockOperations { get; init; }
@@ -847,6 +848,8 @@ public sealed class SessionCloseRegressionTests
         }
 
         public bool IsExcelProcessAlive() => IsAlive;
+
+        public bool TryConfirmOwnedProcessTeardown() => TeardownConfirmed;
 
         public void Dispose()
         {

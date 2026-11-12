@@ -35,6 +35,7 @@ namespace Sbroenne.ExcelMcp.Service;
 public sealed class ExcelMcpService : IDisposable
 {
     private readonly SessionManager _sessionManager = new();
+    private const byte SavedAtClose = 1;
     private readonly ConcurrentDictionary<string, byte> _knownSessionIds = new(StringComparer.Ordinal);
     private readonly IPowerQueryTraceSettings _pqTraceSettings;
     private readonly DaemonHost _daemonHost;
@@ -604,8 +605,7 @@ public sealed class ExcelMcpService : IDisposable
         Justification = "Only confirmed fatal Excel disconnections reach this handler; CreateExcelDisconnectedResponse reports failure and the original COM error after dead-session cleanup.")]
     private ServiceResponse HandleSessionClose(ServiceRequest request)
     {
-        var args = ServiceRegistry.DeserializeArgs<SessionCloseArgs>(request.Args);
-        var shouldSave = args?.Save ?? false;
+        var shouldSave = RequestsCloseSave(request);
 
         if (string.IsNullOrWhiteSpace(request.SessionId))
         {
@@ -619,11 +619,12 @@ public sealed class ExcelMcpService : IDisposable
 
         var closingBatch = _sessionManager.GetSessionForDiagnostics(request.SessionId);
         bool closed;
+        var saved = false;
         try
         {
             _sessionManager.SetOperationContext(request.SessionId, request.Command, request.CallerCancellation);
             closed = SessionDiagnostics.MeasureCloseStage("session-close",
-                () => _sessionManager.CloseSession(request.SessionId, save: shouldSave));
+                () => _sessionManager.CloseSession(request.SessionId, out saved, save: shouldSave));
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
@@ -632,25 +633,49 @@ public sealed class ExcelMcpService : IDisposable
 
         if (closed)
         {
+            if (saved)
+            {
+                _knownSessionIds[request.SessionId] = SavedAtClose;
+                return new ServiceResponse { Success = true, Result = """{"saved":true}""" };
+            }
+            if (shouldSave)
+                return AlreadyClosedResponse(request, saved: false);
             return new ServiceResponse { Success = true };
         }
 
-        if (_knownSessionIds.ContainsKey(request.SessionId))
-        {
-            return new ServiceResponse
-            {
-                Success = true,
-                Result = JsonSerializer.Serialize(
-                    new { success = true, sessionId = request.SessionId, message = "Session already closed." },
-                    ServiceProtocol.JsonOptions)
-            };
-        }
+        if (_knownSessionIds.TryGetValue(request.SessionId, out var known))
+            return AlreadyClosedResponse(request, saved: known == SavedAtClose);
 
         return new ServiceResponse
         {
             Success = false,
             ErrorCategory = "SessionNotFound",
             ErrorMessage = $"Session '{request.SessionId}' not found"
+        };
+    }
+
+    private static bool RequestsCloseSave(ServiceRequest request) =>
+        ServiceRegistry.DeserializeArgs<SessionCloseArgs>(request.Args)?.Save == true;
+
+    internal static ServiceResponse AlreadyClosedResponse(ServiceRequest request, bool saved)
+    {
+        if (!saved && RequestsCloseSave(request))
+            return new ServiceResponse
+            {
+                Success = false,
+                Command = request.Command,
+                SessionId = request.SessionId,
+                ErrorCategory = "SessionUnavailable",
+                ErrorMessage = "The session has ended and saving its workbook could not be confirmed."
+            };
+
+        return new ServiceResponse
+        {
+            Success = true,
+            Command = request.Command,
+            SessionId = request.SessionId,
+            Result = JsonSerializer.Serialize(new { success = true, sessionId = request.SessionId, saved, message = "Session already closed." },
+                ServiceProtocol.JsonOptions)
         };
     }
 

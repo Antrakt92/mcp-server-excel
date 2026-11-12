@@ -1724,9 +1724,13 @@ public sealed class SessionManager : IDisposable
     /// <param name="force">Force close even if operations are running (default: false)</param>
     /// <returns>True if session was found and closed, false if session not found</returns>
     /// <exception cref="InvalidOperationException">Save operation failed or operations still running</exception>
-    public bool CloseSession(string sessionId, bool save = false, bool force = false)
+    public bool CloseSession(string sessionId, bool save = false, bool force = false) =>
+        CloseSession(sessionId, out _, save, force);
+
+    internal bool CloseSession(string sessionId, out bool saved, bool save = false, bool force = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        saved = false;
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -1826,6 +1830,7 @@ public sealed class SessionManager : IDisposable
             SessionDiagnostics.MeasureCloseStage("session-teardown",
                 () => CloseSessionSync(sessionId, batch, force, save));
             closeSucceeded = true;
+            saved = save;
             return true;
         }
         finally
