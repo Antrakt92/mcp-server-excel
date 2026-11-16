@@ -19,6 +19,39 @@ public sealed class PersistentServicePivotDepthTests(PersistentServiceWorkbookFi
         ServiceCommandProxy.Create<IPersistentPivotTableCommands>(fixture);
 
     [Fact]
+    public void GetData_TilesReportWithPageFieldAndPreservesHeadersAndTotals()
+    {
+        const int itemCount = 1001;
+        var name = CreateReadPivot(itemCount, labelPadding: 0);
+
+        var result = _pivot.GetData(_fixture.BatchToken, name);
+
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Equal(result.Values.Count, result.DataRowCount);
+        Assert.Equal(2, result.DataColumnCount);
+        Assert.All(result.Values, row => Assert.Equal(2, row.Count));
+        Assert.Equal("Region", result.Values[0][0]);
+        Assert.Equal(["Total Sales"], result.ColumnHeaders);
+        Assert.Equal(Enumerable.Range(1, itemCount).Select(index => $"Item {index:D4}"), result.RowHeaders);
+        Assert.Equal("Item 0001", result.Values[^(itemCount + 1)][0]);
+        Assert.Equal("Item 1001", result.Values[^2][0]);
+        RangeReadAssertions.Number(itemCount, result.Values[^1][1]);
+        RangeReadAssertions.Number(itemCount, Assert.Single(result.GrandTotals).Value);
+    }
+
+    [Fact]
+    public async Task GetData_RejectsLargeRepeatedReportLabelsWithinTheResponseBudget()
+    {
+        var name = CreateReadPivot(itemCount: 720, labelPadding: 230);
+
+        var failure = await _fixture.SendForFailureAsync("pivottablecalc.get-data", new { pivotTableName = name });
+
+        Assert.False(failure.Success);
+        Assert.Contains("4 MiB response byte budget", failure.ErrorMessage, StringComparison.Ordinal);
+        Assert.Null(failure.Result);
+    }
+
+    [Fact]
     public void NativeLabelAndValueFilters_ChangeActualRowsAndCanBeCleared()
     {
         var (_, name) = CreatePivot();
@@ -534,6 +567,29 @@ public sealed class PersistentServicePivotDepthTests(PersistentServiceWorkbookFi
         var value = _pivot.AddValueField(_fixture.BatchToken, name, "Sales", AggregationFunction.Sum, "Total Sales");
         Assert.True(value.Success, value.ErrorMessage);
         return (sheet, name);
+    }
+
+    private string CreateReadPivot(int itemCount, int labelPadding)
+    {
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        string name = $"Read_{Guid.NewGuid():N}";
+        string padding = new('x', labelPadding);
+        List<List<object?>> rows = [["Region", "Item", "Sales"]];
+        rows.AddRange(Enumerable.Range(1, itemCount)
+            .Select(index => new List<object?> { "North", $"Item {index:D4}{padding}", 1 }));
+        string source = $"A1:C{rows.Count}";
+        var written = _commands.SetValues(batch, sheet, source, rows);
+        Assert.True(written.Success, written.ErrorMessage);
+        var created = _pivot.CreateFromRange(batch, sheet, source, sheet, "E5", name);
+        Assert.True(created.Success, created.ErrorMessage);
+        var filter = _pivot.AddFilterField(batch, name, "Region");
+        Assert.True(filter.Success, filter.ErrorMessage);
+        var row = _pivot.AddRowField(batch, name, "Item");
+        Assert.True(row.Success, row.ErrorMessage);
+        var value = _pivot.AddValueField(batch, name, "Sales", AggregationFunction.Sum, "Total Sales");
+        Assert.True(value.Success, value.ErrorMessage);
+        return name;
     }
 
     private void AssertValues(string name, double total, params (string Label, double Amount)[] expected)
