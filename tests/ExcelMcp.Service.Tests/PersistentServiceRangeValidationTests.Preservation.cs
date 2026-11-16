@@ -5,6 +5,33 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class PersistentServiceRangeValidationTests
 {
+    [Fact]
+    public void ValidateRange_OversizedFormula_PreservesExistingRule()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.ValidateRange(
+            batch, sheetName, "A1", "whole", "between", "1", "10",
+            true, "Original title", "Original message",
+            true, "warning", "Original error", "Original error message",
+            false, null));
+        var before = RequireSuccess(_commands.GetValidation(batch, sheetName, "A1"));
+
+        var failure = Record.Exception(() => _fixture.Send("rangeformat.validate-range", new
+        {
+            sheetName,
+            rangeAddress = "A1",
+            validationType = "list",
+            formula1 = string.Join(',', Enumerable.Repeat("choice", 37))
+        }));
+        var after = RequireSuccess(_commands.GetValidation(batch, sheetName, "A1"));
+
+        Assert.Equal(JsonSerializer.Serialize(before), JsonSerializer.Serialize(after));
+        var invalidInput = Assert.IsType<ArgumentException>(failure);
+        Assert.Contains("[InvalidInput/", invalidInput.Message, StringComparison.Ordinal);
+        Assert.Contains("255", invalidInput.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("unsupported", "between", "stop")]
     [InlineData("whole", "unsupported", "stop")]

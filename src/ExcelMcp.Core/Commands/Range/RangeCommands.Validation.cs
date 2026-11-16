@@ -33,6 +33,12 @@ public partial class RangeCommands
         var xlType = ParseValidationType(validationType);
         var xlOperator = ParseValidationOperator(validationOperator ?? "between");
         var xlAlertStyle = ParseErrorStyle(errorStyle ?? "stop");
+        if (formula1 is { Length: > 255 } && xlType != (int)Excel.XlDVType.xlValidateInputOnly)
+        {
+            throw new ArgumentException(
+                "The first validation formula can contain at most 255 characters. For a longer dropdown list, reference a worksheet range or defined name.",
+                nameof(formula1));
+        }
         var effectiveShowErrorAlert = showErrorAlert ?? true;
 
         return batch.Execute((ctx, ct) =>

@@ -136,14 +136,14 @@ public interface IRangeFormatCommands
 
     /// <summary>
     /// Adds data validation rules to range.
-    /// Invalid type, comparison operator, and error style are rejected before replacing an existing rule.
+    /// Invalid type, comparison operator, error style, and an oversized first formula are rejected before replacing an existing rule.
     /// A later Excel error applying the replacement is not rolled back.
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address to validate (e.g., 'A1:D10')</param>
     /// <param name="validationType">Data validation type: 'list', 'whole', 'decimal', 'date', 'time', 'textLength', 'custom'</param>
     /// <param name="validationOperator">Validation comparison operator: 'between', 'notBetween', 'equal', 'notEqual', 'greaterThan', 'lessThan', 'greaterThanOrEqual', 'lessThanOrEqual'</param>
-    /// <param name="formula1">First validation formula/value - for list validation use range '=$A$1:$A$10' or inline '"A,B,C"'</param>
+    /// <param name="formula1">First validation formula or value, up to 255 characters. Use a worksheet range or defined name for longer dropdown lists.</param>
     /// <param name="formula2">Second validation formula/value - required only for 'between' and 'notBetween' operators</param>
     /// <param name="showInputMessage">Whether to show input message when cell is selected (default: false)</param>
     /// <param name="inputTitle">Title for the input message popup</param>
