@@ -24,7 +24,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 /// - For list validation, formula1 is the list source (e.g., '=$A$1:$A$10' or '"Option1,Option2,Option3"')
 /// - Operators: 'between', 'notBetween', 'equal', 'notEqual', 'greaterThan', 'lessThan', 'greaterThanOrEqual', 'lessThanOrEqual'
 ///
-/// MERGE: Combines cells into one. Only top-left cell value is preserved.
+/// MERGE: Combines one rectangle into one cell, keeping the top-left content. Other occupied cells require explicit overwrite permission.
 /// </summary>
 [ServiceCategory("RangeFormat")]
 [McpTool("range_format", Title = "Range Format Operations", Destructive = true, Category = "data",
@@ -32,7 +32,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "format: one format_options object for one or more range_addresses: edge/inside/diagonal borders, font, fill, theme colors/tints, indentation, alignment, and number format. Omitted settings keep their current state. All targets and known invalid options are checked before changes; Excel failures are not rolled back. Fixed RGB and theme colors are mutually exclusive per component. Colors use #RRGGBB. " +
         "set-style: named styles; Good/Bad/Neutral include fills, Heading 1/2/3 do NOT include a fill (use format for colored header rows), Normal resets. " +
         "set-visibility: axis rows/columns and hidden true/false; keeps stored sizes, filters, and groups. Disjoint gaps remain unchanged. " +
-        "DATA VALIDATION: for list, formula1 is the source (=$A$1:$A$10 or \"A,B,C\"). MERGE: only the top-left value is kept. " +
+        "DATA VALIDATION: for list, formula1 is the source (=$A$1:$A$10 or \"A,B,C\"). MERGE: only the top-left content is kept. Other occupied cells require overwrite_policy='allow'. " +
         "Do not format Excel Table cells (use table set-style) or PivotTable cells (refresh overwrites the formatting).")]
 [McpReadOnlyActions("get-format-summary", "get-visibility", "get-format", "get-style", "get-validation", "get-merge-info")]
 public interface IRangeFormatCommands
@@ -210,12 +210,14 @@ public interface IRangeFormatCommands
     // === MERGE OPERATIONS ===
 
     /// <summary>
-    /// Merges cells in range into a single cell.
+    /// Merges one rectangle into a single cell, preserving only the top-left content. Existing merges must fit inside the rectangle.
     /// </summary>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="rangeAddress">Cell range to merge into a single cell (e.g., 'A1:D1')</param>
+    /// <param name="overwritePolicy">Reject nonempty cells outside the top-left position by default. Use allow only when discarding their contents is authorized.</param>
     [ServiceAction("merge-cells")]
-    OperationResult MergeCells(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress);
+    OperationResult MergeCells(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress,
+        [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty);
 
     /// <summary>
     /// Unmerges previously merged cells.

@@ -161,6 +161,15 @@ Validation replacement can remove the old rule before Excel rejects the new
 one. Inspect the resulting rule after failure rather than assuming the previous
 validation survived.
 
+## Merging cells
+
+MCP `range_format` action `merge-cells` and CLI `rangeformat merge-cells`
+merge one rectangle. Excel keeps the contents of its top-left cell. The
+default policy rejects any value or formula in the other cells, including a
+formula that displays blank. Set `overwrite_policy` to `allow` in MCP or use
+`--overwrite-policy allow` in the CLI when discarding those contents is
+intentional. Existing merged areas must fit entirely inside the rectangle.
+
 ## Data validation
 
 MCP `range_format` action `validate-range` and CLI `rangeformat validate-range`
