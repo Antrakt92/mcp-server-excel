@@ -103,7 +103,7 @@ public partial class TableCommands
                 destination.Value2 = values;
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
-            catch (Exception ex) when (expansionAttempted && CreatedObjectFailure.CanReport(ex))
+            catch (Exception ex) when (expansionAttempted)
             {
                 string state = writeAttempted
                     ? "Writing the new rows began. Their values may have changed."
