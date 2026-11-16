@@ -128,7 +128,7 @@ public interface ITableCommands
     OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, [LocalInputFile] string? rowsFile = null);
 
     /// <summary>
-    /// Retrieves data rows from a table, optionally limited to currently visible rows.
+    /// Retrieves data rows from a table, optionally limited to currently visible rows. Large results are bounded. Use table read for the worksheet and range, then range get-values-page to read large tables in parts.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="tableName">Name of the table to read data from</param>

@@ -327,28 +327,37 @@ public partial class NamedRangeCommands
 
                 string refersTo = ((object?)nameObj.RefersTo)?.ToString() ?? "";
                 refersToRange = nameObj.RefersToRange;
+                var budget = new RangeReadBudget();
+                budget.AddScalar(name);
+                budget.AddScalar(refersTo);
                 if (refersToRange is not null)
+                {
                     RangeHelpers.RequireNamedRangeWorkbook(refersToRange, ctx.Book, name);
-                object? rawValue = refersToRange?.Value2;
-                object? value;
-                string valueType;
-                if (rawValue is object[,] array2D)
-                {
-                    value = ConvertArrayToList(array2D);
-                    valueType = "Array";
-                }
-                else
-                {
-                    value = ConvertValueForJson(rawValue);
-                    valueType = rawValue?.GetType().Name ?? "null";
+                    if (GetAreaCount(refersToRange) != 1)
+                        throw new ArgumentException("Named range reads require one rectangular range. Read each area separately.", nameof(name));
+
+                    var size = RangeHelpers.GetDimensions(refersToRange);
+                    if (size != (1, 1))
+                    {
+                        return new NamedRangeValue
+                        {
+                            Name = name,
+                            RefersTo = refersTo,
+                            Value = BoundedRangeValueReader.Read(refersToRange, size, budget, ct, convertValue: ConvertValueForJson),
+                            ValueType = "Array"
+                        };
+                    }
                 }
 
+                object? rawValue = refersToRange?.Value2;
+                var value = ConvertValueForJson(rawValue);
+                budget.AddScalar(value);
                 return new NamedRangeValue
                 {
                     Name = name,
                     RefersTo = refersTo,
                     Value = value,
-                    ValueType = valueType
+                    ValueType = rawValue?.GetType().Name ?? "null"
                 };
             }
             finally

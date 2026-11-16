@@ -40,7 +40,7 @@ public interface INamedRangeCommands
         [RequiredParameter, FromString("value")] string value);
 
     /// <summary>
-    /// Gets the value of a named range in the selected workbook.
+    /// Gets the value of one rectangular named range in the selected workbook. Large results are bounded; use range get-values-page for large names and separate range reads for disjoint areas.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="name">Name of the named range</param>

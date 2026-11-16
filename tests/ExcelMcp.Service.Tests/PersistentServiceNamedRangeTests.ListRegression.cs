@@ -7,7 +7,7 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class PersistentServiceNamedRangeTests
 {
     [Fact]
-    public void List_MultiAreaNamedRange_ReportsOmittedPreviewWithoutChangingCells()
+    public async Task List_MultiAreaNamedRange_ReportsOmittedPreviewWithoutChangingCells()
     {
         var batch = _fixture.BatchToken;
         var sheetName = _fixture.CreateTestSheet(batch);
@@ -57,6 +57,9 @@ public sealed partial class PersistentServiceNamedRangeTests
         Assert.Equal("MultiAreaRange", entry.ValueType);
         Assert.Null(entry.Value);
         Assert.Contains("multiple areas", entry.ValueOmittedReason, StringComparison.Ordinal);
+        var read = await _fixture.SendForFailureAsync("namedrange.read", new { name });
+        Assert.Equal("InvalidInput", read.ErrorCategory);
+        Assert.Contains("Read each area separately", read.ErrorMessage, StringComparison.Ordinal);
         var cells = _commands.GetValues(batch, sheetName, "A1:C1");
         Assert.True(cells.Success, cells.ErrorMessage);
         Assert.Equal(["First", "Untouched", "Last"], Assert.Single(cells.Values));

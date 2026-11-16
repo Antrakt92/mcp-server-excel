@@ -25,6 +25,30 @@ public sealed partial class PersistentServiceTablePreflightTests
         Assert.Null(Assert.Single(Assert.Single(result.Data)));
     }
 
+    [Fact]
+    public void GetData_MultiTileTablePreservesVisibleRowsAndColumnOrder()
+    {
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        List<List<object?>> rows = [["Item", "Even"]];
+        rows.AddRange(Enumerable.Range(1, 1001).Select(index => new List<object?> { index, index % 2 == 0 }));
+        RequireSuccess(_rangeCommands.SetValues(batch, sheet, "A1:B1002", rows));
+        RequireSuccess(_tableCommands.Create(batch, sheet, "TiledRead", "A1:B1002", true));
+        RequireSuccess(_rangeCommands.SetVisibility(batch, sheet, "A502:A1001", VisibilityAxis.Rows, hidden: true));
+
+        var all = RequireSuccess(_tableCommands.GetData(batch, "TiledRead"));
+        var visible = RequireSuccess(_tableCommands.GetData(batch, "TiledRead", visibleOnly: true));
+
+        Assert.Equal(["Item", "Even"], visible.Headers);
+        Assert.Equal(1001, all.RowCount);
+        Assert.Equal(501, visible.RowCount);
+        Assert.Equal(all.Data.Take(500).SelectMany(row => row).Concat(all.Data[^1]), visible.Data.SelectMany(row => row));
+        RangeReadAssertions.Number(500, visible.Data[499][0]);
+        Assert.True(Assert.IsType<bool>(visible.Data[499][1]));
+        RangeReadAssertions.Number(1001, visible.Data[500][0]);
+        Assert.False(Assert.IsType<bool>(visible.Data[500][1]));
+    }
+
     [Theory]
     [InlineData(null, 4)]
     [InlineData("A3", 3)]
