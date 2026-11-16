@@ -376,7 +376,7 @@ public partial class SheetCommands
             Excel.Worksheet? sheet = null;
             Excel.Worksheet? targetSheet = null;
             Excel.Sheets? sheets = null;
-            Excel.Worksheet? lastSheet = null;
+            object? lastTab = null;
             try
             {
                 sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
@@ -388,9 +388,10 @@ public partial class SheetCommands
                 // If no position specified, move to end
                 if (string.IsNullOrWhiteSpace(beforeSheet) && string.IsNullOrWhiteSpace(afterSheet))
                 {
-                    sheets = ctx.Book.Worksheets;
-                    lastSheet = (Excel.Worksheet)sheets[sheets.Count];
-                    sheet.Move(After: lastSheet);
+                    sheets = ctx.Book.Sheets;
+                    lastTab = sheets[sheets.Count];
+                    if (!ReferenceEquals(sheet, lastTab))
+                        sheet.Move(After: lastTab);
                 }
                 else
                 {
@@ -416,7 +417,7 @@ public partial class SheetCommands
             }
             finally
             {
-                ComUtilities.Release(ref lastSheet);
+                ComUtilities.Release(ref lastTab);
                 ComUtilities.Release(ref sheets);
                 ComUtilities.Release(ref targetSheet);
                 ComUtilities.Release(ref sheet);
