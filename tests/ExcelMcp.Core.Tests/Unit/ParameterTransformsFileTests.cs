@@ -189,6 +189,31 @@ public sealed class ParameterTransformsFileTests : IDisposable
     }
 
     [Fact]
+    public void ResolveValuesOrFile_CsvFile_PreservesQuotedCommasQuotesAndNewlines()
+    {
+        var path = CreateTempFile("quoted-fields.csv",
+            "Name,Notes,Amount\r\n\"Doe, Jane\", \" Said \"\"hello\"\"\r\n\r\nnext line \" ,\r\nSmith,plain,2");
+
+        var result = ParameterTransforms.ResolveValuesOrFile(null, path);
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal(new object?[] { "Doe, Jane", " Said \"hello\"\r\n\r\nnext line ", null }, result[1]);
+        Assert.Equal(new object?[] { "Smith", "plain", "2" }, result[2]);
+    }
+
+    [Fact]
+    public void ResolveValuesOrFile_CsvFile_RejectsUnclosedQuoteWithLineNumber()
+    {
+        var path = CreateTempFile("unclosed.csv", "Name,Notes\r\nAlice,\"unclosed");
+
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveValuesOrFile(null, path, "rows"));
+
+        Assert.Equal("rows", error.ParamName);
+        Assert.Contains("line 2", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ResolveValuesOrFile_CsvFile_SkipsEmptyLines()
     {
         var csv = "A,B\n\nC,D\n\n";

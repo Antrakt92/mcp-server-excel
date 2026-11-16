@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -118,28 +119,96 @@ public static class ParameterTransforms
 
     /// <summary>
     /// Parses multi-line CSV text into a 2D list of values for table operations.
-    /// Each line becomes a row, comma-separated values become cells.
-    /// Quoted values have surrounding quotes stripped.
+    /// Quoted fields may contain commas, escaped quotes and line endings.
     /// Returns null if input is null/empty.
     /// </summary>
     /// <param name="csvData">Multi-line CSV text</param>
+    /// <param name="parameterName">Public input name used in validation errors</param>
     /// <returns>2D list of values, or null</returns>
-    public static List<List<object?>>? ParseCsvToRows(string? csvData)
+    public static List<List<object?>>? ParseCsvToRows(string? csvData, string parameterName = "csvData")
     {
         if (string.IsNullOrWhiteSpace(csvData))
             return null;
 
-        var lines = csvData!.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-
-        return lines.Select(line =>
+        var rows = new List<List<object?>>();
+        var position = 0;
+        var line = 1;
+        while (position < csvData.Length)
         {
-            var values = line.Split(',');
-            return values.Select(value =>
+            if (csvData[position] is '\r' or '\n')
             {
-                var trimmed = value.Trim().Trim('"');
-                return string.IsNullOrEmpty(trimmed) ? null : (object?)trimmed;
-            }).ToList();
-        }).ToList();
+                SkipCsvLineEnding(csvData, ref position);
+                line++;
+                continue;
+            }
+
+            var row = new List<object?>();
+            do
+            {
+                var value = ReadCsvField(csvData, ref position, ref line, parameterName);
+                row.Add(value.Length == 0 ? null : value);
+                if (position == csvData.Length || csvData[position] != ',')
+                    break;
+                position++;
+            } while (true);
+            rows.Add(row);
+        }
+        return rows;
+    }
+
+    private static string ReadCsvField(string csv, ref int position, ref int line, string parameterName)
+    {
+        while (position < csv.Length && !IsCsvFieldBoundary(csv[position]) && char.IsWhiteSpace(csv[position]))
+            position++;
+
+        if (position == csv.Length || csv[position] != '"')
+        {
+            int start = position;
+            while (position < csv.Length && !IsCsvFieldBoundary(csv[position]))
+                position++;
+            return csv.AsSpan(start, position - start).TrimEnd().ToString();
+        }
+
+        int startLine = line;
+        position++;
+        var field = new StringBuilder();
+        while (position < csv.Length)
+        {
+            char current = csv[position++];
+            if (current == '"')
+            {
+                if (position < csv.Length && csv[position] == '"')
+                {
+                    position++;
+                    field.Append('"');
+                    continue;
+                }
+
+                while (position < csv.Length && !IsCsvFieldBoundary(csv[position]) && char.IsWhiteSpace(csv[position]))
+                    position++;
+                if (position == csv.Length || IsCsvFieldBoundary(csv[position]))
+                    return field.ToString();
+                break;
+            }
+
+            field.Append(current);
+            if (current is '\r' or '\n')
+            {
+                if (current == '\r' && position < csv.Length && csv[position] == '\n')
+                    field.Append(csv[position++]);
+                line++;
+            }
+        }
+
+        throw new ArgumentException($"Invalid quoted CSV field starting on line {startLine}.", parameterName);
+    }
+
+    private static bool IsCsvFieldBoundary(char value) => value is ',' or '\r' or '\n';
+
+    private static void SkipCsvLineEnding(string csv, ref int position)
+    {
+        if (csv[position++] == '\r' && position < csv.Length && csv[position] == '\n')
+            position++;
     }
 
     // === Options Object Construction ===
@@ -184,7 +253,7 @@ public static class ParameterTransforms
         }
 
         // Default: treat as CSV
-        var csvRows = ParseCsvToRows(content);
+        var csvRows = ParseCsvToRows(content, parameterName);
         if (csvRows == null || csvRows.Count == 0)
             throw new ArgumentException($"Values file '{valuesFile}' is empty or contains no parseable data");
 
