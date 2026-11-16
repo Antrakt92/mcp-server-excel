@@ -162,6 +162,8 @@ public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixt
     [Theory]
     [InlineData("Timeout", null)]
     [InlineData("Cancelled", null)]
+    [InlineData("ExcelProcessDied", null)]
+    [InlineData("ComInterop", """{"diagnostics":{"execution":{"complete":true,"callbackReturned":true}}}""")]
     [InlineData("ExcelDisconnected", null)]
     [InlineData("ExcelDisconnected", """{"outcome":"completed"}""")]
     [InlineData("ServiceUnavailable", """{"outcome":"unknown","message":"Work may still be running."}""")]

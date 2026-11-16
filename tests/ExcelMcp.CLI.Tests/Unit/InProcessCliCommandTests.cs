@@ -1802,6 +1802,8 @@ public sealed class InProcessCliCommandTests
 
     [Theory]
     [InlineData("Timeout", null)]
+    [InlineData("ExcelProcessDied", null)]
+    [InlineData("ComInterop", """{"diagnostics":{"execution":{"complete":true,"callbackReturned":true}}}""")]
     [InlineData("ServiceUnavailable", """{"outcome":"unknown","message":"Work may still be running."}""")]
     public async Task Batch_UnconfirmedCompletion_StopsBeforeAnotherWorkbook(
         string category, string? partialState)
@@ -1829,7 +1831,10 @@ public sealed class InProcessCliCommandTests
         Assert.False(line.RootElement.GetProperty("success").GetBoolean());
         Assert.Equal(category, line.RootElement.GetProperty("error").GetProperty("category").GetString());
         if (partialState is not null)
-            Assert.Equal("unknown", line.RootElement.GetProperty("partialState").GetProperty("outcome").GetString());
+        {
+            using var expected = JsonDocument.Parse(partialState);
+            Assert.True(JsonElement.DeepEquals(expected.RootElement, line.RootElement.GetProperty("partialState")));
+        }
     }
 
     [Fact]

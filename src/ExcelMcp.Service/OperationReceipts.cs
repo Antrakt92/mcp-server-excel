@@ -73,22 +73,13 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
             result = ReadOutcome(operation, original);
         }
         var resultText = result.ToToolJson();
-        var state = result.MayStillBeRunning || result.Error?["category"]?.GetValue<string>() == "ExcelProcessDied"
-            || LostCallbackResult(result) ? "unknown"
+        var state = result.CompletionUnconfirmed ? "unknown"
             : result.Success ? ProvesCompletion(operation.Command, response) ? "completed" : "unknown"
             : (result.PartialState as JsonObject)?["outcome"]?.GetValue<string>() == "partially-applied"
                 ? "partially-applied" : "failed";
         Publish(operation, state, Encoding.UTF8.GetByteCount(resultText) <= MaximumResultBytes ? resultText : null,
             recordingError is not null && Encoding.UTF8.GetByteCount(recordingError) <= MaximumResultBytes ? recordingError : null);
     }
-
-    private static bool LostCallbackResult(ResultJson result) =>
-        !result.Success &&
-        result.PartialState is JsonObject state &&
-        state["diagnostics"] is JsonObject diagnostics &&
-        diagnostics["execution"] is JsonObject execution &&
-        execution["complete"] is JsonValue complete && complete.TryGetValue<bool>(out var exact) && exact &&
-        execution["callbackReturned"] is JsonValue returned && returned.TryGetValue<bool>(out var completed) && completed;
 
     private static bool ProvesCompletion(string command, ServiceResponse response)
     {
