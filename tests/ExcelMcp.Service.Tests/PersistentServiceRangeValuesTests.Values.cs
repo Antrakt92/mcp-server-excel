@@ -14,6 +14,31 @@ public sealed partial class PersistentServiceRangeValuesTests
     // === VALUE OPERATIONS TESTS ===
 
     [Fact]
+    public async Task SetValues_QuotedCsvPreservesCellsAndRejectsMalformedInputBeforeWrite()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var valuesFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(valuesFile, "\"Doe, Jane\",\"first\n\nsaid \"\"hello\"\"\",");
+            var args = new { sheetName, rangeAddress = "A1:C1", valuesFile, overwritePolicy = "allow" };
+            Assert.True(_fixture.Send("range.set-values", args).Success);
+
+            File.WriteAllText(valuesFile, "Replacement,\"missing closing quote,");
+            var failure = await _fixture.SendForFailureAsync("range.set-values", args);
+            Assert.Equal("InvalidInput", failure.ErrorCategory);
+
+            var result = RequireSuccess(_commands.GetValues(batch, sheetName, "A1:C1"));
+            Assert.Equal(new object?[] { "Doe, Jane", "first\n\nsaid \"hello\"", null }, Assert.Single(result.Values));
+        }
+        finally
+        {
+            File.Delete(valuesFile);
+        }
+    }
+
+    [Fact]
     public async Task GetValues_MissingSheet_ReturnsCategorizedNotFound()
     {
         var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);

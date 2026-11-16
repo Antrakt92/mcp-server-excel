@@ -87,7 +87,7 @@ internal sealed class Program
         if (CliInputPolicy.FindStdinOnlyCommand(filteredArgs) is { } stdinCommand)
         {
             CliCommandRuntime.Current.CommandName = stdinCommand;
-            if (filteredArgs.Any(argument => argument is "--help" or "-h"))
+            if (filteredArgs.Any(CliInputPolicy.IsHelpFlag))
             {
                 ActionHelp.WriteStdinOnly(stdinCommand);
                 return 0;

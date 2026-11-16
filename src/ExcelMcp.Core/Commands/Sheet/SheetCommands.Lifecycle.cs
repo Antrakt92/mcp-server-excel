@@ -115,7 +115,6 @@ public partial class SheetCommands
             Excel.Worksheet? sourceSheet = null;
             Excel.Sheets? sheets = null;
             Excel.Worksheet? lastSheet = null;
-            Excel.Worksheet? copiedSheet = null;
             try
             {
                 sourceSheet = ComUtilities.FindSheet(ctx.Book, sourceName);
@@ -126,20 +125,113 @@ public partial class SheetCommands
                 EnsureSheetNameAvailable(ctx.Book, targetName, ct);
                 sheets = ctx.Book.Worksheets;
                 lastSheet = (Excel.Worksheet)sheets.Item[sheets.Count];
-                sourceSheet.Copy(After: lastSheet);
-                copiedSheet = (Excel.Worksheet)sheets.Item[sheets.Count];
-                var copiedSheetCurrentName = copiedSheet.Name;
-                SetSheetNameWithContext(copiedSheet, targetName, copiedSheetCurrentName, isNewSheet: true);
+                CopyWorksheet(sourceSheet, ctx.Book, lastSheet, before: false, targetName, ct);
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             finally
             {
-                ComUtilities.Release(ref copiedSheet);
                 ComUtilities.Release(ref lastSheet);
                 ComUtilities.Release(ref sheets);
                 ComUtilities.Release(ref sourceSheet);
             }
         });
+    }
+
+    private static void CopyWorksheet(
+        Excel.Worksheet source, Excel.Workbook destination, object anchor,
+        bool before, string? targetName, CancellationToken cancellationToken)
+    {
+        Excel.Sheets? worksheets = null;
+        Excel.Worksheet? copied = null;
+        var existing = new HashSet<Excel.Worksheet>(ReferenceEqualityComparer.Instance);
+        try
+        {
+            if (targetName is not null)
+            {
+                // Excel can insert after the last visible tab when the requested anchor is hidden.
+                // Keep the original worksheet identities alive across the native copy.
+                worksheets = destination.Worksheets;
+                int count = worksheets.Count;
+                for (int index = 1; index <= count; index++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Excel.Worksheet? worksheet = null;
+                    try
+                    {
+                        worksheet = (Excel.Worksheet)worksheets[index];
+                        if (!existing.Add(worksheet))
+                            throw new InvalidOperationException("Excel returned a worksheet twice while preparing the copy.");
+                        worksheet = null;
+                    }
+                    finally { ComUtilities.Release(ref worksheet); }
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (before)
+                source.Copy(Before: anchor);
+            else
+                source.Copy(After: anchor);
+
+            if (worksheets is not null && targetName is not null)
+            {
+                string copiedName;
+                try
+                {
+                    copied = FindCopiedWorksheet(worksheets, existing);
+                    copiedName = copied.Name;
+                }
+                catch (Exception ex)
+                {
+                    throw new OperationCompletionUnconfirmedException(
+                        "Could not identify the copied worksheet. Inspect the destination workbook before retrying.", ex);
+                }
+                SetSheetNameWithContext(copied, targetName, copiedName, isNewSheet: true);
+            }
+        }
+        finally
+        {
+            ComUtilities.Release(ref copied);
+            foreach (var original in existing.Reverse())
+            {
+                Excel.Worksheet? worksheet = original;
+                ComUtilities.Release(ref worksheet);
+            }
+            ComUtilities.Release(ref worksheets);
+        }
+    }
+
+    private static Excel.Worksheet FindCopiedWorksheet(
+        Excel.Sheets worksheets, HashSet<Excel.Worksheet> existing)
+    {
+        Excel.Worksheet? copied = null;
+        try
+        {
+            int count = worksheets.Count;
+            if (count != existing.Count + 1)
+                throw new InvalidOperationException("Excel did not add exactly one worksheet.");
+
+            for (int index = 1; index <= count; index++)
+            {
+                Excel.Worksheet? worksheet = null;
+                try
+                {
+                    worksheet = (Excel.Worksheet)worksheets[index];
+                    if (existing.Contains(worksheet))
+                        continue;
+                    if (copied is not null)
+                        throw new InvalidOperationException("Excel returned more than one new worksheet.");
+                    copied = worksheet;
+                    worksheet = null;
+                }
+                finally { ComUtilities.Release(ref worksheet); }
+            }
+
+            var result = copied ?? throw new InvalidOperationException("Excel did not return the copied worksheet.");
+            copied = null;
+            return result;
+        }
+        finally { ComUtilities.Release(ref copied); }
     }
 
     private static void SetSheetNameWithContext(
@@ -284,7 +376,7 @@ public partial class SheetCommands
             Excel.Worksheet? sheet = null;
             Excel.Worksheet? targetSheet = null;
             Excel.Sheets? sheets = null;
-            Excel.Worksheet? lastSheet = null;
+            object? lastTab = null;
             try
             {
                 sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
@@ -296,9 +388,10 @@ public partial class SheetCommands
                 // If no position specified, move to end
                 if (string.IsNullOrWhiteSpace(beforeSheet) && string.IsNullOrWhiteSpace(afterSheet))
                 {
-                    sheets = ctx.Book.Worksheets;
-                    lastSheet = (Excel.Worksheet)sheets[sheets.Count];
-                    sheet.Move(After: lastSheet);
+                    sheets = ctx.Book.Sheets;
+                    lastTab = sheets[sheets.Count];
+                    if (!ReferenceEquals(sheet, lastTab))
+                        sheet.Move(After: lastTab);
                 }
                 else
                 {
@@ -324,7 +417,7 @@ public partial class SheetCommands
             }
             finally
             {
-                ComUtilities.Release(ref lastSheet);
+                ComUtilities.Release(ref lastTab);
                 ComUtilities.Release(ref sheets);
                 ComUtilities.Release(ref targetSheet);
                 ComUtilities.Release(ref sheet);
@@ -376,8 +469,7 @@ public partial class SheetCommands
             Excel.Workbook? targetWb = null;
             Excel.Worksheet? sourceSheetObj = null;
             Excel.Sheets? targetSheets = null;
-            Excel.Worksheet? targetPositionSheet = null;
-            Excel.Worksheet? copiedSheet = null;
+            object? targetPositionSheet = null;
 
             try
             {
@@ -392,61 +484,30 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Source sheet '{sourceSheet}' not found in '{Path.GetFileName(sourceFile)}'");
                 }
 
-                // Worksheet.Index is a tab index, including chart sheets.
-                targetSheets = targetWb.Sheets;
-                int? copiedSheetPosition = null;
-
                 if (targetSheetName is not null)
                 {
                     EnsureSheetNameAvailable(
                         targetWb, targetSheetName, ct);
                 }
 
-                if (!string.IsNullOrWhiteSpace(beforeSheet))
+                bool before = !string.IsNullOrWhiteSpace(beforeSheet);
+                string? anchorName = before ? beforeSheet : afterSheet;
+                if (!string.IsNullOrWhiteSpace(anchorName))
                 {
-                    targetPositionSheet = ComUtilities.FindSheet(targetWb, beforeSheet);
+                    targetPositionSheet = ComUtilities.FindSheet(targetWb, anchorName);
                     if (targetPositionSheet == null)
                     {
-                        throw new InvalidOperationException($"Target sheet '{beforeSheet}' not found in '{Path.GetFileName(targetFile)}'");
+                        throw new InvalidOperationException($"Target sheet '{anchorName}' not found in '{Path.GetFileName(targetFile)}'");
                     }
-                    // Get position before copy - the copied sheet will be at this position
-                    copiedSheetPosition = Convert.ToInt32(targetPositionSheet.Index);
-                    sourceSheetObj.Copy(Before: targetPositionSheet);
-                }
-                else if (!string.IsNullOrWhiteSpace(afterSheet))
-                {
-                    targetPositionSheet = ComUtilities.FindSheet(targetWb, afterSheet);
-                    if (targetPositionSheet == null)
-                    {
-                        throw new InvalidOperationException($"Target sheet '{afterSheet}' not found in '{Path.GetFileName(targetFile)}'");
-                    }
-                    // Get position before copy - the copied sheet will be at position + 1
-                    copiedSheetPosition = Convert.ToInt32(targetPositionSheet.Index) + 1;
-                    sourceSheetObj.Copy(After: targetPositionSheet);
                 }
                 else
                 {
                     // The last tab can be a chart sheet.
-                    object? lastSheet = targetSheets[targetSheets.Count];
-                    try
-                    {
-                        sourceSheetObj.Copy(After: lastSheet);
-                        // Copied sheet will be at the end (new count)
-                        copiedSheetPosition = targetSheets.Count;
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref lastSheet!);
-                    }
+                    targetSheets = targetWb.Sheets;
+                    targetPositionSheet = targetSheets[targetSheets.Count];
                 }
 
-                // Rename if requested - use correct position based on where sheet was copied
-                if (targetSheetName is not null && copiedSheetPosition.HasValue)
-                {
-                    copiedSheet = (Excel.Worksheet)targetSheets[copiedSheetPosition.Value];
-                    var copiedSheetCurrentName = copiedSheet.Name;
-                    SetSheetNameWithContext(copiedSheet, targetSheetName, copiedSheetCurrentName, isNewSheet: true);
-                }
+                CopyWorksheet(sourceSheetObj, targetWb, targetPositionSheet, before, targetSheetName, ct);
 
                 // Save the target workbook (source unchanged, only target modified)
                 try
@@ -466,7 +527,6 @@ public partial class SheetCommands
             }
             finally
             {
-                ComUtilities.Release(ref copiedSheet);
                 ComUtilities.Release(ref targetPositionSheet);
                 ComUtilities.Release(ref targetSheets);
                 ComUtilities.Release(ref sourceSheetObj);

@@ -24,7 +24,10 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, ExcelWorkerClient> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, WorkerSnapshot> _publishedSnapshots = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, (ExcelWorkerClient Worker, OpenWorkbookInfo Workbook)> _selections = new(StringComparer.Ordinal);
-    private sealed record PathReservation(string Token, string? SessionId = null);
+    private sealed record PathReservation(string Token, string? SessionId = null)
+    {
+        internal long? SaveAsReplyRevision { get; set; }
+    }
     private readonly WorkbookPathReservations<PathReservation> _paths = new((first, second) =>
         first.SessionId is not null && second.SessionId is not null
             ? first.SessionId == second.SessionId : first.Token == second.Token);
@@ -362,6 +365,14 @@ internal sealed class ExcelController : IDisposable
                 // Only an explicit worker receipt confirms that both save and close completed.
                 _closedSessions[savedSession] = SessionEnd.SavedAndClosed;
             }
+            if (execution.Accepted && request.Command == "workbook.save-as" && reservedPaths.Count > 0
+                && response.ErrorCategory is "Timeout" or "Cancelled" && response.PartialState is not null)
+            {
+                // The reply may precede native completion. Do not reconcile against snapshots
+                // from before this request reached the worker.
+                lock (_shutdownLock)
+                    reservation.SaveAsReplyRevision = execution.Snapshot.Revision;
+            }
             var applied = ApplyWorkerSnapshot(worker);
             lock (_shutdownLock)
             {
@@ -616,8 +627,9 @@ internal sealed class ExcelController : IDisposable
                         && !currentPaths.Any(key => WorkbookLocation.MatchesReportedLocation(key,
                             entry.Value.Workbook.Location))))
                         _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = session.FilePath });
-                    foreach (var old in _paths.Where(entry => entry.Value.Token == "recorded"
-                        && entry.Value.SessionId == session.SessionId
+                    foreach (var old in _paths.Where(entry => entry.Value.SessionId == session.SessionId
+                        && (entry.Value.Token == "recorded"
+                            || entry.Value.SaveAsReplyRevision is { } revision && snapshot.Revision >= revision)
                         && !currentPaths.Contains(entry.Key)))
                         _paths.TryRemove(old);
                 }

@@ -36,6 +36,31 @@ public sealed class CliStdinOnlyPolicyTests
     }
 
     [Theory]
+    [InlineData(null, null)]
+    [InlineData("--whole-word", null)]
+    [InlineData("--match-case", null)]
+    [InlineData("--whole-word", "false")]
+    public async Task DirectUnicodeAction_IsRefusedBeforeParsingTypedArguments(string? option, string? value)
+    {
+        const string marker = "SyntheticProbeOnly7";
+        var arguments = new List<string> { "vba" };
+        if (option is not null)
+            arguments.Add(option);
+        if (value is not null)
+            arguments.Add(value);
+        arguments.AddRange(["unloc\u212A-project", "--session", "owned", "--start-line", marker]);
+        var result = await Run(arguments.ToArray());
+
+        Assert.DoesNotContain(marker, result.Output + result.Error, StringComparison.Ordinal);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(0, result.Client.Connections);
+        Assert.Empty(result.Client.Requests);
+        using var output = JsonDocument.Parse(result.Output);
+        Assert.Equal(_CliCategoryMetadata.BatchStdinOnlyMessage,
+            output.RootElement.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Theory]
     [InlineData("--session:owned")]
     [InlineData("-s:owned")]
     [InlineData("--session=owned")]
@@ -66,6 +91,22 @@ public sealed class CliStdinOnlyPolicyTests
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(0, result.Client.Connections);
         Assert.Contains("batch --input -", result.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("--password", result.Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("unlock-project")]
+    [InlineData("unloc\u212A-project")]
+    public async Task SensitiveActionHelpAlias_DoesNotPrintExtraArgument(string action)
+    {
+        const string marker = "SyntheticHelpProbeOnly7";
+        var result = await Run(["vba", "-?", action, marker]);
+
+        Assert.DoesNotContain(marker, result.Output + result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(0, result.Client.Connections);
+        Assert.Empty(result.Client.Requests);
+        Assert.Contains(_CliCategoryMetadata.BatchStdinOnlyMessage, result.Output, StringComparison.Ordinal);
         Assert.DoesNotContain("--password", result.Output, StringComparison.Ordinal);
     }
 
@@ -116,6 +157,7 @@ public sealed class CliStdinOnlyPolicyTests
     [Theory]
     [InlineData("vba.protect-project")]
     [InlineData("VBA.UNLOCK-PROJECT")]
+    [InlineData("vba.unloc\u212A-project")]
     [InlineData("vba.verify-password")]
     public async Task MixedFileBatch_IsRejectedBeforeAnyConnectionOrDispatch(string command)
     {

@@ -1,7 +1,7 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Sbroenne.ExcelMcp.Core.Commands.Range;
 
 namespace Sbroenne.ExcelMcp.Core.Utilities;
 
@@ -51,95 +51,100 @@ public static class ParameterTransforms
         }
     }
 
-    /// <summary>
-    /// Parses a JSON array string into a list of strings, with single-item fallback.
-    /// If the string is not valid JSON, treats it as a single item.
-    /// Returns null if input is null/empty.
-    /// </summary>
-    /// <param name="json">JSON array string or single value</param>
-    /// <returns>Parsed list, single-item list, or null</returns>
-    public static List<string>? ParseJsonListOrSingle(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(json!, s_jsonOptions);
-        }
-        catch (JsonException)
-        {
-            // If parsing fails, treat as single item
-            return [json!];
-        }
-    }
-
-    /// <summary>
-    /// Deserializes a JSON string into a typed object.
-    /// Returns default if input is null/empty.
-    /// </summary>
-    /// <typeparam name="T">Target type</typeparam>
-    /// <param name="json">JSON string</param>
-    /// <param name="parameterName">Parameter name for error messages</param>
-    /// <returns>Deserialized object or default</returns>
-    /// <exception cref="ArgumentException">Thrown when JSON is invalid</exception>
-    public static T? DeserializeJson<T>(string? json, string parameterName = "value") where T : class
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<T>(json!, s_jsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            throw new ArgumentException($"Invalid {parameterName} JSON: {ex.Message}", parameterName);
-        }
-    }
-
     // === CSV Parsing ===
 
     /// <summary>
-    /// Splits a comma-separated string into a trimmed string array.
-    /// Returns null if input is null/empty.
-    /// </summary>
-    /// <param name="csv">Comma-separated values</param>
-    /// <returns>Array of trimmed values, or null</returns>
-    public static string[]? SplitCsvParameters(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv))
-            return null;
-
-        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                  .Select(p => p.Trim())
-                  .ToArray();
-    }
-
-    /// <summary>
     /// Parses multi-line CSV text into a 2D list of values for table operations.
-    /// Each line becomes a row, comma-separated values become cells.
-    /// Quoted values have surrounding quotes stripped.
+    /// Quoted fields may contain commas, escaped quotes and line endings.
     /// Returns null if input is null/empty.
     /// </summary>
     /// <param name="csvData">Multi-line CSV text</param>
+    /// <param name="parameterName">Public input name used in validation errors</param>
     /// <returns>2D list of values, or null</returns>
-    public static List<List<object?>>? ParseCsvToRows(string? csvData)
+    public static List<List<object?>>? ParseCsvToRows(string? csvData, string parameterName = "csvData")
     {
         if (string.IsNullOrWhiteSpace(csvData))
             return null;
 
-        var lines = csvData!.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-
-        return lines.Select(line =>
+        var rows = new List<List<object?>>();
+        var position = 0;
+        var line = 1;
+        while (position < csvData.Length)
         {
-            var values = line.Split(',');
-            return values.Select(value =>
+            if (csvData[position] is '\r' or '\n')
             {
-                var trimmed = value.Trim().Trim('"');
-                return string.IsNullOrEmpty(trimmed) ? null : (object?)trimmed;
-            }).ToList();
-        }).ToList();
+                SkipCsvLineEnding(csvData, ref position);
+                line++;
+                continue;
+            }
+
+            var row = new List<object?>();
+            do
+            {
+                var value = ReadCsvField(csvData, ref position, ref line, parameterName);
+                row.Add(value.Length == 0 ? null : value);
+                if (position == csvData.Length || csvData[position] != ',')
+                    break;
+                position++;
+            } while (true);
+            rows.Add(row);
+        }
+        return rows;
+    }
+
+    private static string ReadCsvField(string csv, ref int position, ref int line, string parameterName)
+    {
+        while (position < csv.Length && !IsCsvFieldBoundary(csv[position]) && char.IsWhiteSpace(csv[position]))
+            position++;
+
+        if (position == csv.Length || csv[position] != '"')
+        {
+            int start = position;
+            while (position < csv.Length && !IsCsvFieldBoundary(csv[position]))
+                position++;
+            return csv.AsSpan(start, position - start).TrimEnd().ToString();
+        }
+
+        int startLine = line;
+        position++;
+        var field = new StringBuilder();
+        while (position < csv.Length)
+        {
+            char current = csv[position++];
+            if (current == '"')
+            {
+                if (position < csv.Length && csv[position] == '"')
+                {
+                    position++;
+                    field.Append('"');
+                    continue;
+                }
+
+                while (position < csv.Length && !IsCsvFieldBoundary(csv[position]) && char.IsWhiteSpace(csv[position]))
+                    position++;
+                if (position == csv.Length || IsCsvFieldBoundary(csv[position]))
+                    return field.ToString();
+                break;
+            }
+
+            field.Append(current);
+            if (current is '\r' or '\n')
+            {
+                if (current == '\r' && position < csv.Length && csv[position] == '\n')
+                    field.Append(csv[position++]);
+                line++;
+            }
+        }
+
+        throw new ArgumentException($"Invalid quoted CSV field starting on line {startLine}.", parameterName);
+    }
+
+    private static bool IsCsvFieldBoundary(char value) => value is ',' or '\r' or '\n';
+
+    private static void SkipCsvLineEnding(string csv, ref int position)
+    {
+        if (csv[position++] == '\r' && position < csv.Length && csv[position] == '\n')
+            position++;
     }
 
     // === Options Object Construction ===
@@ -184,7 +189,7 @@ public static class ParameterTransforms
         }
 
         // Default: treat as CSV
-        var csvRows = ParseCsvToRows(content);
+        var csvRows = ParseCsvToRows(content, parameterName);
         if (csvRows == null || csvRows.Count == 0)
             throw new ArgumentException($"Values file '{valuesFile}' is empty or contains no parseable data");
 
@@ -317,40 +322,6 @@ public static class ParameterTransforms
     }
 
     // === Options Object Construction ===
-
-    /// <summary>
-    /// Builds a FindOptions object from individual boolean parameters with defaults.
-    /// </summary>
-    public static FindOptions BuildFindOptions(
-        bool? matchCase = null,
-        bool? matchEntireCell = null,
-        bool? searchFormulas = null,
-        bool? searchValues = null)
-    {
-        return new FindOptions
-        {
-            MatchCase = matchCase ?? false,
-            MatchEntireCell = matchEntireCell ?? false,
-            SearchFormulas = searchFormulas ?? true,
-            SearchValues = searchValues ?? true
-        };
-    }
-
-    /// <summary>
-    /// Builds a ReplaceOptions object from individual boolean parameters with defaults.
-    /// </summary>
-    public static ReplaceOptions BuildReplaceOptions(
-        bool? matchCase = null,
-        bool? matchEntireCell = null,
-        bool? replaceAll = null)
-    {
-        return new ReplaceOptions
-        {
-            MatchCase = matchCase ?? false,
-            MatchEntireCell = matchEntireCell ?? false,
-            ReplaceAll = replaceAll ?? true
-        };
-    }
 
     /// <summary>
     /// Resolves a value that can come from either a direct string or a file path.

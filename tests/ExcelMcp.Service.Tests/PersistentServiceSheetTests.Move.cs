@@ -1,4 +1,7 @@
+using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
+using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Sbroenne.ExcelMcp.Service.Tests;
 
@@ -12,6 +15,79 @@ public sealed partial class PersistentServiceSheetTests
 
     [Fact]
     public void Move_NoPositionSpecified_MovesToEnd() => AssertMove("end");
+
+    [Fact]
+    public void Move_NoPositionSpecified_MovesAfterTrailingChartTab()
+    {
+        var path = CreateMarkedWorkbook(
+            nameof(Move_NoPositionSpecified_MovesAfterTrailingChartTab), "Workbook", "TransferSheet");
+        using (var setup = ExcelSession.BeginBatch(path))
+        {
+            setup.Execute((context, _) =>
+            {
+                Excel.Worksheet? lastWorksheet = null;
+                Excel.Sheets? charts = null;
+                Excel.Chart? chart = null;
+                Excel.Sheets? tabs = null;
+                object? lastTab = null;
+                try
+                {
+                    lastWorksheet = ComUtilities.FindSheet(context.Book, "Sheet1");
+                    Assert.NotNull(lastWorksheet);
+                    charts = context.Book.Charts;
+                    chart = (Excel.Chart)charts.Add(Before: lastWorksheet);
+                    chart.Name = "ChartTab";
+                    chart.Move(After: lastWorksheet);
+                    tabs = context.Book.Sheets;
+                    Assert.Equal(3, tabs.Count);
+                    lastTab = tabs[3];
+                    Assert.Equal("ChartTab", ((Excel.Chart)lastTab).Name);
+                }
+                finally
+                {
+                    ComUtilities.Release(ref lastTab);
+                    ComUtilities.Release(ref tabs);
+                    ComUtilities.Release(ref chart);
+                    ComUtilities.Release(ref charts);
+                    ComUtilities.Release(ref lastWorksheet);
+                }
+            });
+            setup.Save();
+        }
+
+        using (var service = new ExcelMcpService())
+        {
+            using var opened = ReadCrossFileServiceResult(service, "session.open", null, new { filePath = path });
+            var sessionId = opened.RootElement.GetProperty("sessionId").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(sessionId));
+            using var moved = ReadCrossFileServiceResult(service, "sheet.move", sessionId, new { sheetName = "TransferSheet" });
+            using var closed = ReadCrossFileServiceResult(service, "session.close", sessionId, new { save = true });
+        }
+
+        using var reopened = ExcelSession.BeginBatch(path);
+        reopened.Execute((context, _) =>
+        {
+            AssertWorkbookState(context.Book, ["Sheet1", "TransferSheet"], "TransferSheet");
+            Excel.Sheets? tabs = null;
+            object? nextToLast = null;
+            object? last = null;
+            try
+            {
+                tabs = context.Book.Sheets;
+                Assert.Equal(3, tabs.Count);
+                nextToLast = tabs[2];
+                last = tabs[3];
+                Assert.Equal("TransferSheet", (last as Excel.Worksheet)?.Name);
+                Assert.Equal("ChartTab", ((Excel.Chart)nextToLast).Name);
+            }
+            finally
+            {
+                ComUtilities.Release(ref last);
+                ComUtilities.Release(ref nextToLast);
+                ComUtilities.Release(ref tabs);
+            }
+        });
+    }
 
     private void AssertMove(string position)
     {

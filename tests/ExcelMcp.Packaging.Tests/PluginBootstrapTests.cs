@@ -21,32 +21,65 @@ public sealed class PluginBootstrapTests(ITestOutputHelper output) : PluginTestB
         AssertAgentPluginManifest(pluginRoot, "0.0.0");
     }
 
-    [Fact]
-    public async Task StartCliWrapper_UsesNpxAndPreservesArguments()
+    [Theory]
+    [InlineData(false, ".CMD;.EXE")]
+    [InlineData(true, ".EXE;.CMD")]
+    [InlineData(true, ".CMD;.EXE")]
+    public async Task StartCliWrapper_UsesNpxAndPreservesArguments(bool executableShim, string pathExt)
     {
         var sandbox = CreateSandbox("npx-wrapper");
         try
         {
             var wrapper = Path.Combine(RepoRoot, ".github", "plugins", "excel-cli", "bin", "start-cli.ps1");
             File.WriteAllText(Path.Combine(sandbox, "npx.cmd"), "@echo off\r\n");
-            var npmBin = Directory.CreateDirectory(Path.Combine(sandbox, "node_modules", "npm", "bin")).FullName;
-            File.WriteAllText(Path.Combine(npmBin, "npx-cli.js"), """
-                if (process.argv[2] !== "-y" || process.argv[3] !== "@sbroenne/excelcli@latest") {
-                    throw new Error("Unexpected npx arguments");
-                }
-                process.stdout.write(JSON.stringify(process.argv.slice(4)));
-                """);
+            if (executableShim)
+            {
+                File.WriteAllText(Path.Combine(sandbox, "shim.cs"), """
+                    using System;
+                    using System.Linq;
+                    using System.Text;
+
+                    internal static class NpxShim
+                    {
+                        private static int Main(string[] args)
+                        {
+                            if (args.Length < 2 || args[0] != "-y" || args[1] != "@sbroenne/excelcli@latest")
+                                return 51;
+                            foreach (var argument in args.Skip(2))
+                                Console.WriteLine("arg:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(argument)));
+                            return 0;
+                        }
+                    }
+                    """);
+            }
+            else
+            {
+                var npmBin = Directory.CreateDirectory(Path.Combine(sandbox, "node_modules", "npm", "bin")).FullName;
+                File.WriteAllText(Path.Combine(npmBin, "npx-cli.js"), """
+                    if (process.argv[2] !== "-y" || process.argv[3] !== "@sbroenne/excelcli@latest") {
+                        throw new Error("Unexpected npx arguments");
+                    }
+                    process.stdout.write(JSON.stringify(process.argv.slice(4)));
+                    """);
+            }
             string[] arguments =
             [
                 """[["Name","Amount"],["Widget",1500]]""", "has space", "quote\"inside", "",
                 """{"value":"a b"}""", "ends with space\\", "trailing\\", "slashes\\\\\"quoted",
-                "%PATH%", "& | < >", "$value;`literal"
+                "%PATH%", "& | < >", "$value;`literal", "--help"
             ];
             var argumentsFile = Path.Combine(sandbox, "arguments.json");
             File.WriteAllText(argumentsFile, JsonSerializer.Serialize(arguments));
             var harness = Path.Combine(sandbox, "invoke.ps1");
             File.WriteAllText(harness, """
                 param([string]$Wrapper, [string]$NpxDirectory, [string]$ArgumentsFile)
+                $shimSource = Join-Path $NpxDirectory "shim.cs"
+                if (Test-Path -LiteralPath $shimSource) {
+                    $compiler = Join-Path ([Environment]::GetFolderPath("Windows")) "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+                    $shim = Join-Path $NpxDirectory "npx.exe"
+                    & $compiler /nologo "/out:$shim" $shimSource
+                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                }
                 $env:PATH = "$NpxDirectory;$env:PATH"
                 $cliArguments = Get-Content -LiteralPath $ArgumentsFile -Raw | ConvertFrom-Json
                 & $Wrapper @cliArguments
@@ -54,10 +87,19 @@ public sealed class PluginBootstrapTests(ITestOutputHelper output) : PluginTestB
                 """);
 
             var result = await RunPowerShellFileAsync(
-                harness, ["-Wrapper", wrapper, "-NpxDirectory", sandbox, "-ArgumentsFile", argumentsFile]);
+                harness, ["-Wrapper", wrapper, "-NpxDirectory", sandbox, "-ArgumentsFile", argumentsFile],
+                new Dictionary<string, string> { ["PATHEXT"] = pathExt });
 
             Assert.True(result.ExitCode == 0, result.CombinedOutput);
-            Assert.Equal(arguments, JsonSerializer.Deserialize<string[]>(result.Stdout));
+            if (executableShim)
+            {
+                Assert.Equal(arguments.Select(argument => "arg:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(argument))),
+                    result.Stdout.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
+            }
+            else
+            {
+                Assert.Equal(arguments, JsonSerializer.Deserialize<string[]>(result.Stdout));
+            }
         }
         finally { DeleteDirectoryIfExists(sandbox); }
     }

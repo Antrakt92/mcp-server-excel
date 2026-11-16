@@ -53,18 +53,41 @@ public sealed class BatchResultShapeTests
         }
     }
 
-    [Fact]
-    public async Task Batch_SessionList_KeepsActualSessionResult()
+    [Theory]
+    [InlineData("session.list")]
+    [InlineData("Session.LIST")]
+    public async Task Batch_SessionList_KeepsActualSessionResult(string command)
     {
         using var service = new ExcelMcpService();
         var result = await InProcessCliHelper.RunAsync(["batch"],
             request => service.ProcessAsync(request).GetAwaiter().GetResult(),
-            """{"command":"session.list"}""");
+            $$"""{"command":"{{command}}"}""");
 
         Assert.Equal(0, result.ExitCode);
         using var output = JsonDocument.Parse(result.Stdout);
         Assert.True(output.RootElement.GetProperty("success").GetBoolean());
         Assert.Empty(output.RootElement.GetProperty("data").GetProperty("sessions").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Batch_MixedCaseSaveAs_PreservesControllerCommandAndOutputPath()
+    {
+        var result = await InProcessCliHelper.RunAsync(["batch", "--session", "target"],
+            request =>
+            {
+                Assert.Equal("workbook.save-as", request.Command);
+                Assert.Equal("target", request.SessionId);
+                using var args = JsonDocument.Parse(request.Args!);
+                Assert.Equal(@"C:\synthetic\MixedCase.xlsx", args.RootElement.GetProperty("targetPath").GetString());
+                Assert.False(args.RootElement.GetProperty("overwrite").GetBoolean());
+                return new ServiceResponse { Success = true, Result = """{"success":true}""" };
+            },
+            """{"command":"Workbook.SAVE-AS","args":{"targetPath":"C:\\synthetic\\MixedCase.xlsx","overwrite":false}}""");
+
+        Assert.Equal(0, result.ExitCode);
+        using var output = JsonDocument.Parse(result.Stdout);
+        Assert.Equal("Workbook.SAVE-AS", output.RootElement.GetProperty("command").GetString());
+        Assert.True(output.RootElement.GetProperty("success").GetBoolean());
     }
 
     [Theory]

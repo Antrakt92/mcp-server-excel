@@ -15,6 +15,77 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("RequiresExcel", "false")]
 public sealed class ExcelWorkerBoundaryTests
 {
+    [Fact(Timeout = 20000)]
+    public async Task WorkerMonitor_RetriesUnverifiableControllerAndStopsAfterConfirmedExit()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-controller-monitor-");
+        var registry = new WorkerRegistry(directory.FullName);
+        using var controller = Process.Start(new ProcessStartInfo("pwsh")
+        {
+            ArgumentList = { "-NoProfile", "-Command", "[Console]::ReadLine() | Out-Null" },
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        })!;
+        var owner = WorkerProcess.From(controller);
+        var generation = Guid.NewGuid().ToString("N");
+        var registration = new WorkerRegistration("excelmcp-worker-" + generation, WorkerProcess.Current, owner,
+            generation, WorkerRegistry.Build, null);
+        using var host = new ExcelWorkerHost(registration, registry: registry);
+        var denied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probes = 0;
+        WorkerProcess.BeforeIdentityReadForTests = process =>
+        {
+            if (process.Id != owner.ProcessId)
+                return;
+            if (Interlocked.Increment(ref probes) == 1)
+            {
+                denied.TrySetResult();
+                throw new Win32Exception(WorkerProcess.ErrorAccessDenied);
+            }
+            retried.TrySetResult();
+        };
+        var run = host.RunAsync();
+        var primary = await Record.ExceptionAsync(async () =>
+        {
+            await denied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await retried.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            Assert.False(run.IsCompleted);
+            Assert.Equal(registration, registry.Read(registration.PipeName));
+
+            controller.StandardInput.Close();
+            await controller.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Null(registry.Read(registration.PipeName));
+        });
+        WorkerProcess.BeforeIdentityReadForTests = null;
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            controller.StandardInput.Close();
+            await controller.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+            if (!run.IsCompleted)
+            {
+                var server = Assert.IsType<DaemonHost>(typeof(ExcelWorkerHost)
+                    .GetField("_server", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .GetValue(host));
+                server.RequestShutdown();
+            }
+            try
+            {
+                await run.WaitAsync(TimeSpan.FromSeconds(4));
+            }
+            finally
+            {
+                registry.Remove(registration.PipeName);
+                directory.Delete();
+            }
+        });
+        if (primary is not null && cleanup is not null) throw new AggregateException(primary, cleanup);
+        if (primary is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((primary ?? cleanup)!).Throw();
+    }
+
     [Fact(Timeout = 15000)]
     public async Task WorkerSnapshot_RemainsPendingUntilCompletionStatusIsRecorded()
     {

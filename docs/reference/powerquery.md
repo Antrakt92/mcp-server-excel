@@ -9,6 +9,10 @@ For authorized development, prefer `evaluate` for new or materially changed M:
 check the preview before storing it. Skip redundant evaluation for trivial
 literal tables or validated code with unchanged dependencies.
 
+Evaluation returns at most one million result cells and applies a conservative
+4 MiB response budget. Use `Table.FirstN` or `Table.SelectColumns` in the M query
+to preview large results.
+
 Evaluation is not a read-only operation: it creates temporary workbook objects,
 executes M, then removes them by exact identity. Cleanup failure is an error.
 Execution may contact external sources. For an audit, inspect definitions and
