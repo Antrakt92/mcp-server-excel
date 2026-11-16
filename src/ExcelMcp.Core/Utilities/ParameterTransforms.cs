@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Sbroenne.ExcelMcp.Core.Commands.Range;
 
 namespace Sbroenne.ExcelMcp.Core.Utilities;
 
@@ -52,70 +51,7 @@ public static class ParameterTransforms
         }
     }
 
-    /// <summary>
-    /// Parses a JSON array string into a list of strings, with single-item fallback.
-    /// If the string is not valid JSON, treats it as a single item.
-    /// Returns null if input is null/empty.
-    /// </summary>
-    /// <param name="json">JSON array string or single value</param>
-    /// <returns>Parsed list, single-item list, or null</returns>
-    public static List<string>? ParseJsonListOrSingle(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(json!, s_jsonOptions);
-        }
-        catch (JsonException)
-        {
-            // If parsing fails, treat as single item
-            return [json!];
-        }
-    }
-
-    /// <summary>
-    /// Deserializes a JSON string into a typed object.
-    /// Returns default if input is null/empty.
-    /// </summary>
-    /// <typeparam name="T">Target type</typeparam>
-    /// <param name="json">JSON string</param>
-    /// <param name="parameterName">Parameter name for error messages</param>
-    /// <returns>Deserialized object or default</returns>
-    /// <exception cref="ArgumentException">Thrown when JSON is invalid</exception>
-    public static T? DeserializeJson<T>(string? json, string parameterName = "value") where T : class
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            return JsonSerializer.Deserialize<T>(json!, s_jsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            throw new ArgumentException($"Invalid {parameterName} JSON: {ex.Message}", parameterName);
-        }
-    }
-
     // === CSV Parsing ===
-
-    /// <summary>
-    /// Splits a comma-separated string into a trimmed string array.
-    /// Returns null if input is null/empty.
-    /// </summary>
-    /// <param name="csv">Comma-separated values</param>
-    /// <returns>Array of trimmed values, or null</returns>
-    public static string[]? SplitCsvParameters(string? csv)
-    {
-        if (string.IsNullOrWhiteSpace(csv))
-            return null;
-
-        return csv.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                  .Select(p => p.Trim())
-                  .ToArray();
-    }
 
     /// <summary>
     /// Parses multi-line CSV text into a 2D list of values for table operations.
@@ -386,40 +322,6 @@ public static class ParameterTransforms
     }
 
     // === Options Object Construction ===
-
-    /// <summary>
-    /// Builds a FindOptions object from individual boolean parameters with defaults.
-    /// </summary>
-    public static FindOptions BuildFindOptions(
-        bool? matchCase = null,
-        bool? matchEntireCell = null,
-        bool? searchFormulas = null,
-        bool? searchValues = null)
-    {
-        return new FindOptions
-        {
-            MatchCase = matchCase ?? false,
-            MatchEntireCell = matchEntireCell ?? false,
-            SearchFormulas = searchFormulas ?? true,
-            SearchValues = searchValues ?? true
-        };
-    }
-
-    /// <summary>
-    /// Builds a ReplaceOptions object from individual boolean parameters with defaults.
-    /// </summary>
-    public static ReplaceOptions BuildReplaceOptions(
-        bool? matchCase = null,
-        bool? matchEntireCell = null,
-        bool? replaceAll = null)
-    {
-        return new ReplaceOptions
-        {
-            MatchCase = matchCase ?? false,
-            MatchEntireCell = matchEntireCell ?? false,
-            ReplaceAll = replaceAll ?? true
-        };
-    }
 
     /// <summary>
     /// Resolves a value that can come from either a direct string or a file path.
