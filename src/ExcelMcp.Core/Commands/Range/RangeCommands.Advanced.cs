@@ -66,7 +66,7 @@ public partial class RangeCommands
         }
     }
 
-    private static void MergeWithAuthorizedDiscard(Excel.Application app, Excel.Range range, OverwritePolicy overwritePolicy)
+    internal static void MergeWithAuthorizedDiscard(Excel.Application app, Excel.Range range, OverwritePolicy overwritePolicy)
     {
         if (overwritePolicy != OverwritePolicy.Allow || !app.DisplayAlerts)
         {
@@ -74,7 +74,6 @@ public partial class RangeCommands
             return;
         }
 
-        Exception? operationFailure = null;
         try
         {
             app.DisplayAlerts = false;
@@ -82,12 +81,18 @@ public partial class RangeCommands
         }
         catch (Exception ex)
         {
-            operationFailure = ex;
+            OperationCleanup.Run(() => app.DisplayAlerts = true, ex);
             throw;
         }
-        finally
+
+        try
         {
-            OperationCleanup.Run(() => app.DisplayAlerts = true, operationFailure);
+            app.DisplayAlerts = true;
+        }
+        catch (Exception ex)
+        {
+            throw new OperationCompletionUnconfirmedException(
+                "Excel returned from merging the cells, but restoring its alert setting failed. Inspect the merged range before retrying.", ex);
         }
     }
 

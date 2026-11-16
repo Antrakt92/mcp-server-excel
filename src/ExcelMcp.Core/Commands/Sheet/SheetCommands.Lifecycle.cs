@@ -222,7 +222,17 @@ public partial class SheetCommands
                 ct.ThrowIfCancellationRequested();
                 sheet.Delete();
                 // Excel's COM interop drops the Boolean result when the confirmation is cancelled.
-                if (ContainsWorksheet(ctx.Book, sheet))
+                bool originalStillPresent;
+                try
+                {
+                    originalStillPresent = ContainsWorksheet(ctx.Book, sheet);
+                }
+                catch (Exception ex)
+                {
+                    throw new OperationCompletionUnconfirmedException(
+                        $"Could not confirm that Excel deleted worksheet '{sheetName}'. Inspect the workbook before retrying.", ex);
+                }
+                if (originalStillPresent)
                 {
                     throw new InvalidOperationException($"Excel did not delete worksheet '{sheetName}'. The original worksheet is still present.");
                 }

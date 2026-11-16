@@ -1349,7 +1349,7 @@ public sealed class ExcelMcpService : IDisposable
         FindVbaProjectAuthentication(error) is { } authentication ? SerializeVbaAuthenticationState(authentication.State, null, null, null) :
         FindOperationException<RangePatchException>(error) is { } patch ? SerializeRangePatchState(patch.State, "unknown") :
         FindOperationException<TableAppendException>(error) is { } append ? SerializeTableAppendState(append.PartialState, "unknown") :
-        null;
+        MarkUnconfirmedCompletion(error, null);
 
     private static string SerializeRangePatchState(RangePatchResult patch, string? outcome = null) =>
         JsonSerializer.Serialize(new
@@ -1665,11 +1665,24 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = MergeExecutionDiagnostics(SerializeStartupFailureState(ex, SerializePartialState(null,
+                PartialState = MergeExecutionDiagnostics(MarkUnconfirmedCompletion(ex,
+                    SerializeStartupFailureState(ex, SerializePartialState(null,
                     operation,
-                    sessionId, retainedFiles)), ex)
+                    sessionId, retainedFiles))), ex)
             }
         };
+    }
+
+    private static string? MarkUnconfirmedCompletion(Exception error, string? partialState)
+    {
+        if (FindOperationException<OperationCompletionUnconfirmedException>(error) is null)
+            return partialState;
+
+        var state = partialState is null
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+        state["outcome"] = "unknown";
+        return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
     private static string? SerializeStartupFailureState(Exception error, string? partialState)
