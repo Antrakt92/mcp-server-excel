@@ -37,18 +37,18 @@ This release adds two range commands for inspecting and editing specific cells, 
 
 ### Saves and recovery
 
-- After a timeout or cancellation, use `session.operation-result` to check the receipt for a save or table append before retrying. Save status distinguishes a confirmed save from a workbook that still needs inspection.
+- After a timeout or cancellation, look up the receipt before retrying a save or table append. Give the original batch entry an `operationId` UUID and use `file_read` → `operation-result` in MCP or `excelcli session operation-result` in the CLI. Save status distinguishes a confirmed save from a workbook that still needs inspection.
 - Timed-out Save As requests release an unused destination once Excel confirms the workbook stayed at its original path. Session status also reports the verified workbook path when available.
 - Stale discovery results and alternate hard-link paths are checked before opening a workbook. Workers retry temporary Windows access errors when checking their controller so they can still recover or reveal retained workbooks when its exit is confirmed.
 
 ### Worksheets and bounded reads
 
-- Copying a worksheet next to hidden tabs renames the new copy. Moving a worksheet to the end puts it after the last tab, including chart sheets.
+- Copying a worksheet next to hidden tabs renames the new copy. Moving a worksheet to the end puts it after the last tab, including chart sheets. Unprotecting a worksheet through MCP or CLI no longer opens a password prompt; pass the password explicitly when the worksheet requires one.
 - Named-range, table and PivotTable reads check the size of the requested result before returning it. Power Query evaluation reads in blocks, checks its response budget, and cleans up temporary query objects. To preview a large query, use `Table.FirstN` or `Table.SelectColumns`.
 
 ### CLI and dependencies
 
-- CLI batch commands accept mixed-case names. VBA password actions and aliases enforce the stdin-only policy consistently. The plugin launcher supports Windows Node installations with `npx.exe`, including Volta, while preserving quoted arguments and preferring `npx.cmd` when available.
+- CLI batch commands accept mixed-case names. VBA password actions and aliases enforce the stdin-only policy consistently. The plugin launcher supports Windows Node installations with `npx.exe`, including Volta, and preserves quoted arguments through both executable and CMD shims.
 - The Python evaluation lockfile updates `opentelemetry-api` from 1.45.1 to 1.45.2 to address [GHSA-mf5v-w3w3-f6cg](https://github.com/advisories/GHSA-mf5v-w3w3-f6cg). Evaluation tests run without the retired generated skills. The portable .NET runtime packages are unchanged.
 
 ## 5.0.0 — 2026-11-12
