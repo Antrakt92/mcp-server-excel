@@ -71,6 +71,7 @@ public sealed class OperationReceiptsTests
     [Theory]
     [InlineData("ServiceUnavailable", "{\"outcome\":\"unknown\"}")]
     [InlineData("ExcelProcessDied", null)]
+    [InlineData("ComInterop", "{\"diagnostics\":{\"execution\":{\"complete\":true,\"callbackReturned\":true}}}")]
     public void TransportDisconnectKeepsTheOperationOutcomeUnknown(string category, string? partialState)
     {
         var receipts = new OperationReceipts();

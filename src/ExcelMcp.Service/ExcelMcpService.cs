@@ -463,9 +463,20 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex)
         {
-            return IsFatalExcelDisconnect(ex)
-                ? null
-                : CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null, includeOperationStatus: false);
+            if (TryGetFatalComHResult(ex) is not { } hresult)
+                return CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null, includeOperationStatus: false);
+
+            return new ServiceResponse
+            {
+                Success = false,
+                Command = request.Command,
+                SessionId = request.SessionId,
+                ErrorCategory = "ExcelDisconnected",
+                ErrorMessage = "Excel disconnected before the late operation outcome could be confirmed.",
+                HResult = $"0x{hresult:X8}",
+                InnerError = DescribeDisconnectedInnerErrors(ex),
+                PartialState = MergeExecutionDiagnostics(SerializeDisconnectedOperationState(ex), ex)
+            };
         }
     }
 
@@ -1234,7 +1245,7 @@ public sealed class ExcelMcpService : IDisposable
         if (batch is not null && batch.IsExcelProcessAlive())
         {
             _sessionManager.RevealForRecovery(sessionId);
-            var retainedState = SerializeDisconnectedVbaState(exception);
+            var retainedState = SerializeDisconnectedOperationState(exception);
             var state = retainedState is null
                 ? new System.Text.Json.Nodes.JsonObject()
                 : System.Text.Json.Nodes.JsonNode.Parse(retainedState)!.AsObject();
@@ -1300,7 +1311,7 @@ public sealed class ExcelMcpService : IDisposable
             HResult = TryGetFatalComHResult(ex) is { } hresult ? $"0x{hresult:X8}" : null,
             InnerError = DescribeDisconnectedInnerErrors(ex),
             PartialState = MergeNativeProcessDiagnostics(
-                MergeExecutionDiagnostics(SerializeDisconnectedVbaState(ex), ex), observation)
+                MergeExecutionDiagnostics(SerializeDisconnectedOperationState(ex), ex), observation)
         };
     }
 
@@ -1332,10 +1343,28 @@ public sealed class ExcelMcpService : IDisposable
         return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
-    private static string? SerializeDisconnectedVbaState(Exception error) =>
+    private static string? SerializeDisconnectedOperationState(Exception error) =>
         FindVbaSourceEdit(error) is { } edit ? SerializeVbaEditState(edit.State, null, null, null) :
         FindVbaProjectProtection(error) is { } protection ? SerializeVbaProtectionState(protection.State, null, null, null) :
-        FindVbaProjectAuthentication(error) is { } authentication ? SerializeVbaAuthenticationState(authentication.State, null, null, null) : null;
+        FindVbaProjectAuthentication(error) is { } authentication ? SerializeVbaAuthenticationState(authentication.State, null, null, null) :
+        FindOperationException<RangePatchException>(error) is { } patch ? SerializeRangePatchState(patch.State, "unknown") :
+        FindOperationException<TableAppendException>(error) is { } append ? SerializeTableAppendState(append.PartialState, "unknown") :
+        null;
+
+    private static string SerializeRangePatchState(RangePatchResult patch, string? outcome = null) =>
+        JsonSerializer.Serialize(new
+        {
+            outcome,
+            patch.SheetName,
+            patch.WriteReturnedAddresses,
+            patch.ConfirmedAddresses,
+            patch.ConflictAddresses,
+            patch.UnconfirmedAddress,
+            patch.ReadbackMismatch
+        }, ServiceProtocol.JsonOptions);
+
+    private static string SerializeTableAppendState(TableAppendPartialState state, string outcome) =>
+        JsonSerializer.Serialize(new { outcome, append = state }, ServiceProtocol.JsonOptions);
 
     private static string? MergeExecutionDiagnostics(string? partialState, Exception error)
     {
@@ -1368,51 +1397,36 @@ public sealed class ExcelMcpService : IDisposable
         return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
-    private static Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException? FindVbaSourceEdit(Exception error)
-    {
-        for (var current = error; current is not null; current = current.InnerException)
-        {
-            if (current is Sbroenne.ExcelMcp.Core.Models.VbaSourceEditException edit)
-                return edit;
-            if (current is AggregateException aggregate)
-                foreach (var cause in aggregate.InnerExceptions)
-                    if (FindVbaSourceEdit(cause) is { } nested)
-                        return nested;
-        }
-        return null;
-    }
+    private static VbaSourceEditException? FindVbaSourceEdit(Exception error) =>
+        FindOperationException<VbaSourceEditException>(error);
 
-    private static Sbroenne.ExcelMcp.Core.Models.VbaProjectProtectionException? FindVbaProjectProtection(Exception error)
-    {
-        for (var current = error; current is not null; current = current.InnerException)
-        {
-            if (current is Sbroenne.ExcelMcp.Core.Models.VbaProjectProtectionException protection)
-                return protection;
-            if (current is AggregateException aggregate)
-                foreach (var cause in aggregate.InnerExceptions)
-                    if (FindVbaProjectProtection(cause) is { } nested)
-                        return nested;
-        }
-        return null;
-    }
+    private static VbaProjectProtectionException? FindVbaProjectProtection(Exception error) =>
+        FindOperationException<VbaProjectProtectionException>(error);
 
-    private static Sbroenne.ExcelMcp.Core.Models.VbaProjectAuthenticationException? FindVbaProjectAuthentication(Exception error)
+    private static VbaProjectAuthenticationException? FindVbaProjectAuthentication(Exception error) =>
+        FindOperationException<VbaProjectAuthenticationException>(error);
+
+    private static TException? FindOperationException<TException>(Exception error) where TException : Exception
     {
         for (var current = error; current is not null; current = current.InnerException)
         {
-            if (current is Sbroenne.ExcelMcp.Core.Models.VbaProjectAuthenticationException authentication)
-                return authentication;
+            if (current is TException match)
+                return match;
             if (current is AggregateException aggregate)
+            {
                 foreach (var cause in aggregate.InnerExceptions)
-                    if (FindVbaProjectAuthentication(cause) is { } nested)
+                    if (FindOperationException<TException>(cause) is { } nested)
                         return nested;
+                return null;
+            }
         }
         return null;
     }
 
     private static string? DescribeDisconnectedInnerErrors(Exception error)
     {
-        if (FindVbaSourceEdit(error) is null && FindVbaProjectProtection(error) is null && FindVbaProjectAuthentication(error) is null)
+        if (FindVbaSourceEdit(error) is null && FindVbaProjectProtection(error) is null && FindVbaProjectAuthentication(error) is null
+            && FindOperationException<RangePatchException>(error) is null && FindOperationException<TableAppendException>(error) is null)
             return error.InnerException?.Message;
 
         var messages = new List<string>();
@@ -1560,7 +1574,7 @@ public sealed class ExcelMcpService : IDisposable
         var operation = includeOperationStatus && sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null;
         return ex switch
         {
-            RangePatchException patch => new ServiceResponse
+            _ when FindOperationException<RangePatchException>(ex) is { } patch => new ServiceResponse
             {
                 Success = false,
                 Command = command,
@@ -1569,16 +1583,8 @@ public sealed class ExcelMcpService : IDisposable
                 ErrorMessage = errorMessage,
                 ExceptionType = exceptionType,
                 HResult = hresult,
-                InnerError = innerError,
-                PartialState = MergeExecutionDiagnostics(JsonSerializer.Serialize(new
-                {
-                    patch.State.SheetName,
-                    patch.State.WriteReturnedAddresses,
-                    patch.State.ConfirmedAddresses,
-                    patch.State.ConflictAddresses,
-                    patch.State.UnconfirmedAddress,
-                    patch.State.ReadbackMismatch
-                }, ServiceProtocol.JsonOptions), ex)
+                InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
+                PartialState = MergeExecutionDiagnostics(SerializeRangePatchState(patch.State), ex)
             },
             _ when FindVbaSourceEdit(ex) is { } vbaEx => new ServiceResponse
             {
@@ -1636,7 +1642,7 @@ public sealed class ExcelMcpService : IDisposable
                     operation,
                     sessionId, retainedFiles), ex)
             },
-            TableAppendException append => new ServiceResponse
+            _ when FindOperationException<TableAppendException>(ex) is { } append => new ServiceResponse
             {
                 Success = false,
                 Command = command,
@@ -1645,12 +1651,9 @@ public sealed class ExcelMcpService : IDisposable
                 ErrorMessage = errorMessage,
                 ExceptionType = exceptionType,
                 HResult = hresult,
-                InnerError = innerError,
-                PartialState = MergeExecutionDiagnostics(JsonSerializer.Serialize(new
-                {
-                    outcome = append.PartialState.ExpansionVerified ? "partially-applied" : "unknown",
-                    append = append.PartialState
-                }, ServiceProtocol.JsonOptions), ex)
+                InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
+                PartialState = MergeExecutionDiagnostics(SerializeTableAppendState(append.PartialState,
+                    append.PartialState.ExpansionVerified ? "partially-applied" : "unknown"), ex)
             },
             _ => new ServiceResponse
             {
