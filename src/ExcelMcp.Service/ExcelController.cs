@@ -534,17 +534,23 @@ internal sealed class ExcelController : IDisposable
 
     private void RemoveReleasedWorker(ExcelWorkerClient worker)
     {
-        _registry.Remove(worker.Registration.PipeName);
-        _workers.TryRemove(worker.Registration.PipeName, out _);
-        _publishedSnapshots.TryRemove(worker.Registration.PipeName, out _);
-        _newWorkers.TryRemove(worker.Registration.PipeName, out _);
-        _abandonedWorkers.TryRemove(worker.Registration.PipeName, out _);
-        foreach (var path in _paths.Where(entry => entry.Value.Token == worker.Registration.PipeName
-            && entry.Value.SessionId is null))
-            _paths.TryRemove(path);
+        lock (_shutdownLock)
+        {
+            var pipeName = worker.Registration.PipeName;
+            if (!_workers.TryGetValue(pipeName, out var current) || current != worker)
+                return;
+            _registry.Remove(pipeName);
+            _workers.TryRemove(pipeName, out _);
+            _publishedSnapshots.TryRemove(pipeName, out _);
+            _newWorkers.TryRemove(pipeName, out _);
+            _abandonedWorkers.TryRemove(pipeName, out _);
+            foreach (var path in _paths.Where(entry => entry.Value.Token == pipeName
+                && entry.Value.SessionId is null))
+                _paths.TryRemove(path);
+            foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
+                _selections.TryRemove(selection);
+        }
         ClearUtilityWorker(worker);
-        foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
-            _selections.TryRemove(selection.Key, out _);
     }
 
     private void ClearUtilityWorker(ExcelWorkerClient worker)
@@ -774,6 +780,7 @@ internal sealed class ExcelController : IDisposable
                 .DistinctBy(record => record.PipeName).ToArray();
             var workbooks = new List<OpenWorkbookInfo>();
             var errors = new List<WorkbookDiscoveryError>(native.Errors);
+            var allWorkersComplete = true;
             foreach (var window in native.Windows.DistinctBy(window => window.Process))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -822,6 +829,8 @@ internal sealed class ExcelController : IDisposable
                         errors.Add(new(window.Process.ProcessId, "The previous worker is still releasing Excel. No second Excel owner was started."));
                         continue;
                     }
+                    var previousSelections = _selections.Where(entry => entry.Value.Worker == worker)
+                        .ToDictionary(entry => entry.Key, entry => entry.Value.Workbook, StringComparer.Ordinal);
                     var completion = CompleteWorkerRequestAsync(new ServiceRequest
                     {
                         Command = "session.discover",
@@ -836,12 +845,12 @@ internal sealed class ExcelController : IDisposable
                     }
                     using var result = JsonDocument.Parse(response.Result!);
                     var discovered = result.RootElement.GetProperty("workbooks").Deserialize<List<OpenWorkbookInfo>>(ServiceProtocol.JsonOptions)!;
-                    foreach (var workbook in discovered)
-                    {
-                        workbooks.Add(workbook);
-                        _selections[workbook.WorkbookId] = (worker, workbook);
-                    }
-                    errors.AddRange(result.RootElement.GetProperty("errors").Deserialize<List<WorkbookDiscoveryError>>(ServiceProtocol.JsonOptions)!);
+                    var inspectionErrors = result.RootElement.GetProperty("errors")
+                        .Deserialize<List<WorkbookDiscoveryError>>(ServiceProtocol.JsonOptions)!;
+                    var workerComplete = result.RootElement.GetProperty("complete").GetBoolean() && inspectionErrors.Count == 0;
+                    allWorkersComplete &= workerComplete;
+                    PublishDiscoverySelections(worker, previousSelections, discovered, workerComplete, workbooks);
+                    errors.AddRange(inspectionErrors);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
@@ -851,12 +860,54 @@ internal sealed class ExcelController : IDisposable
             return new ServiceResponse
             {
                 Success = true,
-                Result = JsonSerializer.Serialize(new { success = true, workbooks, errors, complete = errors.Count == 0 }, ServiceProtocol.JsonOptions)
+                Result = JsonSerializer.Serialize(new { success = true, workbooks, errors, complete = allWorkersComplete && errors.Count == 0 },
+                    ServiceProtocol.JsonOptions)
             };
         }
         finally
         {
             _discovery.Release();
+        }
+    }
+
+    private void PublishDiscoverySelections(ExcelWorkerClient worker,
+        IReadOnlyDictionary<string, OpenWorkbookInfo> previous, List<OpenWorkbookInfo> discovered,
+        bool complete, List<OpenWorkbookInfo> publicWorkbooks)
+    {
+        lock (_shutdownLock)
+        {
+            if (!_workers.TryGetValue(worker.Registration.PipeName, out var currentWorker) || currentWorker != worker
+                || worker.Snapshot?.Releasing == true)
+                throw new InvalidOperationException("The Excel worker changed during discovery. Discover open workbooks again.");
+
+            if (complete)
+            {
+                var liveIds = discovered.Select(workbook => workbook.WorkbookId).ToHashSet(StringComparer.Ordinal);
+                foreach (var candidate in previous)
+                    if (!liveIds.Contains(candidate.Key))
+                        _selections.TryRemove(new(candidate.Key, (worker, candidate.Value)));
+            }
+
+            foreach (var workbook in discovered)
+            {
+                var selected = workbook;
+                if (_selections.TryGetValue(workbook.WorkbookId, out var current)
+                    && !ReferenceEquals(current.Workbook, previous.GetValueOrDefault(workbook.WorkbookId)))
+                {
+                    if (current.Worker != worker)
+                        throw new InvalidOperationException("Two Excel workers reported the same workbook selection.");
+                    selected = current.Workbook;
+                }
+                else
+                    _selections[workbook.WorkbookId] = (worker, workbook);
+
+                // Keep the retained worker's ID privately for path ownership during attach.
+                // Other commands can use the ID only after this controller publishes it.
+                if (selected.SessionId is { } sessionId
+                    && (!_sessions.TryGetValue(sessionId, out var owner) || owner != worker))
+                    selected = selected with { SessionId = null };
+                publicWorkbooks.Add(selected);
+            }
         }
     }
 
