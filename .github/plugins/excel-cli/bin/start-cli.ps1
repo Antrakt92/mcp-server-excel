@@ -25,12 +25,18 @@ if ($npxCommand.Name -eq "npx.cmd") {
     # Run npm's JS entry point directly to avoid corrupting arguments in cmd.exe.
     $nodeCommand = Get-Command "node.exe" -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
-    $npxCliPath = Join-Path (Split-Path -Parent $npxCommand.Source) "node_modules\npm\bin\npx-cli.js"
-    if ($null -eq $nodeCommand -or -not (Test-Path -LiteralPath $npxCliPath -PathType Leaf)) {
-        throw "excel-cli requires Node.js 18 or later with npm/npx available on PATH."
+    $npxDirectory = Split-Path -Parent $npxCommand.Source
+    $npxCliPath = Join-Path $npxDirectory "node_modules\npm\bin\npx-cli.js"
+    if ($null -ne $nodeCommand -and (Test-Path -LiteralPath $npxCliPath -PathType Leaf)) {
+        $binaryPath = $nodeCommand.Source
+        $nativeArguments = @($npxCliPath) + $nativeArguments
+    } else {
+        # PATHEXT can rank a forwarding CMD shim ahead of its own executable.
+        $binaryPath = Join-Path $npxDirectory "npx.exe"
+        if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
+            throw "excel-cli requires Node.js 18 or later with npm/npx available on PATH."
+        }
     }
-    $binaryPath = $nodeCommand.Source
-    $nativeArguments = @($npxCliPath) + $nativeArguments
 }
 
 $startInfo = [Diagnostics.ProcessStartInfo]::new()

@@ -22,9 +22,10 @@ public sealed class PluginBootstrapTests(ITestOutputHelper output) : PluginTestB
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task StartCliWrapper_UsesNpxAndPreservesArguments(bool executableShim)
+    [InlineData(false, ".CMD;.EXE")]
+    [InlineData(true, ".EXE;.CMD")]
+    [InlineData(true, ".CMD;.EXE")]
+    public async Task StartCliWrapper_UsesNpxAndPreservesArguments(bool executableShim, string pathExt)
     {
         var sandbox = CreateSandbox("npx-wrapper");
         try
@@ -86,7 +87,8 @@ public sealed class PluginBootstrapTests(ITestOutputHelper output) : PluginTestB
                 """);
 
             var result = await RunPowerShellFileAsync(
-                harness, ["-Wrapper", wrapper, "-NpxDirectory", sandbox, "-ArgumentsFile", argumentsFile]);
+                harness, ["-Wrapper", wrapper, "-NpxDirectory", sandbox, "-ArgumentsFile", argumentsFile],
+                new Dictionary<string, string> { ["PATHEXT"] = pathExt });
 
             Assert.True(result.ExitCode == 0, result.CombinedOutput);
             if (executableShim)
