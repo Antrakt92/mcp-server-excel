@@ -16,6 +16,8 @@ internal static class CliInputPolicy
             .Concat(option.ShortNames.Select(name => "-" + name)))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    internal static bool IsHelpFlag(string argument) => argument is "--help" or "-h" or "-?";
+
     internal static string? FindStdinOnlyCommand(IReadOnlyList<string> arguments)
     {
         if (arguments.Count < 2) return null;
@@ -28,7 +30,8 @@ internal static class CliInputPolicy
             var argument = arguments[index];
             if (argument.StartsWith('-'))
             {
-                if (argument.IndexOfAny(['=', ':']) < 0 && argument is not ("--help" or "-h" or "--version" or "-v"))
+                if (argument.IndexOfAny(['=', ':']) < 0 && !IsHelpFlag(argument)
+                    && argument is not ("--version" or "-v"))
                 {
                     // Spectre allows a bare boolean flag before the action.
                     if (category != ServiceRegistry.Vba.Category || !VbaBooleanOptions.Contains(argument)

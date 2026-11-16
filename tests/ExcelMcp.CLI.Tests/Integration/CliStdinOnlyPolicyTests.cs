@@ -95,6 +95,22 @@ public sealed class CliStdinOnlyPolicyTests
     }
 
     [Theory]
+    [InlineData("unlock-project")]
+    [InlineData("unloc\u212A-project")]
+    public async Task SensitiveActionHelpAlias_DoesNotPrintExtraArgument(string action)
+    {
+        const string marker = "SyntheticHelpProbeOnly7";
+        var result = await Run(["vba", "-?", action, marker]);
+
+        Assert.DoesNotContain(marker, result.Output + result.Error, StringComparison.Ordinal);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(0, result.Client.Connections);
+        Assert.Empty(result.Client.Requests);
+        Assert.Contains(_CliCategoryMetadata.BatchStdinOnlyMessage, result.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("--password", result.Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(null, Secret)]
     [InlineData("-", Secret)]
     [InlineData(null, " ")]
