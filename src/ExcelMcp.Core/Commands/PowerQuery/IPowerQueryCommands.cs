@@ -221,6 +221,7 @@ public interface IPowerQueryCommands
     /// Creates a temporary query, executes it, reads the results, then cleans up every
     /// exact temporary mashup connection regardless of Excel's display name.
     /// Cleanup failures are surfaced and include recovery guidance.
+    /// Large results are refused. Limit the output in M with Table.FirstN or Table.SelectColumns.
     /// Useful for testing M code snippets and getting preview data.
     /// </summary>
     /// <param name="batch">Excel batch session</param>

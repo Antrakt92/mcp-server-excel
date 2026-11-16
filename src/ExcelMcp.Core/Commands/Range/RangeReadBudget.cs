@@ -1,7 +1,8 @@
 namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 /// <summary>Conservative JSON-size admission, including escaped text and collection structure.</summary>
-internal sealed class RangeReadBudget
+internal sealed class RangeReadBudget(
+    string limitGuidance = "Read smaller explicit ranges or reduce pageRows/pageColumns.")
 {
     internal const long MaximumResponseBytes = 4 * 1024 * 1024;
     // MCP carries structured content and JSON text, whose own escaping can add another copy.
@@ -27,7 +28,7 @@ internal sealed class RangeReadBudget
     {
         if (bytes > MaximumResponseBytes - EstimatedBytes)
             throw new ArgumentOutOfRangeException(nameof(bytes),
-                "The requested data exceeds the conservative 4 MiB response byte budget. Read smaller explicit ranges or reduce pageRows/pageColumns. No partial values were returned.");
+                $"The requested data exceeds the conservative 4 MiB response byte budget. {limitGuidance} No partial values were returned.");
         EstimatedBytes += bytes;
     }
 }

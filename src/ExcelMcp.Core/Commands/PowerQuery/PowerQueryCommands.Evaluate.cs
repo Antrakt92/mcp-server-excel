@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.ExceptionServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -13,6 +14,9 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 /// </summary>
 public partial class PowerQueryCommands
 {
+    private const string EvaluateResultLimitGuidance =
+        "Shorten the M source or limit its output with Table.FirstN or Table.SelectColumns.";
+
     /// <inheritdoc />
     public PowerQueryEvaluateResult Evaluate(IExcelBatch batch, string mCode)
     {
@@ -27,6 +31,10 @@ public partial class PowerQueryCommands
         {
             throw new ArgumentException("M code is required for evaluate action", nameof(mCode));
         }
+
+        var budget = new RangeReadBudget(EvaluateResultLimitGuidance);
+        budget.AddScalar(result.FilePath);
+        budget.AddScalar(result.MCode);
 
         // Generate unique temporary names
         var uniqueId = Guid.NewGuid().ToString("N")[..8];
@@ -101,93 +109,7 @@ public partial class PowerQueryCommands
 
                 ct.ThrowIfCancellationRequested();
 
-                // STEP 5: Read the results from the worksheet
-                // Get the data range from the ListObject
-                Excel.Range? dataBodyRange = null;
-                Excel.Range? headerRowRange = null;
-                try
-                {
-                    // Get column names from header row
-                    headerRowRange = listObject.HeaderRowRange;
-                    if (headerRowRange != null)
-                    {
-                        object? headerValues = headerRowRange.Value2;
-                        if (headerValues != null)
-                        {
-                            if (headerValues is object[,] headers2D)
-                            {
-                                for (int col = 1; col <= headers2D.GetLength(1); col++)
-                                {
-                                    ct.ThrowIfCancellationRequested();
-                                    result.Columns.Add(headers2D[1, col]?.ToString() ?? $"Column{col}");
-                                }
-                            }
-                            else if (headerValues is object[] headers1D)
-                            {
-                                for (int i = 0; i < headers1D.Length; i++)
-                                {
-                                    ct.ThrowIfCancellationRequested();
-                                    result.Columns.Add(headers1D[i]?.ToString() ?? $"Column{i + 1}");
-                                }
-                            }
-                            else
-                            {
-                                // Single cell
-                                result.Columns.Add(headerValues?.ToString() ?? "Column1");
-                            }
-                        }
-                    }
-                    result.ColumnCount = result.Columns.Count;
-
-                    // Get data rows
-                    dataBodyRange = listObject.DataBodyRange;
-                    if (dataBodyRange != null)
-                    {
-                        object? dataValues = dataBodyRange.Value2;
-                        if (dataValues != null)
-                        {
-                            if (dataValues is object[,] data2D)
-                            {
-                                int rowCount = data2D.GetLength(0);
-                                int colCount = data2D.GetLength(1);
-
-                                for (int row = 1; row <= rowCount; row++)
-                                {
-                                    ct.ThrowIfCancellationRequested();
-                                    var rowData = new List<object?>();
-                                    for (int col = 1; col <= colCount; col++)
-                                    {
-                                        rowData.Add(ConvertCellValue(data2D[row, col]));
-                                    }
-                                    result.Rows.Add(rowData);
-                                }
-                            }
-                            else if (dataValues is object[] data1D)
-                            {
-                                // Single row
-                                var rowData = new List<object?>();
-                                foreach (var val in data1D)
-                                {
-                                    ct.ThrowIfCancellationRequested();
-                                    rowData.Add(ConvertCellValue(val));
-                                }
-                                result.Rows.Add(rowData);
-                            }
-                            else
-                            {
-                                // Single cell
-                                result.Rows.Add([ConvertCellValue(dataValues)]);
-                            }
-                        }
-                    }
-                    result.RowCount = result.Rows.Count;
-                }
-                finally
-                {
-                    ComUtilities.Release(ref headerRowRange);
-                    ComUtilities.Release(ref dataBodyRange);
-                }
-
+                ReadEvaluationResult(listObject, result, budget, ct);
             }
             catch (Exception ex)
             {
@@ -315,6 +237,65 @@ public partial class PowerQueryCommands
             throw new TimeoutException(
                 $"Power Query evaluate timed out after {batch.OperationTimeout.TotalSeconds} seconds.",
                 ex);
+        }
+    }
+
+    private static void ReadEvaluationResult(
+        Excel.ListObject table, PowerQueryEvaluateResult result, RangeReadBudget budget, CancellationToken ct)
+    {
+        Excel.Range? dataRange = null;
+        Excel.Range? headerRange = null;
+        try
+        {
+            dataRange = table.DataBodyRange;
+            var dataSize = dataRange is null ? default : RangeHelpers.GetDimensions(dataRange);
+            RangeReadWindow.EnsureCellLimit(dataSize.Rows, dataSize.Columns, RangeReadWindow.MaximumReadCells,
+                EvaluateResultLimitGuidance + " No values were read.");
+
+            headerRange = table.HeaderRowRange;
+            if (headerRange is not null)
+            {
+                var size = RangeHelpers.GetDimensions(headerRange);
+                var header = BoundedRangeValueReader.Read(headerRange, size, budget, ct,
+                    convertValue: static value => value?.ToString())[0];
+                if (header.Count != 1 || header[0] is not null)
+                {
+                    for (int index = 0; index < header.Count; index++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var name = (string?)header[index];
+                        if (name is null)
+                        {
+                            name = $"Column{index + 1}";
+                            budget.AddScalar(name);
+                        }
+                        result.Columns.Add(name);
+                    }
+                }
+            }
+            result.ColumnCount = result.Columns.Count;
+
+            if (dataRange is not null)
+            {
+                // Excel can return a single blank placeholder for an empty table.
+                bool blankSingleton = false;
+                result.Rows = BoundedRangeValueReader.Read(dataRange, dataSize, budget, ct,
+                    convertValue: dataSize == (1, 1) ? ConvertSingleton : ConvertCellValue);
+                if (blankSingleton)
+                    result.Rows.Clear();
+
+                object? ConvertSingleton(object? value)
+                {
+                    blankSingleton = value is null;
+                    return ConvertCellValue(value);
+                }
+            }
+            result.RowCount = result.Rows.Count;
+        }
+        finally
+        {
+            ComUtilities.Release(ref headerRange);
+            ComUtilities.Release(ref dataRange);
         }
     }
 
