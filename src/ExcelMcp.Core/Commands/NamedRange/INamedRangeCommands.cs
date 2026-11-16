@@ -19,7 +19,7 @@ public interface INamedRangeCommands
 {
     /// <summary>
     /// Lists visible user-defined named ranges in the workbook. Hidden Excel internal names are omitted before value inspection.
-    /// Large ranges return metadata without materializing values.
+    /// Large ranges and ranges in other workbooks return metadata without values.
     /// </summary>
     /// <returns>Structured result containing the list of named range information</returns>
     /// <exception cref="InvalidOperationException">If workbook access fails</exception>
@@ -27,7 +27,7 @@ public interface INamedRangeCommands
     NamedRangeListResult List(IExcelBatch batch);
 
     /// <summary>
-    /// Sets the value of a named range
+    /// Sets the value of a named range in the selected workbook.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="name">Name of the named range</param>
@@ -40,7 +40,7 @@ public interface INamedRangeCommands
         [RequiredParameter, FromString("value")] string value);
 
     /// <summary>
-    /// Gets the value of a named range
+    /// Gets the value of a named range in the selected workbook.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="name">Name of the named range</param>

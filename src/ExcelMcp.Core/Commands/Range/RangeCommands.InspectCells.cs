@@ -15,7 +15,6 @@ public partial class RangeCommands
         {
             Excel.Range? range = null;
             Excel.Worksheet? sheet = null;
-            Excel.Workbook? rangeBook = null;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -27,9 +26,6 @@ public partial class RangeCommands
                 RangeReadWindow.EnsureCellLimit(rows, columns, 64,
                     "Select a smaller range or use get-values-page for data without displayed text.");
                 sheet = range.Worksheet;
-                rangeBook = (Excel.Workbook)sheet.Parent;
-                if (!ReferenceEquals(rangeBook, context.Book))
-                    throw new ArgumentException("The requested range must belong to this workbook.", nameof(rangeAddress));
                 var result = new RangeCellInspectionResult
                 {
                     FilePath = batch.WorkbookPath,
@@ -44,7 +40,6 @@ public partial class RangeCommands
             }
             finally
             {
-                ComUtilities.Release(ref rangeBook);
                 ComUtilities.Release(ref sheet);
                 ComUtilities.Release(ref range);
             }
