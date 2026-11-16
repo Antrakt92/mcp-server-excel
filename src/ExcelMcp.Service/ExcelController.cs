@@ -37,6 +37,7 @@ internal sealed class ExcelController : IDisposable
     private enum SessionEnd { Closed, SavedAndClosed, WorkerExited }
     private readonly ConcurrentDictionary<string, SessionEnd> _closedSessions = new(StringComparer.Ordinal);
     private readonly OperationReceipts _operationReceipts = new();
+    private readonly SemaphoreSlim _packageComparisons = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
     private readonly DaemonHost _host;
     private readonly DaemonHost _controlHost;
@@ -170,6 +171,43 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
+    internal const string PackageComparisonCommand = "session.compare-packages";
+
+    private async Task<ServiceResponse> ComparePackagesAsync(ServiceRequest request)
+    {
+        if (request.SessionId is not null)
+            throw new ArgumentException("Compare two saved workbook files without a session ID.");
+
+        var options = ServiceRegistry.DeserializeArgs<PackageComparisonArguments>(request.Args);
+        string beforePath = FilePathValidation.NormalizeAbsoluteWindowsPath(options.BeforePath ?? "");
+        string afterPath = FilePathValidation.NormalizeAbsoluteWindowsPath(options.AfterPath ?? "");
+        if (!_packageComparisons.Wait(0, request.CallerCancellation))
+            return ExcelWorkerHost.Failure(request, "ServiceBusy", "Another workbook package comparison is running.");
+
+        try
+        {
+            var result = await Task.Run(() => WorkbookPackageComparison.Compare(
+                beforePath, afterPath, options.AllowedParts, request.CallerCancellation), request.CallerCancellation);
+            return new ServiceResponse
+            {
+                Success = true,
+                Command = request.Command,
+                Result = JsonSerializer.Serialize(result, ServiceProtocol.JsonOptions)
+            };
+        }
+        finally
+        {
+            _packageComparisons.Release();
+        }
+    }
+
+    private sealed class PackageComparisonArguments
+    {
+        public string? BeforePath { get; init; }
+        public string? AfterPath { get; init; }
+        public string[]? AllowedParts { get; init; }
+    }
+
     private static bool StartsWorkbookWorker(string command) =>
         command is "session.open" or "session.create" or "session.test" or "sheet.copy-to-file" or "sheet.move-to-file";
 
@@ -215,6 +253,8 @@ internal sealed class ExcelController : IDisposable
             }
             if (_shutdown is not null)
                 return ExcelWorkerHost.Failure(request, "SessionUnavailable", "The service is stopping. No new work was started.");
+            if (request.Command == PackageComparisonCommand)
+                return await ComparePackagesAsync(request);
             if (request.Command == "session.discover")
                 return await DiscoverAsync(request.CallerCancellation, waitForWorkerCompletion);
 
@@ -462,9 +502,17 @@ internal sealed class ExcelController : IDisposable
             Success = false,
             Command = request.Command,
             SessionId = request.SessionId,
-            ErrorCategory = ex is OperationCanceledException ? "Cancelled"
-            : ex is TimeoutException ? "Timeout"
-            : ex is ArgumentException or JsonException ? "InvalidInput" : "ServiceUnavailable",
+            ErrorCategory = ex switch
+            {
+                OperationCanceledException => "Cancelled",
+                TimeoutException => "Timeout",
+                ArgumentException or JsonException => "InvalidInput",
+                InvalidDataException or EndOfStreamException when request.Command == PackageComparisonCommand => "InvalidInput",
+                FileNotFoundException or DirectoryNotFoundException when request.Command == PackageComparisonCommand => "NotFound",
+                UnauthorizedAccessException when request.Command == PackageComparisonCommand => "Permissions",
+                IOException when request.Command == PackageComparisonCommand => "OperationFailed",
+                _ => "ServiceUnavailable"
+            },
             ExceptionType = ex.GetType().Name,
             ErrorMessage = $"{ex.GetType().Name}: {ex.Message}",
             PartialState = !sent || ex is ArgumentException or JsonException ? null : JsonSerializer.Serialize(new

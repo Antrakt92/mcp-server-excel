@@ -18,6 +18,7 @@ public static class ActionExtensions
         FileAction.Attach => "attach",
         FileAction.Notices => "notices",
         FileAction.OperationResult => "operation-result",
+        FileAction.ComparePackages => "compare-packages",
         FileAction.EnableEditing => "enable-editing",
         FileAction.EnableConnections => "enable-connections",
         FileAction.EnableMacros => "enable-macros",

@@ -160,6 +160,62 @@ public sealed class InProcessCliCommandTests
     }
 
     [Fact]
+    public async Task ComparePackages_SendsExactPartsWithoutWorkbookSession()
+    {
+        var factory = new RecordingClientFactory(new ServiceResponse
+        {
+            Success = true,
+            Result = """{"success":true,"matchesAllowlist":false,"changes":[]}"""
+        });
+        var output = new StringWriter();
+        int exit = await Program.RunAsync(
+            ["--quiet", "session", "compare-packages", "--before-path", @"C:\source.xlsm",
+                "--after-path", @"C:\saved.xlsm", "--allow-part", "xl/vbaProject.bin",
+                "--allow-part", "docProps/core.xml"],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(0, exit);
+        var request = Assert.Single(factory.Requests);
+        Assert.Equal("session.compare-packages", request.Command);
+        Assert.Null(request.SessionId);
+        using var arguments = JsonDocument.Parse(request.Args!);
+        Assert.Equal(@"C:\source.xlsm", arguments.RootElement.GetProperty("beforePath").GetString());
+        Assert.Equal(@"C:\saved.xlsm", arguments.RootElement.GetProperty("afterPath").GetString());
+        string[] expectedParts = ["xl/vbaProject.bin", "docProps/core.xml"];
+        Assert.Equal(expectedParts,
+            arguments.RootElement.GetProperty("allowedParts").EnumerateArray().Select(part => part.GetString()));
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.False(result.RootElement.GetProperty("data").GetProperty("matchesAllowlist").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ComparePackages_InBatchDoesNotUseOrClearActiveWorkbookSession()
+    {
+        var factory = new RecordingClientFactory(
+            new ServiceResponse { Success = true, Result = """{"success":true,"matchesAllowlist":true,"changes":[]}""" },
+            new ServiceResponse { Success = true, Result = """{"success":true,"worksheets":[]}""" });
+        const string input = """
+            [
+              {"command":"session.compare-packages","sessionId":"entry","args":{"beforePath":"C:/before.xlsm","afterPath":"C:/after.xlsm"}},
+              {"command":"sheet.list"}
+            ]
+            """;
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var runtime = new CliCommandRuntime(factory, new StringReader(input), output, error, isOutputRedirected: true);
+
+        int exit = await Program.RunAsync(["--quiet", "batch", "--input", "-", "--session", "active"], runtime);
+        Assert.True(exit == 0, output.ToString() + error);
+        Assert.Collection(factory.Requests,
+            compare =>
+            {
+                Assert.Equal("session.compare-packages", compare.Command);
+                Assert.Null(compare.SessionId);
+            },
+            sheet => Assert.Equal("active", sheet.SessionId));
+    }
+
+    [Fact]
     public async Task NonRedirectedOperation_WritesOnlyJsonToStdout()
     {
         var factory = new RecordingClientFactory(new ServiceResponse

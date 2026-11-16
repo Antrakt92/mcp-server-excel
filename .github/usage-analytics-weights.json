@@ -257,6 +257,7 @@
         "attach": "light",
         "notices": "light",
         "operation-result": "light",
+        "compare-packages": "medium",
         "enable-editing": "medium",
         "enable-connections": "medium",
         "enable-macros": "medium",

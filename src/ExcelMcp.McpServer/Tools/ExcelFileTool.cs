@@ -97,12 +97,18 @@ public static partial class ExcelFileTool
     /// operation-result looks up a tracked table.append or session.save command without calling Excel.
     /// Results are pending, completed, partially-applied, failed, or unknown. Receipts are retained in the same host for 15 minutes after completion.
     /// If the result is unknown, inspect the workbook before repeating the command.
+    /// compare-packages compares two saved XLSX/XLSM files without opening Excel.
+    /// It returns added, removed and changed part names and SHA-256 hashes.
+    /// matchesAllowlist reports whether every difference was allowed. A mismatch still returns the complete diff.
     /// </remarks>
     /// <param name="action">Discover or list workbooks, test a workbook path, inspect opening notices, or look up an operation receipt. Batch command: session.{action}.</param>
     /// <param name="file_path">Full Windows path or URL. Required for test. Batch args key: filePath.</param>
     /// <param name="timeout_seconds">Timeout for test, in seconds (10-3600). Batch args key: timeoutSeconds.</param>
     /// <param name="workbook_session_id">Session for notices or the original session for operation-result. Attach a discovered Protected View workbook before inspecting notices. Batch entry key: sessionId (outside args).</param>
     /// <param name="operation_id">UUID supplied with the tracked command. Required for operation-result. Batch args key: operationId.</param>
+    /// <param name="before_path">Absolute Windows path to the original saved XLSX/XLSM. Required for compare-packages. Batch args key: beforePath.</param>
+    /// <param name="after_path">Absolute Windows path to the resulting saved XLSX/XLSM. Required for compare-packages. Batch args key: afterPath.</param>
+    /// <param name="allowed_parts">Exact package part names allowed to change. Omit to allow no changes. Batch args key: allowedParts.</param>
     [McpServerTool(Name = "file_read", Title = "Read-Only File Operations", ReadOnly = true,
         Destructive = false)]
     [McpMeta("category", "session")]
@@ -115,12 +121,21 @@ public static partial class ExcelFileTool
         [McpActionParameter("notices", Required = true), McpActionParameter("operation-result", Required = true)]
         [DefaultValue(null)] string? workbook_session_id = null,
         [McpActionParameter("operation-result", Required = true), DefaultValue(null)] string? operation_id = null,
+        [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? before_path = null,
+        [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? after_path = null,
+        [McpActionParameter("compare-packages"), DefaultValue(null)] string[]? allowed_parts = null,
         CancellationToken cancellationToken = default) =>
-        action == FileReadAction.OperationResult
-            ? ExcelToolsBase.ExecuteToolActionAsync("file_read", "operation-result",
+        action switch
+        {
+            FileReadAction.OperationResult => ExcelToolsBase.ExecuteToolActionAsync("file_read", "operation-result",
                 () => ExcelToolsBase.ForwardToServiceAsync(bridge, OperationReceipts.LookupCommand, workbook_session_id,
-                    new { operationId = operation_id }, cancellationToken), cancellationToken)
-            : ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken);
+                    new { operationId = operation_id }, cancellationToken), cancellationToken),
+            FileReadAction.ComparePackages => ExcelToolsBase.ExecuteToolActionAsync("file_read", "compare-packages",
+                () => ExcelToolsBase.ForwardToServiceAsync(bridge, ExcelController.PackageComparisonCommand, null,
+                    new { beforePath = before_path, afterPath = after_path, allowedParts = allowed_parts },
+                    cancellationToken), cancellationToken),
+            _ => ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken)
+        };
 
     private static Task<CallToolResult> ExecuteFileReadAsync(
         FileReadAction action, ServiceBridge.ServiceBridge bridge, string? filePath,

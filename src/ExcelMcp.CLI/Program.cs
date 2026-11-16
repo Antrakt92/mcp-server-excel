@@ -189,6 +189,8 @@ internal sealed class Program
                     .WithDescription("List active sessions with canClose, excelState, operationPending and blocker details. A pending operation is not a completed or failed operation. activeOperations:0 does not prove Excel has finished. After a timeout, check the operation's outcome and inspect the workbook before repeating a change. Confirmed blocking dialogs automatically reveal Excel and include readable dialog text in blockingMessage; partial or unavailable reads are reported. Ask the user to respond in Excel. Dialog types are not identified and input values are not read.");
                 branch.AddCommand<SessionOperationResultCommand>("operation-result")
                     .WithDescription("Look up a tracked table.append or session.save command by operation ID and session.");
+                branch.AddCommand<SessionComparePackagesCommand>("compare-packages")
+                    .WithDescription("Compare saved XLSX/XLSM package parts by SHA-256 without opening Excel.");
                 branch.AddCommand<SessionTestCommand>("test")
                     .WithDescription("Test file existence, validity, openability, and IRM/AIP read-only requirements.");
             });

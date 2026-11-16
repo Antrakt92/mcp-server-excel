@@ -150,6 +150,26 @@ Save Copy As preserves the source format. For a never-saved workbook, Excel's
 actual workbook format determines the required output extension; copying does
 not give the source a saved path or save its pending edits.
 
+## Compare saved workbook packages
+
+Use MCP `file_read` with action `compare-packages` or
+`excelcli session compare-packages` to compare two saved XLSX or XLSM files
+without opening them in Excel. Supply absolute paths as `before_path` and
+`after_path` in MCP, or `--before-path` and `--after-path` in the CLI.
+The comparison hashes uncompressed ZIP part bytes, so a different compression
+level or ZIP timestamp alone does not show up as a workbook part change.
+
+Pass exact, case-sensitive package part names in MCP `allowed_parts` or repeat
+CLI `--allow-part` for each name. Omit the list to allow zero changes. Read
+`matchesAllowlist` to decide whether the result meets the policy. A completed
+comparison returns added, removed and changed entries even on a policy
+mismatch. The report contains part names and hashes. For a scope such as
+VBA project bytes, allow only the exact VBA part name and check that it
+appears as changed. File comparison alone cannot establish VBA compatibility,
+Excel calculation results, or rendering. The comparator caps each ZIP at
+256 MiB and 8,192 parts, and reports up to 1,024 changed parts. It rejects
+split, encrypted, or ZIP64 archives and returns an error if a limit is exceeded.
+
 ## Metadata and document properties
 
 Use built-in properties for existing document metadata and custom properties
