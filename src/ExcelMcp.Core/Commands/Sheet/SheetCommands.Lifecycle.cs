@@ -219,7 +219,13 @@ public partial class SheetCommands
                 {
                     throw new InvalidOperationException($"Sheet '{sheetName}' not found.");
                 }
+                ct.ThrowIfCancellationRequested();
                 sheet.Delete();
+                // Excel's COM interop drops the Boolean result when the confirmation is cancelled.
+                if (ContainsWorksheet(ctx.Book, sheet))
+                {
+                    throw new InvalidOperationException($"Excel did not delete worksheet '{sheetName}'. The original worksheet is still present.");
+                }
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             finally
@@ -227,6 +233,31 @@ public partial class SheetCommands
                 ComUtilities.Release(ref sheet);
             }
         });
+    }
+
+    private static bool ContainsWorksheet(Excel.Workbook workbook, Excel.Worksheet target)
+    {
+        Excel.Sheets? sheets = null;
+        try
+        {
+            sheets = workbook.Worksheets;
+            var count = sheets.Count;
+            for (var index = 1; index <= count; index++)
+            {
+                Excel.Worksheet? candidate = null;
+                try
+                {
+                    candidate = (Excel.Worksheet)sheets[index];
+                    if (ReferenceEquals(candidate, target))
+                    {
+                        return true;
+                    }
+                }
+                finally { ComUtilities.Release(ref candidate); }
+            }
+            return false;
+        }
+        finally { ComUtilities.Release(ref sheets); }
     }
 
     /// <inheritdoc />
