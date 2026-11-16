@@ -242,6 +242,8 @@ public sealed class ExcelWorkerBoundaryTests
         {
             WorkerProcess.BeforeIdentityReadForTests = probe =>
             {
+                if (probe.Id != identity.ProcessId)
+                    return;
                 if (!remainAlive)
                 {
                     process.StandardInput.Close();

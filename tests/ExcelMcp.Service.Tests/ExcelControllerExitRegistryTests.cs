@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Service.Workers;
@@ -100,6 +101,64 @@ public sealed partial class ExcelControllerTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task Controller_PollContinuesForOtherWorkersWhenAProcessProbeIsDenied()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-poll-denied-");
+        var registry = new WorkerRegistry(directory.FullName);
+        try
+        {
+            using var controller = new ExcelController(launcher: Launcher, registry: registry);
+            var healthy = await controller.StartWorkerAsync(null, CancellationToken.None);
+            using var child = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                "/d /q /c set /p \"unused=\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true
+            })!;
+            var generation = ExitRegistryControllerGeneration(controller);
+            var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", WorkerProcess.From(child),
+                WorkerProcess.Current, generation, WorkerRegistry.Build, null);
+            var denied = new ExcelWorkerClient(registration, registration.Controller, generation);
+            var workers = ExitRegistryWorkers(controller);
+            var healthyReads = 0;
+            controller.BeforeWorkerSnapshotReadForTests = candidate =>
+            {
+                if (candidate == healthy)
+                    Interlocked.Increment(ref healthyReads);
+                return Task.CompletedTask;
+            };
+            registry.Write(registration);
+            WorkerProcess.BeforeIdentityReadForTests = process =>
+            {
+                if (process.Id == child.Id)
+                    throw new Win32Exception(5);
+            };
+            try
+            {
+                Assert.True(workers.TryAdd(registration.PipeName, denied));
+                await WaitForExitRegistryPollAsync(controller, () =>
+                    denied.StatusError is not null && Volatile.Read(ref healthyReads) >= 3);
+                Assert.Same(denied, workers[registration.PipeName]);
+                Assert.Equal(registration, registry.Read(registration.PipeName));
+                Assert.Null(healthy.StatusError);
+            }
+            finally
+            {
+                WorkerProcess.BeforeIdentityReadForTests = null;
+                workers.TryRemove(registration.PipeName, out _);
+                child.StandardInput.Close();
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+                registry.Remove(registration.PipeName);
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
         }
     }
 

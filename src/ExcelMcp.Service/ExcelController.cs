@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.ComInterop;
@@ -1048,8 +1049,6 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "Polling reports failed status reads and completed-record removal on that worker. Failed acknowledgements remain for the next poll without changing workbook outcomes or stopping other workers.")]
     private async Task PollAsync()
     {
         while (!_stop.IsCancellationRequested)
@@ -1057,31 +1056,44 @@ internal sealed class ExcelController : IDisposable
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), _stop.Token);
-                await Task.WhenAll(_workers.Values.Select(async worker =>
-                {
-                    var applied = await RefreshWorkerAsync(worker, _stop.Token);
-                    if (applied is { Registration.ReleaseConfirmed: true })
-                    {
-                        try
-                        {
-                            RemoveReleasedWorker(worker);
-                        }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                        {
-                            ReportWorkerRecordRemovalFailure(worker, ex);
-                        }
-                    }
-                    else if (!worker.Registration.Worker.IsAlive())
-                        RetireExitedWorker(worker.Registration);
-                    else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName)
-                        || worker.Registration.Excel is { } excel && OwnedProcessGuard.TryConfirmExited(excel))
-                        await ReleaseEmptyWorkerAsync(worker);
-                }));
+                await Task.WhenAll(_workers.Values.Select(PollWorkerAsync));
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {
                 return;
             }
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "An unconfirmed worker process or failed acknowledgement remains for the next poll. Its status error does not stop other workers.")]
+    private async Task PollWorkerAsync(ExcelWorkerClient worker)
+    {
+        try
+        {
+            var applied = await RefreshWorkerAsync(worker, _stop.Token);
+            if (applied is { Registration.ReleaseConfirmed: true })
+            {
+                try
+                {
+                    RemoveReleasedWorker(worker);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    ReportWorkerRecordRemovalFailure(worker, ex);
+                }
+            }
+            else if (!worker.Registration.Worker.IsAlive())
+                RetireExitedWorker(worker.Registration);
+            else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName)
+                || worker.Registration.Excel is { } excel && OwnedProcessGuard.TryConfirmExited(excel))
+                await ReleaseEmptyWorkerAsync(worker);
+        }
+        catch (Win32Exception error) when (error.NativeErrorCode == WorkerProcess.ErrorAccessDenied)
+        {
+            worker.StatusError = $"The Excel worker process could not be verified: {error.Message}";
+            System.Diagnostics.Trace.TraceWarning("Excel worker {0} process could not be verified: {1}",
+                worker.Registration.Worker.ProcessId, error);
         }
     }
 
