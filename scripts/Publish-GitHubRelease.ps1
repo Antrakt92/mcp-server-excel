@@ -110,11 +110,12 @@ New-Item -ItemType Directory -Path $PublishDirectory | Out-Null
 foreach ($file in $selected) {
     Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $PublishDirectory $file.Name)
 }
-Copy-Item -LiteralPath $MetadataPatch -Destination (Join-Path $PublishDirectory 'release-metadata.patch')
+$stagedMetadataPatch = Join-Path $PublishDirectory 'release-metadata.patch'
+Copy-Item -LiteralPath $MetadataPatch -Destination $stagedMetadataPatch
 $artifacts = @($selected | Sort-Object Name | ForEach-Object {
     [ordered]@{
         name = $_.Name
-        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        sha256 = (Get-FileHash -LiteralPath (Join-Path $PublishDirectory $_.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 })
 $inputs = [ordered]@{
@@ -122,7 +123,7 @@ $inputs = [ordered]@{
     repository = $Repository
     workflowPath = '.github/workflows/release.yml'
     sourceCommit = $SourceCommit
-    metadataPatchSha256 = (Get-FileHash -LiteralPath $MetadataPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+    metadataPatchSha256 = (Get-FileHash -LiteralPath $stagedMetadataPatch -Algorithm SHA256).Hash.ToLowerInvariant()
     releaseCommit = $ReleaseCommit
     tag = $tag
     artifacts = $artifacts

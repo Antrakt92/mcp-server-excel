@@ -42,6 +42,7 @@ public sealed class ReleaseMetadataScriptTests
     [InlineData("draft-later-page", false, true)]
     [InlineData("draft-delayed", false, true)]
     [InlineData("published", false, true)]
+    [InlineData("source-replaced", false, true)]
     [InlineData("missing", false, false)]
     [InlineData("missing", true, true)]
     [InlineData("immutable-missing", true, false)]
@@ -78,6 +79,13 @@ public sealed class ReleaseMetadataScriptTests
                 function global:Start-Sleep {
                     param([int]$Seconds)
                     $global:releaseFixtureCalls.Add("Start-Sleep -Seconds $Seconds")
+                }
+                if ('{{mode}}' -eq 'source-replaced') {
+                    function global:Copy-Item {
+                        param([string]$LiteralPath, [string]$Destination)
+                        Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LiteralPath -Destination $Destination
+                        Set-Content -LiteralPath $LiteralPath -Value 'replaced after staging'
+                    }
                 }
                 function global:gh {
                     param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
@@ -220,16 +228,24 @@ public sealed class ReleaseMetadataScriptTests
                 Assert.Equal(new string('b', 40), inputs.RootElement.GetProperty("releaseCommit").GetString());
                 Assert.Equal("v1.2.3", inputs.RootElement.GetProperty("tag").GetString());
                 Assert.Equal("build-input-record-not-attestation", inputs.RootElement.GetProperty("kind").GetString());
+                var publish = Path.Combine(sandbox, "publish");
                 Assert.Equal(
-                    Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(sandbox, "metadata.patch")))),
+                    Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(publish, "release-metadata.patch")))),
                     inputs.RootElement.GetProperty("metadataPatchSha256").GetString());
                 Assert.Equal(8, inputs.RootElement.GetProperty("artifacts").GetArrayLength());
                 foreach (var artifact in inputs.RootElement.GetProperty("artifacts").EnumerateArray())
                 {
                     var name = artifact.GetProperty("name").GetString()!;
                     Assert.Equal(
-                        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(artifacts, name)))),
+                        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(publish, name)))),
                         artifact.GetProperty("sha256").GetString());
+                }
+                if (mode == "source-replaced")
+                {
+                    Assert.Contains("replaced after staging", File.ReadAllText(Path.Combine(sandbox, "metadata.patch")),
+                        StringComparison.Ordinal);
+                    Assert.Contains("replaced after staging", File.ReadAllText(Path.Combine(artifacts, "excel-mcp-1.2.3.mcpb")),
+                        StringComparison.Ordinal);
                 }
                 var checksumLines = File.ReadAllLines(Path.Combine(sandbox, "publish", "SHA256SUMS"));
                 Assert.Equal(10, checksumLines.Length);
