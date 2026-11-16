@@ -42,6 +42,9 @@ _CLI_INSTRUCTIONS = (
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    for transport in ("mcp", "cli"):
+        parser.addoption(f"--{transport}-skill-dir", metavar="PATH",
+                         help=f"Frozen {transport.upper()} skill directory for historical experiments.")
     parser.addoption("--run-skill-value", action="store_true", help="Enable paid skill/no-skill experiments.")
     parser.addoption("--skill-value-suite", choices=("formatting", "business", "real-world"), default="formatting",
                      help="Select formatting and non-trigger tasks, business tasks, or public workbook cases.")
@@ -304,20 +307,23 @@ def excel_cli_servers() -> Any:
             pytest.fail(f"Owned CLI service cleanup failed: {stopped.stderr or stopped.stdout}")
 
 
-@pytest.fixture(scope="session")
-def excel_mcp_skill_dir() -> str:
-    skill = REPO_ROOT / "artifacts" / "generated-skills" / "excel-mcp-report-formatting"
-    if not (skill / "SKILL.md").is_file():
-        pytest.fail("Generate skills first: pwsh scripts\\Build-AgentSkills.ps1 -GenerateOnly")
-    return str(skill.resolve())
+def _resolve_historical_skill_dir(value: str | None, option: str) -> str:
+    if not value:
+        raise ValueError(f"{option} must point to an explicitly staged historical skill directory.")
+    directory = Path(value).expanduser().resolve()
+    if not (directory / "SKILL.md").is_file():
+        raise ValueError(f"{option} must point to a directory containing SKILL.md: {directory}")
+    return str(directory)
 
 
 @pytest.fixture(scope="session")
-def excel_cli_skill_dir() -> str:
-    skill = REPO_ROOT / "artifacts" / "generated-skills" / "excel-cli-report-formatting"
-    if not (skill / "SKILL.md").is_file():
-        pytest.fail("Generate skills first: pwsh scripts\\Build-AgentSkills.ps1 -GenerateOnly")
-    return str(skill.resolve())
+def excel_mcp_skill_dir(pytestconfig: pytest.Config) -> str:
+    return _resolve_historical_skill_dir(pytestconfig.getoption("--mcp-skill-dir"), "--mcp-skill-dir")
+
+
+@pytest.fixture(scope="session")
+def excel_cli_skill_dir(pytestconfig: pytest.Config) -> str:
+    return _resolve_historical_skill_dir(pytestconfig.getoption("--cli-skill-dir"), "--cli-skill-dir")
 
 
 def build_excel_mcp_eval(

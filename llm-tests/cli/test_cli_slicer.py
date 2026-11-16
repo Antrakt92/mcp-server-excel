@@ -19,11 +19,11 @@ pytestmark = [pytest.mark.aitest, pytest.mark.copilot, pytest.mark.cli]
     (table_slicer_prompt, assert_table_slicers),
     (combined_slicer_prompt, assert_combined_slicers),
 ], ids=["pivot", "table", "combined"])
-async def test_cli_slicer_workflow(copilot_eval, excel_cli_servers, excel_cli_skill_dir, prompt, check):
+async def test_cli_slicer_workflow(copilot_eval, excel_cli_servers, prompt, check):
     path = unique_results_path("slicer-cli")
     agent = build_excel_cli_eval(
         f"cli-{prompt.__name__}", servers=excel_cli_servers,
-        skill_dir=excel_cli_skill_dir, max_turns=30,
+        max_turns=30,
     )
     result = await copilot_eval(agent, prompt(path))
     assert result.success

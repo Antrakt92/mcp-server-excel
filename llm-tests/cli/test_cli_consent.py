@@ -17,12 +17,11 @@ pytestmark = [pytest.mark.aitest, pytest.mark.copilot, pytest.mark.cli]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", SCENARIOS)
-async def test_cli_consent(copilot_eval, excel_cli_servers, excel_cli_skill_dir, consent_workbook, scenario):
+async def test_cli_consent(copilot_eval, excel_cli_servers, consent_workbook, scenario):
     questions = []
     agent = record_questions(build_excel_cli_eval(
         f"cli-consent-{scenario}",
         servers=isolated_cli_servers(excel_cli_servers, consent_workbook.pipe),
-        skill_dir=excel_cli_skill_dir,
     ), questions)
     result = await copilot_eval(agent, consent_prompt(consent_workbook.path, scenario))
     assert_consent_outcome(result, consent_workbook, scenario, questions)
@@ -30,7 +29,7 @@ async def test_cli_consent(copilot_eval, excel_cli_servers, excel_cli_skill_dir,
 
 @pytest.mark.asyncio
 async def test_cli_audit_preserves_existing_unsaved_session(
-    copilot_eval, excel_cli_servers, excel_cli_skill_dir, consent_workbook,
+    copilot_eval, excel_cli_servers, consent_workbook,
 ):
     """CLI-only: its private daemon can have a user session before the agent starts."""
     workbook = consent_workbook
@@ -42,7 +41,6 @@ async def test_cli_audit_preserves_existing_unsaved_session(
     agent = record_questions(build_excel_cli_eval(
         "cli-audit-existing-session",
         servers=isolated_cli_servers(excel_cli_servers, workbook.pipe),
-        skill_dir=excel_cli_skill_dir,
     ), questions)
     result = await copilot_eval(agent, consent_prompt(workbook.path, "audit"))
     assert result.success, result.error

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from copilot import CopilotSession
 from pytest_skill_engineering.copilot.result import CopilotResult, ToolCall, Turn
 
-from conftest import build_excel_cli_eval, build_excel_mcp_eval, assert_cli_exit_codes
+from conftest import _resolve_historical_skill_dir, build_excel_cli_eval, build_excel_mcp_eval, assert_cli_exit_codes
 from consent_scenarios import isolated_cli_servers
 from skill_discovery import discover_skills
 
@@ -77,6 +77,16 @@ class DiscoveryPreflightTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EvalHarnessTests(unittest.TestCase):
+    def test_historical_experiment_requires_explicit_skill_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, r"--mcp-skill-dir.*explicitly staged"):
+                _resolve_historical_skill_dir(None, "--mcp-skill-dir")
+            with self.assertRaisesRegex(ValueError, r"--mcp-skill-dir.*SKILL.md"):
+                _resolve_historical_skill_dir(directory, "--mcp-skill-dir")
+            skill = Path(directory) / "SKILL.md"
+            skill.write_text("# Frozen skill input\n", encoding="utf-8")
+            self.assertEqual(_resolve_historical_skill_dir(directory, "--mcp-skill-dir"), str(skill.parent.resolve()))
+
     def test_builders_use_current_single_attempt_api(self):
         for builder in (build_excel_cli_eval, build_excel_mcp_eval):
             with self.subTest(builder=builder.__name__):
