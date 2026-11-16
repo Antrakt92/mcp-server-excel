@@ -1864,33 +1864,6 @@ public sealed class SessionManager : IDisposable
 
     internal Action? BeforeCloseSessionHookForTests { get; set; }
 
-    /// <summary>
-    /// Releases owned sessions whose workbooks were all closed in Excel, without saving.
-    /// Sessions whose state cannot be confirmed stay open.
-    /// </summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "The read-only check only decides whether a session can be released; when it fails, the session stays open and listed so the user still decides. Close failures propagate.")]
-    internal void CloseSessionsClosedInExcel()
-    {
-        foreach (var (sessionId, session) in _activeSessions.ToArray())
-        {
-            if (session is not ExcelBatch owned || GetActiveOperationCount(sessionId) > 0)
-                continue;
-            bool allClosed;
-            try
-            {
-                allClosed = owned.AreAllWorkbooksClosedInExcel(ClosedInExcelCheckTimeout);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not check whether session {SessionId} was closed in Excel; it stays open", sessionId);
-                continue;
-            }
-            if (allClosed)
-                CloseSession(sessionId);
-        }
-    }
-
     private static readonly TimeSpan ClosedInExcelCheckTimeout = TimeSpan.FromSeconds(5);
 
     private static string DescribeExcelProcess(IExcelBatch session) =>
