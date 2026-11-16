@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.1.0) | 2026-11-16 | Cell inspection and edits, write receipts, and workbook recovery |
 | [5.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.0.0) | 2026-11-12 | Workbook and file safety, faster DAX reads, and recoverable Excel sessions |
 | [4.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.1.0) | 2026-11-05 | Native exit history, clearer failure diagnostics and safer disconnected batches |
 | [4.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.0.0) | 2026-11-04 | Known-password VBA authentication, CLI stdin migration and worksheet screenshot fixes |
@@ -22,6 +23,33 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.1.0 — 2026-11-16
+
+This release adds two range commands for inspecting and editing specific cells, and operation receipts for checking whether a save or table append completed after a timeout. It includes upstream ExcelMCP 2.6.12.
+
+### Range inspection and edits
+
+- `inspect-cells` (MCP `range_read`, CLI `range inspect-cells`) reports values, formulas and displayed text for selected cells.
+- `range.patch-cells` updates only the specified cells. Provide expected cell contents to detect conflicting edits before writing. The result identifies cells that need inspection if Excel interrupts a write.
+- Merging cells checks whether the merge would discard existing contents. To discard them deliberately, set `overwrite_policy` to `allow` in MCP or use `--overwrite-policy allow` in the CLI.
+- CSV writes and appends preserve quoted commas, escaped quotes and embedded newlines. Malformed input reports its source line before any cells are written. A validation formula longer than Excel’s 255-character limit is rejected before replacing the current rule.
+
+### Saves and recovery
+
+- After a timeout or cancellation, use `session.operation-result` to check the receipt for a save or table append before retrying. Save status distinguishes a confirmed save from a workbook that still needs inspection.
+- Timed-out Save As requests release an unused destination once Excel confirms the workbook stayed at its original path. Session status also reports the verified workbook path when available.
+- Stale discovery results and alternate hard-link paths are checked before opening a workbook. Workers retry temporary Windows access errors when checking their controller so they can still recover or reveal retained workbooks when its exit is confirmed.
+
+### Worksheets and bounded reads
+
+- Copying a worksheet next to hidden tabs renames the new copy. Moving a worksheet to the end puts it after the last tab, including chart sheets.
+- Named-range, table and PivotTable reads check the size of the requested result before returning it. Power Query evaluation reads in blocks, checks its response budget, and cleans up temporary query objects. To preview a large query, use `Table.FirstN` or `Table.SelectColumns`.
+
+### CLI and dependencies
+
+- CLI batch commands accept mixed-case names. VBA password actions and aliases enforce the stdin-only policy consistently. The plugin launcher supports Windows Node installations with `npx.exe`, including Volta, while preserving quoted arguments and preferring `npx.cmd` when available.
+- The Python evaluation lockfile updates `opentelemetry-api` from 1.45.1 to 1.45.2 to address [GHSA-mf5v-w3w3-f6cg](https://github.com/advisories/GHSA-mf5v-w3w3-f6cg). Evaluation tests run without the retired generated skills. The portable .NET runtime packages are unchanged.
 
 ## 5.0.0 — 2026-11-12
 
