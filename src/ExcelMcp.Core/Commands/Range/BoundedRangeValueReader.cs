@@ -1,0 +1,100 @@
+using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.Core.Utilities;
+using Excel = Microsoft.Office.Interop.Excel;
+
+namespace Sbroenne.ExcelMcp.Core.Commands.Range;
+
+/// <summary>Reads native values from one rectangle without materializing its entire COM array.</summary>
+internal static class BoundedRangeValueReader
+{
+    internal static void EnsureCellLimit((int Rows, int Columns) size) =>
+        RangeReadWindow.EnsureCellLimit(size.Rows, size.Columns, RangeReadWindow.MaximumReadCells,
+            "Use range get-values-page with the named range or a table worksheet range. No values were read.");
+
+    internal static List<List<object?>> Read(
+        Excel.Range range, (int Rows, int Columns) size, RangeReadBudget budget, CancellationToken ct,
+        Func<int, bool>? includeRow = null, Func<object?, object?>? convertValue = null)
+    {
+        EnsureCellLimit(size);
+        int[]? outputRows = null;
+        int rowCount = size.Rows;
+        if (includeRow is not null)
+        {
+            outputRows = new int[size.Rows];
+            rowCount = 0;
+            for (int row = 0; row < size.Rows; row++)
+            {
+                ct.ThrowIfCancellationRequested();
+                outputRows[row] = includeRow(row) ? rowCount++ : -1;
+            }
+        }
+
+        budget.ReserveGrid(rowCount, size.Columns, includeFormulas: false);
+        var rows = new List<List<object?>>(rowCount);
+        if (rowCount == 0)
+            return rows;
+        for (int row = 0; row < rowCount; row++)
+            rows.Add(new List<object?>(size.Columns));
+
+        Excel.Range? cells = null;
+        try
+        {
+            cells = range.Cells;
+            foreach (var window in RangeReadWindow.Tiles(size.Rows, size.Columns))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (outputRows is not null && !IncludesRow(outputRows, window))
+                    continue;
+
+                Excel.Range? anchor = null;
+                Excel.Range? tile = null;
+                try
+                {
+                    anchor = cells[window.RowOffset + 1, window.ColumnOffset + 1];
+                    tile = anchor.Resize[window.Rows, window.Columns];
+                    var grid = ExcelValueNormalizer.Normalize((object?)tile.Value2);
+                    if (grid.RowCount != window.Rows || grid.ColumnCount != window.Columns)
+                        throw new InvalidOperationException("Excel returned dimensions different from the requested read tile.");
+
+                    for (int row = 0; row < window.Rows; row++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        int sourceRow = window.RowOffset + row;
+                        int outputRow = outputRows?[sourceRow] ?? sourceRow;
+                        if (outputRow < 0)
+                            continue;
+
+                        foreach (var raw in grid.Values[row])
+                        {
+                            var value = convertValue is null ? raw : convertValue(raw);
+                            budget.AddScalar(value);
+                            rows[outputRow].Add(value);
+                        }
+                    }
+                }
+                finally
+                {
+                    ComUtilities.Release(ref tile);
+                    ComUtilities.Release(ref anchor);
+                }
+            }
+
+            return rows;
+        }
+        finally
+        {
+            ComUtilities.Release(ref cells);
+        }
+    }
+
+    private static bool IncludesRow(int[] outputRows, RangeReadTile tile)
+    {
+        int end = tile.RowOffset + tile.Rows;
+        for (int row = tile.RowOffset; row < end; row++)
+        {
+            if (outputRows[row] >= 0)
+                return true;
+        }
+        return false;
+    }
+}

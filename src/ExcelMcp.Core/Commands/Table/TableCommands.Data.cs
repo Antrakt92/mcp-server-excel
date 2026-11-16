@@ -103,7 +103,7 @@ public partial class TableCommands
                 destination.Value2 = values;
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
-            catch (Exception ex) when (expansionAttempted && CreatedObjectFailure.CanReport(ex))
+            catch (Exception ex) when (expansionAttempted)
             {
                 string state = writeAttempted
                     ? "Writing the new rows began. Their values may have changed."
@@ -184,10 +184,27 @@ public partial class TableCommands
             try
             {
                 table = FindTable(ctx.Book, tableName);
+                dataBodyRange = table.DataBodyRange;
+                var size = dataBodyRange is null ? (Rows: 0, Columns: 0) : RangeHelpers.GetDimensions(dataBodyRange);
+                BoundedRangeValueReader.EnsureCellLimit(size);
 
                 listColumns = table.ListColumns;
                 int columnCount = listColumns.Count;
+                if (dataBodyRange is not null && size.Columns != columnCount)
+                    throw new InvalidOperationException("Excel returned a table body whose column count differs from its headers.");
                 result.ColumnCount = columnCount;
+                var budget = new RangeReadBudget();
+                budget.AddScalar(result.FilePath);
+                budget.AddScalar(tableName);
+
+                if (dataBodyRange is not null)
+                {
+                    if (visibleOnly)
+                        listRows = table.ListRows;
+                    int listRowCount = listRows?.Count ?? 0;
+                    result.Data = BoundedRangeValueReader.Read(dataBodyRange, size, budget, ct,
+                        visibleOnly ? row => IsListRowVisible(listRows, listRowCount, row + 1) : null);
+                }
 
                 for (int i = 1; i <= columnCount; i++)
                 {
@@ -198,55 +215,13 @@ public partial class TableCommands
                         string? columnName = column.Name;
                         if (!string.IsNullOrEmpty(columnName))
                         {
+                            budget.AddScalar(columnName);
                             result.Headers.Add(columnName);
                         }
                     }
                     finally
                     {
                         ComUtilities.Release(ref column);
-                    }
-                }
-
-                dataBodyRange = table.DataBodyRange;
-                if (dataBodyRange == null)
-                {
-                    result.Success = true;
-                    result.RowCount = 0;
-                    return result;
-                }
-
-                object? rawValues = dataBodyRange.Value2;
-                if (rawValues is null && RangeHelpers.GetDimensions(dataBodyRange) != (1, 1))
-                    throw new InvalidOperationException("Excel did not return values for the table's data range.");
-
-                if (visibleOnly)
-                    listRows = table.ListRows;
-                int listRowCount = listRows?.Count ?? 0;
-
-                if (rawValues is object[,] array2D)
-                {
-                    int rows = array2D.GetLength(0);
-                    int cols = array2D.GetLength(1);
-
-                    for (int r = 1; r <= rows; r++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        if (visibleOnly && !IsListRowVisible(listRows, listRowCount, r))
-                            continue;
-
-                        var row = new List<object?>(cols);
-                        for (int c = 1; c <= cols; c++)
-                        {
-                            row.Add(array2D[r, c]);
-                        }
-                        result.Data.Add(row);
-                    }
-                }
-                else
-                {
-                    if (!visibleOnly || IsListRowVisible(listRows, listRowCount, 1))
-                    {
-                        result.Data.Add([rawValues]);
                     }
                 }
 
@@ -257,8 +232,8 @@ public partial class TableCommands
             finally
             {
                 ComUtilities.Release(ref listRows);
-                ComUtilities.Release(ref dataBodyRange);
                 ComUtilities.Release(ref listColumns);
+                ComUtilities.Release(ref dataBodyRange);
                 ComUtilities.Release(ref table);
             }
         });

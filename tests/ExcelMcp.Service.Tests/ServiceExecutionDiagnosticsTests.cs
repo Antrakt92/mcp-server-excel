@@ -10,6 +10,35 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelMcpServiceErrorTests
 {
     [Theory]
+    [InlineData(unchecked((int)0x800A03EC), "ComInterop")]
+    [InlineData(unchecked((int)0x80010108), "ExcelDisconnected")]
+    public async Task ProcessAsync_PostMutationFailureRetainsUnknownOutcomeAndNativeCause(int hresult, string expectedCategory)
+    {
+        using var service = new ExcelMcpService();
+        var cause = CreateDiagnosticSnapshotFailure(hresult);
+        var batch = new FakeBatch
+        {
+            ExecuteException = new OperationCompletionUnconfirmedException("Could not confirm worksheet deletion.", cause)
+        };
+        const string sessionId = "delete-follow-up-failure";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest
+        {
+            Command = "sheet.delete",
+            SessionId = sessionId,
+            Args = """{"sheetName":"Target"}"""
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal(expectedCategory, response.ErrorCategory);
+        Assert.Equal($"0x{hresult:X8}", response.HResult);
+        Assert.Contains(cause.Message, response.InnerError);
+        using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+    }
+
+    [Theory]
     [InlineData(unchecked((int)0x800A03EC), false)]
     [InlineData(unchecked((int)0x800706BE), true)]
     public async Task ProcessAsync_MarkedAggregateAddsExecutionFactsWithoutChangingOriginalFailure(int hresult, bool disconnected)

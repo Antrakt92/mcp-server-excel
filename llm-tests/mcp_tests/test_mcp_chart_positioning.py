@@ -13,11 +13,11 @@ pytestmark = [pytest.mark.aitest, pytest.mark.copilot, pytest.mark.mcp]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("below", [True, False], ids=["below-data", "right-of-table"])
-async def test_mcp_chart_position(copilot_eval, excel_mcp_servers, excel_mcp_skill_dir, below):
+async def test_mcp_chart_position(copilot_eval, excel_mcp_servers, below):
     path = unique_results_path("chart-mcp")
     agent = build_excel_mcp_eval(
         f"mcp-chart-{'below' if below else 'right'}",
-        servers=excel_mcp_servers, skill_dir=excel_mcp_skill_dir,
+        servers=excel_mcp_servers,
     )
     result = await copilot_eval(agent, chart_prompt(path, below=below))
     assert result.success

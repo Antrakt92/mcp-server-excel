@@ -8,6 +8,7 @@ namespace Sbroenne.ExcelMcp.Service.Workers;
 
 internal sealed record WorkerProcess(int ProcessId, long StartedAtUtcFileTime)
 {
+    internal const int ErrorAccessDenied = 5;
     internal static Action<Process>? BeforeIdentityReadForTests { get; set; }
 
     internal static WorkerProcess Current
@@ -47,6 +48,13 @@ internal sealed record WorkerProcess(int ProcessId, long StartedAtUtcFileTime)
             }
             catch (InvalidOperationException) when (process.HasExited)
             {
+                return false;
+            }
+            catch (Win32Exception error) when (error.NativeErrorCode == ErrorAccessDenied
+                && OwnedProcessGuard.TryConfirmExited(new ExcelProcessIdentity(ProcessId, StartedAtUtcFileTime)))
+            {
+                // The full process handle or identity read can race exit. Only
+                // the exact process's limited-right probe can resolve that case.
                 return false;
             }
         }

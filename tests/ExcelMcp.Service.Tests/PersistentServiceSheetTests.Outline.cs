@@ -168,7 +168,7 @@ public sealed partial class PersistentServiceSheetTests
     }
 
     [Fact]
-    public void Group_InvalidAxis_DoesNotDefaultToRows()
+    public async Task Group_InvalidAxis_DoesNotDefaultToRows()
     {
         var batch = _fixture.BatchToken;
         var sheetName = _fixture.CreateTestSheet(batch);
@@ -178,13 +178,10 @@ public sealed partial class PersistentServiceSheetTests
         RequireSuccess(before);
         Assert.Equal(2, before.OutlineLevel);
 
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            _sheetCommands.Group(
-                batch,
-                sheetName,
-                "2:5",
-                (OutlineAxis)0));
-        Assert.Contains("axis", exception.Message, StringComparison.OrdinalIgnoreCase);
+        var response = await _fixture.SendForFailureAsync("worksheetstyle.group",
+            new { sheetName, rangeAddress = "2:5", axis = 0 });
+        Assert.Equal("InvalidInput", response.ErrorCategory);
+        Assert.Contains("axis", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         var info = _sheetCommands.GetOutlineInfo(
             batch,
             sheetName,

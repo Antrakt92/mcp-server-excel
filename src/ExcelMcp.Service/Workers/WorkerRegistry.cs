@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
@@ -46,8 +47,8 @@ internal sealed class WorkerRegistry
             var registration = ReadRecord(path);
             if (registration is null)
                 continue;
-            if (registration.ReleaseConfirmed ? registration.Controller.IsAlive()
-                : registration.Worker.IsAlive()
+            if (registration.ReleaseConfirmed ? IsAliveOrUnconfirmed(registration.Controller)
+                : IsAliveOrUnconfirmed(registration.Worker)
                 || registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
             {
                 if (registrations.Count == 128)
@@ -56,10 +57,24 @@ internal sealed class WorkerRegistry
             }
             // Only the owning controller can acknowledge a completed record while it is alive.
             // The worker may have replaced this file with its final status after we opened it.
-            else if (!registration.Controller.IsAlive())
+            else if (!IsAliveOrUnconfirmed(registration.Controller))
                 File.Delete(path);
         }
         return registrations;
+    }
+
+    private static bool IsAliveOrUnconfirmed(WorkerProcess process)
+    {
+        try
+        {
+            return process.IsAlive();
+        }
+        catch (Win32Exception error) when (error.NativeErrorCode == WorkerProcess.ErrorAccessDenied)
+        {
+            // Lack of access leaves ownership unconfirmed. Retain the record and
+            // keep reading other records. Pipe authentication still uses IsAlive.
+            return true;
+        }
     }
 
     internal WorkerRegistration? Read(string pipeName) => ReadRecord(GetPath(pipeName));

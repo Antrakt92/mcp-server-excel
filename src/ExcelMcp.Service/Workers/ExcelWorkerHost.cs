@@ -300,8 +300,6 @@ internal sealed class ExcelWorkerHost : IDisposable
                 ? _service.ResolveLateNativeResponseAsync(call.Request) : null;
             lock (_stateLock)
             {
-                _pendingOperation = null;
-                _pendingCommand = null;
                 if (lateCompletion is not null && _registration.Generation == call.Generation)
                 {
                     if (_lateCompletions.Count >= 16)
@@ -328,8 +326,16 @@ internal sealed class ExcelWorkerHost : IDisposable
                     response = response.WithCompletionFailure(call.Request, ex);
                 }
             }
-            var execution = Completed(closeTimings is null ? response : response.WithCloseTimings(closeTimings.Snapshot()), accepted: true);
-            return execution with { HasLateNativeCompletion = lateCompletion is not null };
+            if (closeTimings is not null)
+                response = response.WithCloseTimings(closeTimings.Snapshot());
+            lock (_stateLock)
+            {
+                // Until the new session/status snapshot is available, a control
+                // read can still see the previous rows with no pending native work.
+                _pendingOperation = null;
+                _pendingCommand = null;
+                return new(response, true, SnapshotCore(), HasLateNativeCompletion: lateCompletion is not null);
+            }
         }
 
         finally

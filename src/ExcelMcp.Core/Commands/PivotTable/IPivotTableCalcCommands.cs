@@ -33,7 +33,8 @@ public interface IPivotTableCalcCommands
     // === ANALYSIS OPERATIONS (WITH DATA VALIDATION) ===
 
     /// <summary>
-    /// Gets current PivotTable data as 2D array for LLM analysis
+    /// Gets current PivotTable data as a 2D array within the response budget. For larger reports,
+    /// use range get-values-page on the PivotTable worksheet range.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="pivotTableName">Name of the PivotTable</param>

@@ -160,7 +160,7 @@ public static partial class ExcelBatchTool
                 if (!outcome.Success)
                 {
                     firstFailureCategory ??= outcome.Error?["category"]?.GetValue<string>() ?? "OperationFailed";
-                    if (stop_on_error || outcome.MayStillBeRunning)
+                    if (stop_on_error || outcome.CompletionUnconfirmed)
                         break;
                 }
                 // Keep this complete result, including failure evidence. The budget gates the next dispatch.

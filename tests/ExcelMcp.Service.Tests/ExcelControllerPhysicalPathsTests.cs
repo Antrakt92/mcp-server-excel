@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.Service.Workers;
@@ -14,6 +15,48 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("RequiresExcel", "false")]
 public sealed class ExcelControllerPhysicalPathsTests
 {
+    [Fact]
+    public void Controller_PublishesKnownWorkerReservationThroughHardLink()
+    {
+        var root = Path.Join(Path.GetTempPath(), "excelmcp-controller-publish-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var primary = Record.Exception(() =>
+        {
+            var original = Path.Join(root, "original.xlsx");
+            var reported = Path.Join(root, "reported.xlsx");
+            File.WriteAllText(original, "synthetic");
+            if (!CreateHardLink(reported, original, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+
+            using var controller = new ExcelController(launcher: new("unused.exe", []));
+            var process = WorkerProcess.Current;
+            var generation = Guid.NewGuid().ToString("N");
+            var pipe = "excelmcp-worker-" + generation;
+            var worker = new ExcelWorkerClient(
+                new WorkerRegistration(pipe, process, process, generation, WorkerRegistry.Build, null), process, generation);
+            const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+            var type = typeof(ExcelController);
+            var claims = type.GetField("_paths", hidden)!.GetValue(controller)!;
+            var reservation = Activator.CreateInstance(type.GetNestedType("PathReservation", BindingFlags.NonPublic)!, pipe, null)!;
+            Assert.True((bool)claims.GetType().GetMethod("TryAdd", hidden)!.Invoke(claims, [original, reservation])!);
+
+            type.GetMethod("RecordPath", hidden)!.Invoke(controller, [worker, reported, "session"]);
+
+            var lookup = claims.GetType().GetMethod("TryGetValue", hidden)!;
+            foreach (var path in new[] { original, reported })
+            {
+                object?[] args = [path, null];
+                Assert.True((bool)lookup.Invoke(claims, args)!);
+                Assert.Equal("session", args[1]!.GetType().GetProperty("SessionId")!.GetValue(args[1]));
+            }
+            Assert.Equal("synthetic", File.ReadAllText(reported));
+        });
+        var cleanup = Record.Exception(() => Directory.Delete(root, recursive: true));
+        if (primary is not null && cleanup is not null) throw new AggregateException(primary, cleanup);
+        if (primary is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((primary ?? cleanup)!).Throw();
+    }
+
     [Theory(Timeout = 30000)]
     [InlineData(false)]
     [InlineData(true)]

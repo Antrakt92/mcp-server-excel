@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -99,7 +100,15 @@ public partial class NamedRangeCommands
                             info.ValueOmittedReason = $"{ex.Message} (HRESULT 0x{ex.HResult:X8}).";
                         }
                         if (refersToRange is not null)
-                            PopulateListValuePreview(refersToRange, info);
+                        {
+                            if (RangeHelpers.BelongsToWorkbook(refersToRange, ctx.Book))
+                                PopulateListValuePreview(refersToRange, info);
+                            else
+                            {
+                                info.ValueType = "Unavailable";
+                                info.ValueOmittedReason = RangeHelpers.ExternalNamedRangeMessage(name);
+                            }
+                        }
 
                         result.NamedRanges.Add(info);
                     }
@@ -263,6 +272,7 @@ public partial class NamedRangeCommands
                 }
 
                 refersToRange = nameObj.RefersToRange;
+                RangeHelpers.RequireNamedRangeWorkbook(refersToRange, ctx.Book, name);
 
                 // Calculation suppressed here (not in ExcelWriteGuard) because Data Model ops need it enabled
                 originalCalculation = (int)ctx.App.Calculation;
@@ -317,26 +327,37 @@ public partial class NamedRangeCommands
 
                 string refersTo = ((object?)nameObj.RefersTo)?.ToString() ?? "";
                 refersToRange = nameObj.RefersToRange;
-                object? rawValue = refersToRange?.Value2;
-                object? value;
-                string valueType;
-                if (rawValue is object[,] array2D)
+                var budget = new RangeReadBudget();
+                budget.AddScalar(name);
+                budget.AddScalar(refersTo);
+                if (refersToRange is not null)
                 {
-                    value = ConvertArrayToList(array2D);
-                    valueType = "Array";
-                }
-                else
-                {
-                    value = ConvertValueForJson(rawValue);
-                    valueType = rawValue?.GetType().Name ?? "null";
+                    RangeHelpers.RequireNamedRangeWorkbook(refersToRange, ctx.Book, name);
+                    if (GetAreaCount(refersToRange) != 1)
+                        throw new ArgumentException("Named range reads require one rectangular range. Read each area separately.", nameof(name));
+
+                    var size = RangeHelpers.GetDimensions(refersToRange);
+                    if (size != (1, 1))
+                    {
+                        return new NamedRangeValue
+                        {
+                            Name = name,
+                            RefersTo = refersTo,
+                            Value = BoundedRangeValueReader.Read(refersToRange, size, budget, ct, convertValue: ConvertValueForJson),
+                            ValueType = "Array"
+                        };
+                    }
                 }
 
+                object? rawValue = refersToRange?.Value2;
+                var value = ConvertValueForJson(rawValue);
+                budget.AddScalar(value);
                 return new NamedRangeValue
                 {
                     Name = name,
                     RefersTo = refersTo,
                     Value = value,
-                    ValueType = valueType
+                    ValueType = rawValue?.GetType().Name ?? "null"
                 };
             }
             finally

@@ -64,6 +64,7 @@ public interface ISheetCommands
 
     /// <summary>
     /// Deletes a worksheet.
+    /// Reports a failure if Excel leaves the original worksheet in the workbook.
     /// Removes all sheet contents and may break dependent references. No tool-level undo;
     /// check the intended sheet and its dependencies before deleting.
     /// Throws exception on error.

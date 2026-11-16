@@ -78,7 +78,7 @@ public interface ISheetStyleCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet</param>
     /// <param name="isProtected">Whether the worksheet should be protected</param>
-    /// <param name="password">Optional password for protecting/unprotecting the sheet</param>
+    /// <param name="password">Password for protecting or unprotecting the worksheet. Unprotect uses an empty password when omitted, so Excel does not prompt.</param>
     /// <param name="options">Optional native protection permissions; valid only when protecting. Nested JSON uses camelCase.</param>
     [ServiceAction("set-protection")]
     OperationResult SetProtection(

@@ -135,6 +135,8 @@ public static class RangeHelpers
                 names = book.Names;
                 name = ResolveNameByExactKey(names, rangeAddress);
                 refersToRange = name.RefersToRange;
+                if (refersToRange is not null)
+                    RequireNamedRangeWorkbook(refersToRange, book, rangeAddress);
                 var result = refersToRange;
                 refersToRange = null;
                 return result;
@@ -186,6 +188,32 @@ public static class RangeHelpers
     /// </summary>
     public static Excel.Range? ResolveRange(Excel.Workbook book, string sheetName, string rangeAddress) =>
         ResolveRange(book, sheetName, rangeAddress, out _);
+
+    internal static bool BelongsToWorkbook(Excel.Range range, Excel.Workbook workbook)
+    {
+        Excel.Worksheet? sheet = null;
+        Excel.Workbook? owner = null;
+        try
+        {
+            sheet = range.Worksheet;
+            owner = (Excel.Workbook)sheet.Parent;
+            return ReferenceEquals(owner, workbook);
+        }
+        finally
+        {
+            ComUtilities.Release(ref owner);
+            ComUtilities.Release(ref sheet);
+        }
+    }
+
+    internal static void RequireNamedRangeWorkbook(Excel.Range range, Excel.Workbook workbook, string name)
+    {
+        if (!BelongsToWorkbook(range, workbook))
+            throw new OperationFailureException(OperationFailureCategory.InvalidInput, ExternalNamedRangeMessage(name));
+    }
+
+    internal static string ExternalNamedRangeMessage(string name) =>
+        $"Named range '{name}' refers to cells in another workbook. Access those cells through the target workbook's session.";
 
     /// <summary>
     /// Gets appropriate error message for range resolution failure

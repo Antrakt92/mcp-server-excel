@@ -13,11 +13,11 @@ pytestmark = [pytest.mark.aitest, pytest.mark.copilot, pytest.mark.cli]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("below", [True, False], ids=["below-data", "right-of-table"])
-async def test_cli_chart_position(copilot_eval, excel_cli_servers, excel_cli_skill_dir, below):
+async def test_cli_chart_position(copilot_eval, excel_cli_servers, below):
     path = unique_results_path("chart-cli")
     agent = build_excel_cli_eval(
         f"cli-chart-{'below' if below else 'right'}",
-        servers=excel_cli_servers, skill_dir=excel_cli_skill_dir,
+        servers=excel_cli_servers,
     )
     result = await copilot_eval(agent, chart_prompt(path, below=below))
     assert result.success

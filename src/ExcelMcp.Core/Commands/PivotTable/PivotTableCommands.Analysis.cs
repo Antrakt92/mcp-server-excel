@@ -1,5 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -30,38 +31,67 @@ public partial class PivotTableCommands
                 tableRange = pivot.TableRange2;
                 reportRange = pivot.TableRange1;
 
-                var values = ExcelValueNormalizer.Normalize((object?)tableRange.Value2);
-                var report = ExcelValueNormalizer.Normalize((object?)reportRange.Value2);
-                var headerRow = report.Values.FirstOrDefault() ?? [];
-                bool hasRowFields = rowFields.Count > 0;
-                bool hasGrandTotalRow = hasRowFields && pivot.ColumnGrand && report.RowCount > 1;
-                int firstDataColumn = hasRowFields ? 1 : 0;
-                var columnHeaders = headerRow
-                    .Skip(firstDataColumn)
-                    .Select(value => value?.ToString() ?? string.Empty)
-                    .ToList();
-                int lastDataRow = report.RowCount;
-                if (hasGrandTotalRow)
-                    lastDataRow--;
+                var size = RangeHelpers.GetDimensions(tableRange);
+                RangeReadWindow.EnsureCellLimit(size.Rows, size.Columns, RangeReadWindow.MaximumReadCells,
+                    "Use range get-values-page with the PivotTable worksheet range. No values were read.");
 
-                var rowHeaders = hasRowFields
-                    ? report.Values
-                        .Skip(1)
-                        .Take(lastDataRow - 1)
-                        .Select(row => row.Count > 0 ? row[0]?.ToString() ?? string.Empty : string.Empty)
-                        .ToList()
-                    : [];
+                // TableRange2 includes the report filters. TableRange1 identifies the report within it.
+                var reportSize = RangeHelpers.GetDimensions(reportRange);
+                int reportFirstRow = reportRange.Row - tableRange.Row;
+                int reportFirstColumn = reportRange.Column - tableRange.Column;
+                int reportEndRow = reportFirstRow + reportSize.Rows;
+                int reportEndColumn = reportFirstColumn + reportSize.Columns;
+                if (reportFirstRow < 0 || reportFirstColumn < 0 ||
+                    reportEndRow > size.Rows || reportEndColumn > size.Columns)
+                {
+                    throw new InvalidOperationException("Excel returned a PivotTable report outside its full worksheet range.");
+                }
+
+                bool hasRowFields = rowFields.Count > 0;
+                bool hasGrandTotalRow = hasRowFields && pivot.ColumnGrand && reportSize.Rows > 1;
+                int firstDataColumn = reportFirstColumn + (hasRowFields ? 1 : 0);
+                int dataEndRow = reportEndRow - (hasGrandTotalRow ? 1 : 0);
+
+                var budget = new RangeReadBudget();
+                budget.AddScalar(batch.WorkbookPath);
+                budget.AddScalar(pivotTableName);
+                var values = BoundedRangeValueReader.Read(tableRange, size, budget, ct);
+
+                var headerRow = values[reportFirstRow];
+                var columnHeaders = new List<string>(reportEndColumn - firstDataColumn);
+                for (int column = firstDataColumn; column < reportEndColumn; column++)
+                {
+                    string header = headerRow[column]?.ToString() ?? string.Empty;
+                    budget.AddScalar(header);
+                    columnHeaders.Add(header);
+                }
+
+                var rowHeaders = new List<string>();
+                if (hasRowFields)
+                {
+                    for (int row = reportFirstRow + 1; row < dataEndRow; row++)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        string header = values[row][reportFirstColumn]?.ToString() ?? string.Empty;
+                        budget.AddScalar(header);
+                        rowHeaders.Add(header);
+                    }
+                }
+
                 var grandTotals = new Dictionary<string, object?>(StringComparer.Ordinal);
                 if (hasGrandTotalRow)
                 {
-                    var totalRow = report.Values[^1];
-                    for (int columnIndex = firstDataColumn;
-                         columnIndex < headerRow.Count && columnIndex < totalRow.Count;
-                         columnIndex++)
+                    var totalRow = values[reportEndRow - 1];
+                    for (int index = 0; index < columnHeaders.Count; index++)
                     {
-                        var header = headerRow[columnIndex]?.ToString();
+                        string header = columnHeaders[index];
                         if (!string.IsNullOrWhiteSpace(header))
-                            grandTotals[header] = totalRow[columnIndex];
+                            grandTotals[header] = totalRow[firstDataColumn + index];
+                    }
+                    foreach (var (header, value) in grandTotals)
+                    {
+                        budget.AddScalar(header);
+                        budget.AddScalar(value);
                     }
                 }
 
@@ -69,11 +99,11 @@ public partial class PivotTableCommands
                 {
                     Success = true,
                     PivotTableName = pivotTableName,
-                    Values = values.Values,
+                    Values = values,
                     ColumnHeaders = columnHeaders,
                     RowHeaders = rowHeaders,
-                    DataRowCount = values.RowCount,
-                    DataColumnCount = values.ColumnCount,
+                    DataRowCount = size.Rows,
+                    DataColumnCount = size.Columns,
                     GrandTotals = grandTotals,
                     FilePath = batch.WorkbookPath
                 };

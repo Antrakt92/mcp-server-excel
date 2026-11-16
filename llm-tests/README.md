@@ -83,11 +83,16 @@ uv run python -m unittest test_workbook_assertions.py test_skill_value_preparati
 ```
 
 Real SDK skill-discovery checks require GitHub access but neither Excel nor
-model messages:
+model messages. To test both historical treatments, pass the directories that
+contain the frozen MCP and CLI `SKILL.md` files:
 
 ```powershell
-uv run pytest test_skill_discovery.py -v
+$historicalSkills = @('--mcp-skill-dir', 'C:\evidence\excel-mcp-report-formatting',
+    '--cli-skill-dir', 'C:\evidence\excel-cli-report-formatting')
+uv run pytest test_skill_discovery.py @historicalSkills -v
 ```
+
+Without those options, discovery checks only the tool-only baseline.
 
 Retained live scenarios exercise chart positioning, slicer outcomes, and
 permission handling. Run only affected files. For example:
@@ -187,7 +192,7 @@ It is skipped unless explicitly enabled:
 
 ```powershell
 uv run pytest test_skill_value.py --collect-only -q
-uv run pytest test_skill_value.py --run-skill-value --skill-value-output TestResults\skill-value-new-run --aitest-json TestResults\skill-value-new-run-native.json -v
+uv run pytest test_skill_value.py --run-skill-value @historicalSkills --skill-value-output TestResults\skill-value-new-run --aitest-json TestResults\skill-value-new-run-native.json -v
 ```
 
 Choose a **new** evidence directory and JSON filename for every invocation.

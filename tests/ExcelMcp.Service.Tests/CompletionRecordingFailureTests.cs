@@ -41,7 +41,7 @@ public sealed class CompletionRecordingFailureTests
             wrapped.HResult, wrapped.InnerError, wrapped.PartialState);
 
         Assert.False(batchOutcome.Success);
-        Assert.Equal(mustStop, batchOutcome.MayStillBeRunning);
+        Assert.Equal(mustStop, batchOutcome.CompletionUnconfirmed);
         Assert.Equal("ServiceUnavailable", batchOutcome.Error!["category"]!.GetValue<string>());
         using var state = JsonDocument.Parse(wrapped.PartialState!);
         Assert.Equal(mustStop ? "unknown" : "completed", state.RootElement.GetProperty("outcome").GetString());

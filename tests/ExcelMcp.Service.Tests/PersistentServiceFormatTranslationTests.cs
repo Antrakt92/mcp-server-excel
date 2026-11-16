@@ -233,7 +233,8 @@ public sealed class PersistentServiceFormatTranslationTests(
                         {
                             var index = row * columns + col;
                             cell = (Microsoft.Office.Interop.Excel.Range)cells[row + 1, col + 1];
-                            Assert.Equal(formats[index], read.Formats[row][col]);
+                            // Excel may canonicalize a locally written format when reading its invariant code.
+                            Assert.Equal(Assert.IsType<string>(((object)cell.NumberFormat)), read.Formats[row][col]);
                             Assert.Equal(expected[index]
                                 .Replace("{decimal}", ctx.FormatTranslator.DecimalSeparator, StringComparison.Ordinal)
                                 .Replace("{group}", ctx.FormatTranslator.ThousandsSeparator, StringComparison.Ordinal), ((object)cell.Text));

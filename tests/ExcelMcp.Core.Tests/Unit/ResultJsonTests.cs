@@ -246,7 +246,7 @@ public sealed class ResultJsonTests
             message: "Completion was not confirmed.", category: category);
 
         Assert.False(result.Success);
-        Assert.Equal(mayStillBeRunning, result.MayStillBeRunning);
+        Assert.Equal(mayStillBeRunning, result.CompletionUnconfirmed);
         Assert.Equal(category, result.Error!["category"]!.GetValue<string>());
         Assert.Null(result.PartialState);
     }
@@ -258,7 +258,7 @@ public sealed class ResultJsonTests
             category: "ExcelDisconnected", partialState: """{"outcome":"completed"}""");
 
         Assert.False(result.Success);
-        Assert.True(result.MayStillBeRunning);
+        Assert.True(result.CompletionUnconfirmed);
         Assert.Equal("completed", result.PartialState!["outcome"]!.GetValue<string>());
     }
 

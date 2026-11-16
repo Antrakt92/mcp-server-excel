@@ -686,7 +686,8 @@ public class RegularPivotTableFieldStrategy : IPivotTableFieldStrategy
         {
             // CRITICAL: Refresh PivotTable FIRST to populate field with actual date values
             // Excel needs populated items before grouping can work
-            pivot.RefreshTable();
+            if (!pivot.RefreshTable())
+                throw new InvalidOperationException("Excel did not refresh the PivotTable before grouping. No grouping was applied.");
 
             field = GetFieldForManipulation(pivot, fieldName);
 
@@ -787,7 +788,8 @@ public class RegularPivotTableFieldStrategy : IPivotTableFieldStrategy
         {
             // CRITICAL: Refresh PivotTable FIRST to populate field with actual numeric values
             // Excel needs populated items before grouping can work (same as date grouping)
-            pivot.RefreshTable();
+            if (!pivot.RefreshTable())
+                throw new InvalidOperationException("Excel did not refresh the PivotTable before grouping. No grouping was applied.");
 
             field = GetFieldForManipulation(pivot, fieldName);
 
@@ -864,7 +866,8 @@ public class RegularPivotTableFieldStrategy : IPivotTableFieldStrategy
         try
         {
             // CRITICAL: Refresh PivotTable FIRST to ensure field collection is current
-            pivot.RefreshTable();
+            if (!pivot.RefreshTable())
+                throw new InvalidOperationException("Excel did not refresh before creating the calculated field. No field was added.");
 
             // Access CalculatedFields collection
             // For regular PivotTables, this collection allows creating custom fields with formulas
@@ -878,7 +881,8 @@ public class RegularPivotTableFieldStrategy : IPivotTableFieldStrategy
             newField = calculatedFields.Add(fieldName, formula, true);
 
             // Refresh again to populate the new calculated field
-            pivot.RefreshTable();
+            PivotTableCommands.RefreshAfterMutation(pivot,
+                $"Excel added calculated field '{fieldName}' but did not confirm refreshing the PivotTable. Use list-calculated-fields before retrying.");
 
             return new PivotFieldResult
             {

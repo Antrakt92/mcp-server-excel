@@ -109,7 +109,7 @@ public sealed class ServiceResponse
         {
             completionUnconfirmed = ResultJson.Read(Result, request.Command, delivered: Success,
                 category: ErrorCategory, partialState: PartialState,
-                contract: ServiceRegistry.GetResultContract(request.Command)).MayStillBeRunning;
+                contract: ServiceRegistry.GetResultContract(request.Command)).CompletionUnconfirmed;
         }
         catch (JsonException)
         {

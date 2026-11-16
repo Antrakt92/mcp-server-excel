@@ -19,11 +19,11 @@ pytestmark = [pytest.mark.aitest, pytest.mark.copilot, pytest.mark.mcp]
     (table_slicer_prompt, assert_table_slicers),
     (combined_slicer_prompt, assert_combined_slicers),
 ], ids=["pivot", "table", "combined"])
-async def test_mcp_slicer_workflow(copilot_eval, excel_mcp_servers, excel_mcp_skill_dir, prompt, check):
+async def test_mcp_slicer_workflow(copilot_eval, excel_mcp_servers, prompt, check):
     path = unique_results_path("slicer-mcp")
     agent = build_excel_mcp_eval(
         f"mcp-{prompt.__name__}", servers=excel_mcp_servers,
-        skill_dir=excel_mcp_skill_dir, max_turns=30,
+        max_turns=30,
     )
     result = await copilot_eval(agent, prompt(path))
     assert result.success

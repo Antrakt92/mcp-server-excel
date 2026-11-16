@@ -220,7 +220,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             {
                 hasErrors = true;
                 if (settings.StopOnError || cancellationToken.IsCancellationRequested ||
-                    outcome.MayStillBeRunning) break;
+                    outcome.CompletionUnconfirmed) break;
             }
         }
 

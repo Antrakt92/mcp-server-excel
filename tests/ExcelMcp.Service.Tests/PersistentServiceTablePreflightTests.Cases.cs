@@ -39,7 +39,7 @@ public sealed partial class PersistentServiceTablePreflightTests
             ["Widget", "North", 10],
             ["Gadget", "South", 20]
         ]);
-        RequireSuccess(_rangeCommands.MergeCells(batch, "Sales", "G2:H2"));
+        RequireSuccess(_rangeCommands.MergeCells(batch, "Sales", "G2:H2", OverwritePolicy.Allow));
         var before = GetSourceState("Sales", "F1:H3");
 
         var result = _tableCommands.Preflight(batch, "Sales", "MergedTable", "F1:H3");
