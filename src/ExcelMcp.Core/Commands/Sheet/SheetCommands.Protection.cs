@@ -58,7 +58,8 @@ public partial class SheetCommands
                 }
                 else
                 {
-                    sheet.Unprotect(password is null ? Type.Missing : password);
+                    // Omitting this argument lets Excel open a password prompt.
+                    sheet.Unprotect(password ?? string.Empty);
                 }
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
