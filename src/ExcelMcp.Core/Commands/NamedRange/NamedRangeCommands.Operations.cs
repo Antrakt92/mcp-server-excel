@@ -311,7 +311,7 @@ public partial class NamedRangeCommands
     }
 
     /// <inheritdoc />
-    public NamedRangeValue Read(IExcelBatch batch, string name)
+    public NamedRangeValue Read(IExcelBatch batch, string name, bool metadataOnly = false)
     {
         return batch.Execute((ctx, ct) =>
         {
@@ -326,10 +326,13 @@ public partial class NamedRangeCommands
                 }
 
                 string refersTo = ((object?)nameObj.RefersTo)?.ToString() ?? "";
-                refersToRange = nameObj.RefersToRange;
                 var budget = new RangeReadBudget();
                 budget.AddScalar(name);
                 budget.AddScalar(refersTo);
+                if (metadataOnly)
+                    return ReadMetadata(ctx.Book, nameObj, name, refersTo, budget);
+
+                refersToRange = nameObj.RefersToRange;
                 if (refersToRange is not null)
                 {
                     RangeHelpers.RequireNamedRangeWorkbook(refersToRange, ctx.Book, name);
@@ -368,8 +371,59 @@ public partial class NamedRangeCommands
         });
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Metadata reports the targeted RefersToRange getter failure with its original HRESULT and message. Unexpected COM failures still propagate.")]
+    private static NamedRangeValue ReadMetadata(
+        Excel.Workbook book, Excel.Name nameObj, string name, string refersTo, RangeReadBudget budget)
+    {
+        var result = new NamedRangeValue
+        {
+            Name = name,
+            RefersTo = refersTo,
+            Visible = nameObj.Visible,
+            ValueType = "NotRead"
+        };
+
+        Excel.Range? range = null;
+        try
+        {
+            try
+            {
+                range = nameObj.RefersToRange;
+            }
+            catch (COMException ex) when (ex.HResult == unchecked((int)0x800A03EC) || ComErrors.IsMemberUnavailable(ex))
+            {
+                budget.AddScalar(ex.Message);
+                result.ResolutionStatus = "Unavailable";
+                result.ResolutionHResult = ex.HResult;
+                result.ResolutionMessage = ex.Message;
+                return result;
+            }
+
+            if (range is null)
+            {
+                result.ResolutionStatus = "Unavailable";
+            }
+            else if (RangeHelpers.BelongsToWorkbook(range, book))
+            {
+                result.ResolutionStatus = "LocalRange";
+                result.AreaCount = GetAreaCount(range);
+            }
+            else
+            {
+                result.ResolutionStatus = "ExternalRange";
+            }
+
+            return result;
+        }
+        finally
+        {
+            ComUtilities.Release(ref range);
+        }
+    }
+
     /// <inheritdoc />
-    public OperationResult Create(IExcelBatch batch, string name, string reference)
+    public OperationResult Create(IExcelBatch batch, string name, string reference, bool visible = true)
     {
         // Validate parameter name length (Excel limit: 255 characters)
         if (string.IsNullOrWhiteSpace(name))
@@ -400,7 +454,7 @@ public partial class NamedRangeCommands
                 string formula = $"={reference.TrimStart('=')}";
                 string r1c1Formula = ToR1C1Formula(ctx.App, formula);
                 // Names.Add parses decimal separators locally; the property setter accepts invariant formulas.
-                created = namesCollection.Add(Name: name, RefersTo: "=0");
+                created = namesCollection.Add(Name: name, RefersTo: "=0", Visible: visible);
                 if (created is null)
                     throw new InvalidOperationException(
                         $"Excel did not confirm creating named range '{name}'. Inspect workbook names before retrying.");

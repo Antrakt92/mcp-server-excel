@@ -17,6 +17,11 @@ public sealed partial class PersistentServiceNamedRangeTests
         Assert.Equal("InvalidInput", rejected.ErrorCategory);
         Assert.Contains("cell read limit", rejected.ErrorMessage, StringComparison.Ordinal);
         Assert.Contains("get-values-page", rejected.ErrorMessage, StringComparison.Ordinal);
+        var metadata = _parameterCommands.Read(_fixture.BatchToken, name, metadataOnly: true);
+        Assert.Equal("LocalRange", metadata.ResolutionStatus);
+        Assert.Equal("NotRead", metadata.ValueType);
+        Assert.Equal(1, metadata.AreaCount);
+        Assert.Null(metadata.Value);
     }
 
     [Fact]
