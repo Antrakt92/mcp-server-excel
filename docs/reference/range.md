@@ -174,7 +174,9 @@ intentional. Existing merged areas must fit entirely inside the rectangle.
 
 MCP `range_format` action `validate-range` and CLI `rangeformat validate-range`
 replace the target's existing validation rule. Invalid validation types,
-comparison operators, and error styles are rejected before removing that rule.
+comparison operators, error styles, and first formulas over 255 characters
+are rejected before removing that rule. For a longer dropdown list, reference
+a worksheet range or defined name.
 This does not promise rollback for errors Excel raises while applying a rule.
 
 Explicit `show_input_message: false` / `--show-input-message false` and
