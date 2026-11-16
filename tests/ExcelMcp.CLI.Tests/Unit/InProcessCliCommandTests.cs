@@ -1391,15 +1391,17 @@ public sealed class InProcessCliCommandTests
         Assert.Equal(string.Empty, error.ToString());
     }
 
-    [Fact]
-    public async Task Batch_TrackedSaveCarriesReceiptIdBesideArguments()
+    [Theory]
+    [InlineData("session.save")]
+    [InlineData("SESSION.SaVe")]
+    public async Task Batch_TrackedSaveCarriesReceiptIdBesideArguments(string command)
     {
         var operationId = Guid.NewGuid().ToString();
         var factory = new RecordingClientFactory(
             new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" });
         var output = new StringWriter();
         var runtime = CreateRuntime(factory, output, new StringWriter(),
-            $$"""{"command":"session.save","sessionId":"target","operationId":"{{operationId}}"}""");
+            $$"""{"command":"{{command}}","sessionId":"target","operationId":"{{operationId}}"}""");
 
         Assert.Equal(0, await Program.RunAsync(["--quiet", "batch"], runtime));
         var request = Assert.Single(factory.Requests);

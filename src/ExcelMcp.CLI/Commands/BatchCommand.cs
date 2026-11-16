@@ -84,6 +84,9 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             }
         }
 
+        // Service routing and its policy checks use canonical names. Keep the
+        // supplied spelling for the item's output, like MCP batch.
+        var canonicalCommands = commands.Select(entry => entry.Command.ToLowerInvariant()).ToArray();
         var validationErrors = new Dictionary<int, (Exception Cause, long DurationMs)>();
         var validationDurations = new long[commands.Count];
         var boundArgs = new string?[commands.Count];
@@ -91,16 +94,17 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         for (int i = 0; i < commands.Count; i++)
         {
             var cmd = commands[i];
+            var command = canonicalCommands[i];
             var argsJson = cmd.Args.HasValue && cmd.Args.Value.ValueKind != JsonValueKind.Undefined
                 ? cmd.Args.Value.GetRawText()
                 : null;
             var validationStopwatch = Stopwatch.StartNew();
             try
             {
-                ServiceRegistry.ValidateCommandArguments(cmd.Command, argsJson);
+                ServiceRegistry.ValidateCommandArguments(command, argsJson);
                 if (cmd.OperationId is { } operationId)
-                    OperationReceipts.ValidateTracking(cmd.Command, operationId);
-                var bound = ServiceRegistry.BindLocalInputFileArguments(cmd.Command, argsJson, callerDirectory);
+                    OperationReceipts.ValidateTracking(command, operationId);
+                var bound = ServiceRegistry.BindLocalInputFileArguments(command, argsJson, callerDirectory);
                 if (!ReferenceEquals(bound, argsJson))
                     boundArgs[i] = bound;
             }
@@ -109,7 +113,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
                 validationStopwatch.Stop();
                 validationErrors[i] = (ex, validationStopwatch.ElapsedMilliseconds);
                 CliTelemetry.TrackLocalFailure(
-                    cmd.Command,
+                    command,
                     validationStopwatch.ElapsedMilliseconds,
                     "InvalidInput");
             }
@@ -140,6 +144,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         for (int i = 0; i < commands.Count; i++)
         {
             var cmd = commands[i];
+            var command = canonicalCommands[i];
             var itemTimer = Stopwatch.StartNew();
             var sessionId = cmd.SessionId ?? activeSession;
             if (validationErrors.TryGetValue(i, out var validationError))
@@ -156,7 +161,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             // Build the service request
             var request = new ServiceRequest
             {
-                Command = cmd.Command,
+                Command = command,
                 SessionId = sessionId,
                 Args = boundArgs[i] ?? cmd.Args?.GetRawText(),
                 Source = "cli-batch",
@@ -190,19 +195,17 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
                 };
             }
 
-            var outcome = CliResultOutput.Read(response, cmd.Command);
+            var outcome = CliResultOutput.Read(response, command);
             // Auto-capture sessionId from session.open/create/attach results
             if (outcome.Success && activeSession == null &&
-                (cmd.Command.Equals("session.open", StringComparison.OrdinalIgnoreCase) ||
-                 cmd.Command.Equals("session.attach", StringComparison.OrdinalIgnoreCase) ||
-                 cmd.Command.Equals("session.create", StringComparison.OrdinalIgnoreCase)))
+                command is "session.open" or "session.attach" or "session.create")
             {
                 activeSession = outcome.Data?["sessionId"]?.GetValue<string>();
             }
 
             // Auto-clear session on session.close
             if (outcome.Success &&
-                cmd.Command.Equals("session.close", StringComparison.OrdinalIgnoreCase) &&
+                command == "session.close" &&
                 string.Equals(sessionId, activeSession, StringComparison.OrdinalIgnoreCase))
             {
                 activeSession = null;
