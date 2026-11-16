@@ -14,6 +14,56 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("RequiresExcel", "false")]
 public sealed class ExcelWorkerBoundaryTests
 {
+    [Fact(Timeout = 15000)]
+    public async Task WorkerSnapshot_RemainsPendingUntilCompletionStatusIsRecorded()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-completion-status-");
+        var registry = new WorkerRegistry(directory.FullName);
+        var process = WorkerProcess.Current;
+        var generation = Guid.NewGuid().ToString("N");
+        var registration = new WorkerRegistration("excelmcp-worker-" + generation, process, process,
+            generation, WorkerRegistry.Build, null);
+        using var host = new ExcelWorkerHost(registration, registry: registry);
+        var run = host.RunAsync();
+        var worker = new ExcelWorkerClient(registration, process, generation);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        await worker.InitializeAsync();
+        host.AfterOperationStatusCaptureForTests = () =>
+        {
+            entered.TrySetResult();
+            if (!resume.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The test did not finish reading the in-flight worker status.");
+        };
+        var execution = worker.ExecuteWithAdmissionAsync(new ServiceRequest
+        {
+            Command = "diag.echo",
+            Args = """{"message":"write complete, status pending"}"""
+        }, CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var snapshot = await worker.ReadSnapshotAsync();
+            Assert.NotNull(snapshot.PendingOperation);
+            Assert.Equal("diag.echo", snapshot.PendingCommand);
+            Assert.False(execution.IsCompleted);
+        }
+        finally
+        {
+            resume.Set();
+            var completed = await execution.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(completed.Response.Success, completed.Response.ErrorMessage);
+            Assert.Null(completed.Snapshot.PendingOperation);
+            Assert.Null(completed.Snapshot.PendingCommand);
+            host.AfterOperationStatusCaptureForTests = null;
+            var released = await worker.ReleaseAsync(CancellationToken.None);
+            Assert.True(released.Success, released.ErrorMessage);
+            await run.WaitAsync(TimeSpan.FromSeconds(3));
+            registry.Remove(registration.PipeName);
+            directory.Delete();
+        }
+    }
+
     [Theory(Timeout = 30000)]
     [InlineData(false)]
     [InlineData(true)]
