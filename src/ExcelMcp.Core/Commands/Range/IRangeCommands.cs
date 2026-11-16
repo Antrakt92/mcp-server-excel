@@ -47,7 +47,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "Value/formula writes attempt to restore the prior calculation mode; restoration can fail without failing the write. Verify the mode when later work depends on it; manual mode needs calculation_mode calculate. " +
         "To create an Excel Table use table create, not range. Use range_edit for insert/delete/find/sort/fill, range_format for styling/validation, and range_link for hyperlinks/protection.")]
 [McpReadOnlyActions("get-values", "get-formulas", "get-spill-info", "validate-formulas", "get-number-formats",
-    "get-used-range", "get-current-region", "get-info", "get-used-range-info", "get-values-page", "get-special-cells", "trace-precedents", "trace-dependents")]
+    "get-used-range", "get-current-region", "get-info", "get-used-range-info", "get-values-page", "inspect-cells", "get-special-cells", "trace-precedents", "trace-dependents")]
 public interface IRangeCommands
 {
     /// <summary>
@@ -107,6 +107,20 @@ public interface IRangeCommands
     RangeReadPageResult GetValuesPage(IExcelBatch batch, [AllowEmptyString] string sheetName,
         [RequiredParameter] string rangeAddress, int rowOffset = 0, int columnOffset = 0, int pageRows = 100, int pageColumns = 100);
 
+    /// <summary>
+    /// Reads typed values, A1 formulas and Excel's native displayed text for at most 64 cells.
+    /// Text reflects Excel's formatting, locale, and width (including characters such as ####).
+    /// Values of dates and times are Excel serial numbers. Recognized native errors are returned
+    /// as canonical Excel error names and codes. Each text field is capped at 512 UTF-16 code
+    /// units, with a separate flag for each truncated field. Does not recalculate or change the view.
+    /// </summary>
+    /// <param name="batch">Excel batch session</param>
+    /// <param name="sheetName">Worksheet name, or empty string for a named range</param>
+    /// <param name="rangeAddress">One rectangular range with at most 64 cells</param>
+    [ServiceAction("inspect-cells")]
+    RangeCellInspectionResult InspectCells(IExcelBatch batch, [AllowEmptyString] string sheetName,
+        [RequiredParameter] string rangeAddress);
+
     // === VALUE OPERATIONS ===
 
     /// <summary>
@@ -146,6 +160,18 @@ public interface IRangeCommands
     /// <param name="overwritePolicy">reject-nonempty (default) checks all direct destinations and rejects existing content, including formulas displaying blank. allow permits intentional replacement, not bypassing Excel protection. Inspection failure stops the operation; no rollback or interactive-edit isolation.</param>
     [ServiceAction("set-values")]
     OperationResult SetValues(IExcelBatch batch, [AllowEmptyString] string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? values = null, [LocalInputFile] string? valuesFile = null, [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty);
+
+    /// <summary>
+    /// Apply up to 100 single-cell edits on one worksheet. Compare all expectations before writing
+    /// and recheck each cell before its write. Reports conflicts and confirmed addresses. Excel
+    /// events and interactive edits can still intervene. Changes are not rolled back or saved.
+    /// Tables, merged cells, spills and legacy arrays are excluded. Formulas use scalar A1 entry.
+    /// </summary>
+    /// <param name="sheetName">Exact worksheet name.</param>
+    /// <param name="patchOptions">Object with edits: [{address, expected, replacement}]. Each state specifies either formula (an A1 formula starting with '=') or value (number, boolean, literal text, or null for blank).</param>
+    [ServiceAction("patch-cells")]
+    RangePatchResult PatchCells(IExcelBatch batch, [RequiredParameter] string sheetName,
+        [RequiredParameter] RangePatchOptions patchOptions);
 
     // === FORMULA OPERATIONS ===
 

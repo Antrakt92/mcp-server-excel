@@ -478,7 +478,7 @@ public static class RangeHelpers
         && startRow >= 1
         && endRow >= 1;
 
-    private static bool TryParseCellReference(string reference, out int column, out int row)
+    internal static bool TryParseCellReference(string reference, out int column, out int row)
     {
         column = 0;
         row = 0;

@@ -32,6 +32,7 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
     private enum SessionEnd { Closed, SavedAndClosed, WorkerExited }
     private readonly ConcurrentDictionary<string, SessionEnd> _closedSessions = new(StringComparer.Ordinal);
+    private readonly OperationReceipts _operationReceipts = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly DaemonHost _host;
     private readonly DaemonHost _controlHost;
@@ -80,9 +81,90 @@ internal sealed class ExcelController : IDisposable
         _workers.Values.Where(worker => worker.Registration.OwnsExcel)
             .Select(worker => worker.Registration.Excel).OfType<ExcelProcessIdentity>().Distinct().ToArray();
 
-    internal async Task<ServiceResponse> ProcessAsync(ServiceRequest request, bool waitForWorkerCompletion = false) =>
-        ExcelMcpService.AttachRequestContext(request,
-            await ProcessCoreAsync(request, waitForWorkerCompletion).ConfigureAwait(false));
+    internal async Task<ServiceResponse> ProcessAsync(ServiceRequest request, bool waitForWorkerCompletion = false)
+    {
+        if (request.OperationId is null)
+            return ExcelMcpService.AttachRequestContext(request,
+                await ProcessCoreAsync(request, waitForWorkerCompletion).ConfigureAwait(false));
+
+        if (!OperationReceipts.IsValidSessionId(request.SessionId))
+            return ExcelWorkerHost.Failure(request, "InvalidInput",
+                "operationId requires a session and command table.append or session.save.");
+        Guid id;
+        try
+        {
+            id = OperationReceipts.ValidateTracking(request.Command, request.OperationId);
+        }
+        catch (ArgumentException ex)
+        {
+            return ExcelWorkerHost.Failure(request, "InvalidInput", ex.Message);
+        }
+        var admission = _operationReceipts.TryBegin(id, request.Command, request.SessionId!, out var operation);
+        if (admission != OperationReceipts.Admission.Accepted)
+            return admission == OperationReceipts.Admission.Duplicate
+                ? ExcelWorkerHost.Failure(request, "Conflict",
+                    "This operationId already has a receipt. Look it up before continuing. No duplicate work started.")
+                : ExcelWorkerHost.Failure(request, "ResourceLimit",
+                    "The host's operation receipt capacity is full. No workbook work started.");
+
+        var completion = CompleteTrackedRequestAsync(request, operation);
+        if (waitForWorkerCompletion)
+            return await completion.ConfigureAwait(false);
+        try
+        {
+            return await completion.WaitAsync(request.CallerCancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (request.CallerCancellation.IsCancellationRequested)
+        {
+            return CreateWorkerError(request, ex, sent: true);
+        }
+    }
+
+    private async Task<ServiceResponse> CompleteTrackedRequestAsync(
+        ServiceRequest request, OperationReceipts.Operation operation)
+    {
+        var response = ExcelMcpService.AttachRequestContext(request,
+            await ProcessCoreAsync(request, waitForWorkerCompletion: true).ConfigureAwait(false));
+        if (request.LateWorkerResponse is { } late)
+        {
+            _ = RecordLateOutcomeAsync(operation, late);
+            return response;
+        }
+        RecordOutcome(operation, response);
+        return response;
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Late receipt collection reports unknown if the worker response cannot be recovered. The original command is never repeated.")]
+    private async Task RecordLateOutcomeAsync(OperationReceipts.Operation operation, Task<ServiceResponse?> late)
+    {
+        try
+        {
+            if (await late.ConfigureAwait(false) is { } response)
+                RecordOutcome(operation, response);
+            else
+                _operationReceipts.Publish(operation, "unknown");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not recover an Excel operation receipt: {0}", ex.GetType().Name);
+            _operationReceipts.Publish(operation, "unknown");
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "An invalid result payload is reported as an unknown receipt. The original worker reply is preserved and the workbook command is never repeated.")]
+    private void RecordOutcome(OperationReceipts.Operation operation, ServiceResponse response)
+    {
+        try
+        {
+            _operationReceipts.Complete(operation, response);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
+        {
+            _operationReceipts.Publish(operation, "unknown");
+        }
+    }
 
     private static bool StartsWorkbookWorker(string command) =>
         command is "session.open" or "session.create" or "session.test" or "sheet.copy-to-file" or "sheet.move-to-file";
@@ -118,6 +200,8 @@ internal sealed class ExcelController : IDisposable
                 };
             if (request.Command == "session.list")
                 return SessionList();
+            if (request.Command == OperationReceipts.LookupCommand)
+                return _operationReceipts.Lookup(request.Args, request.SessionId);
             if (request.Command == "service.shutdown")
             {
                 var report = await ShutdownAsync();

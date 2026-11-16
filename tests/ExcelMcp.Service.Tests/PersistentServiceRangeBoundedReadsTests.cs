@@ -1,4 +1,6 @@
 using System.Runtime.ExceptionServices;
+using System.Text.Json;
+using Sbroenne.ExcelMcp.Core.Commands;
 using Sbroenne.ExcelMcp.Core.Commands.Calculation;
 using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Xunit;
@@ -15,6 +17,95 @@ public sealed class PersistentServiceRangeBoundedReadsTests(
     PersistentServiceWorkbookTestBase(fixture),
     IClassFixture<PersistentServiceWorkbookFixture>
 {
+    [Fact]
+    public void InspectCells_ResolvesWorkbookNameToTheActualWorksheet()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        string name = $"InspectCells_{Guid.NewGuid():N}";
+        var names = _fixture.CreateCommands<INamedRangeCommands>();
+        double serial = new DateTime(2026, 11, 16).ToOADate();
+        RequireSuccess(_commands.SetValues(batch, sheetName, "D3", [[serial]]));
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "D3", "yyyy-mm-dd"));
+        RequireSuccess(names.Create(batch, name, $"'{sheetName}'!$D$3"));
+        _fixture.RegisterNamedRangeForCleanup(name);
+
+        var result = RequireSuccess(_commands.InspectCells(batch, string.Empty, name));
+        Assert.Equal(sheetName, result.SheetName);
+        Assert.Equal("$D$3", result.RangeAddress);
+        var cell = Assert.Single(result.Cells);
+        Assert.Equal("$D$3", cell.Address);
+        RangeReadAssertions.Number(serial, cell.Value);
+        Assert.Equal("2026-11-16", cell.DisplayedText);
+    }
+
+    [Fact]
+    public void InspectCells_ReadsNativeDisplayAndDistinguishesConstantsFormulasErrorsAndBlanks()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var formatting = _fixture.CreateCommands<IRangeFormatCommands>();
+        var longText = new string('a', 511) + "\U0001F680tail";
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:A4",
+            [[123], ["'=123"], [-2146826281d], [longText]]));
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "A1", "00000"));
+        RequireSuccess(_commands.SetFormulas(batch, sheetName, "B1:B4",
+            [["=FALSE()"], ["=1/0"], ["=\"\""], ["=A1"]]));
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "B4", "0.00"));
+        RequireSuccess(formatting.SetColumnWidth(batch, sheetName, "B:B", 2));
+
+        var response = _fixture.Send("range.inspect-cells", new { sheetName, rangeAddress = "A1:C4" });
+        Assert.True(response.Success, response.ErrorMessage);
+        using var output = JsonDocument.Parse(Assert.IsType<string>(response.Result));
+        Assert.Equal(JsonValueKind.Null, output.RootElement.GetProperty("cells")[2].GetProperty("value").ValueKind);
+        var data = RequireSuccess(ServiceCommandProxy.DeserializeResult<RangeCellInspectionResult>(response.Result!));
+        Assert.Equal(sheetName, data.SheetName);
+        Assert.Equal("$A$1:$C$4", data.RangeAddress);
+        Assert.Equal(12, data.Cells.Count);
+        var cell = data.Cells[0];
+        Assert.Equal("$A$1", cell.Address);
+        RangeReadAssertions.Number(123d, cell.Value);
+        Assert.Equal("00123", cell.DisplayedText);
+        Assert.Null(cell.Formula);
+        Assert.Null(cell.ExcelErrorCode);
+        Assert.False(cell.ValueTruncated);
+        Assert.False(cell.FormulaTruncated);
+        Assert.False(cell.DisplayedTextTruncated);
+        Assert.False(Assert.IsType<bool>(data.Cells[1].Value));
+        Assert.Equal("=FALSE()", data.Cells[1].Formula);
+        Assert.Equal("$C$1", data.Cells[2].Address);
+        Assert.Null(data.Cells[2].Value);
+        Assert.Null(data.Cells[2].Formula);
+        Assert.Equal(string.Empty, data.Cells[2].DisplayedText);
+        Assert.Equal("=123", Assert.IsType<string>(data.Cells[3].Value));
+        Assert.Null(data.Cells[3].Formula);
+        Assert.Equal("#DIV/0!", Assert.IsType<string>(data.Cells[4].Value));
+        Assert.Equal(-2146826281, data.Cells[4].ExcelErrorCode);
+        Assert.Equal("=1/0", data.Cells[4].Formula);
+        RangeReadAssertions.Number(-2146826281d, data.Cells[6].Value);
+        Assert.Null(data.Cells[6].ExcelErrorCode);
+        Assert.Equal("=\"\"", data.Cells[7].Formula);
+        Assert.Equal(string.Empty, data.Cells[7].DisplayedText);
+        Assert.True(data.Cells[9].ValueTruncated);
+        Assert.Equal(new string('a', 511), Assert.IsType<string>(data.Cells[9].Value));
+        Assert.Equal("=A1", data.Cells[10].Formula);
+        RangeReadAssertions.Number(123d, data.Cells[10].Value);
+        Assert.NotEmpty(data.Cells[10].DisplayedText);
+        Assert.All(data.Cells[10].DisplayedText, character => Assert.Equal('#', character));
+    }
+
+    [Fact]
+    public async Task InspectCells_RejectsOversizedAndDisjointScopes()
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        foreach (var (scope, expected) in new[] { ("A1:A65", "64-cell"), ("A1,C1", "rectangular") })
+        {
+            var response = await _fixture.SendForFailureAsync("range.inspect-cells",
+                new { sheetName, rangeAddress = scope });
+            Assert.Equal("InvalidInput", response.ErrorCategory);
+            Assert.Contains(expected, response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        }
+    }
     [Fact]
     public void DiscoveryAndPages_PreserveCanonicalErrorsAndActualCellAddresses()
     {
@@ -177,6 +268,11 @@ public sealed class PersistentServiceRangeBoundedReadsTests(
             Assert.Equal("=1/A1", formulas.Formulas[0][1]);
             RangeReadAssertions.Number(1d, formulas.Values[0][0]);
             Assert.Equal("#DIV/0!", formulas.Values[0][1]);
+            var inspected = RequireSuccess(_commands.InspectCells(_fixture.BatchToken, sheetName, "B1"));
+            var inspectedCell = Assert.Single(inspected.Cells);
+            Assert.Equal("#DIV/0!", Assert.IsType<string>(inspectedCell.Value));
+            Assert.Equal("=1/A1", inspectedCell.Formula);
+            Assert.NotEmpty(inspectedCell.DisplayedText);
             Assert.Equal("B1", Assert.Single(formulas.CellErrors).CellAddress);
             Assert.Equal((int)CalculationMode.Manual, RequireSuccess(calculation.GetSettings(_fixture.BatchToken)).ModeValue);
 

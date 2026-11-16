@@ -10,13 +10,14 @@ current command details, and the linked guidance for workflow decisions.
 
 ---
 
-## File Operations (12 operations)
+## File Operations (13 operations)
 
 - **Start work:** Open an existing workbook or create a new one and retain its Excel session.
 - **Discover sessions:** List managed sessions or discover already-open workbooks in the current user's Windows session.
 - **Reconnect safely:** Discover and attach to an already-open workbook without reopening it; unsaved workbooks can have no file location.
 - **Check access:** Test whether Excel can open a file and identify protection or authentication requirements.
 - **Finish deliberately:** Save authorized changes or close without saving.
+- **Recover a reply:** Look up the outcome of a tracked table append or save.
 - **Inspect restrictions:** Check Protected View, read-only access, and known VBA opening state without enabling content. Other notification bars can remain unknown.
 - **Enable deliberately:** Separately approve editing, data connections, or reopening a saved workbook with VBA macros enabled. Editing and connection enabling require approval that Excel can remember trust for that file.
 
@@ -56,9 +57,11 @@ Disabling it cannot restore lost digits.
 
 ---
 
-## Ranges (67 operations)
+## Ranges (69 operations)
 
+- **Conditional cell edits:** Compare the current values or formulas, update specific cells, and read back the result.
 - **Inspect large sheets:** Read UsedRange bounds without values, then page a fixed rectangle within cell/byte limits.
+- **Check displayed cells:** Read the stored value, formula, and text that Excel displays in a small range.
 - **Inspect formatting:** Read aggregate stored/displayed properties and mixed fields without per-cell formatting output.
 
 - **Work with data:** Read and write values or formulas, search and replace, copy selected content, and insert or remove cells, rows, and columns.

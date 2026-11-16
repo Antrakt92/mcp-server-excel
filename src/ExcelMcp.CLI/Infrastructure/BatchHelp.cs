@@ -23,6 +23,7 @@ internal static class BatchHelp
                 command    Required group.action, for example "range.set-values".
                 args       Object required when the action needs arguments.
                 sessionId  Optional session override for this entry, outside args.
+                operationId  Optional fresh UUID for table.append or session.save, outside args.
               Argument names are case-sensitive: use sheetName and rangeAddress,
               not the CLI aliases sheet and range. Supply arrays and objects as
               JSON values, not strings containing JSON. For exact keys, run:
@@ -51,6 +52,8 @@ internal static class BatchHelp
               Use --stop-on-error for dependent steps (default: continue after errors).
               Timeouts, cancellation, and reported unknown completion always stop
               later commands because Excel work may still be running.
+              Look up a tracked command with:
+                excelcli session operation-result --operation-id <UUID> --session <ID>
               A batch is not all-or-nothing. Individual commands can save or discard edits.
               Batch does not undo or save automatically. Excel AutoSave, if enabled,
               can still persist edits. Inspect partial results before

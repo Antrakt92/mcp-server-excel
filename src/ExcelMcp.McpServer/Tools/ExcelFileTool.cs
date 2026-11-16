@@ -4,6 +4,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Sbroenne.ExcelMcp.Core.Attributes;
 using Sbroenne.ExcelMcp.Core.Models;
+using Sbroenne.ExcelMcp.Service;
 
 namespace Sbroenne.ExcelMcp.McpServer.Tools;
 
@@ -93,11 +94,15 @@ public static partial class ExcelFileTool
     /// URLs report unavailable local file details without opening Excel; use open to check access.
     /// Remote existence, size and IRM protection cannot be established by local preflight;
     /// false exists/isIrmProtected values do not prove absence or lack of protection.
+    /// operation-result looks up a tracked table.append or session.save command without calling Excel.
+    /// Results are pending, completed, partially-applied, failed, or unknown. Receipts are retained in the same host for 15 minutes after completion.
+    /// If the result is unknown, inspect the workbook before repeating the command.
     /// </remarks>
-    /// <param name="action">Discover already-open workbooks, list sessions, test whether a workbook can be opened, or inspect a selected session's opening notices. Batch command: session.{action}.</param>
+    /// <param name="action">Discover or list workbooks, test a workbook path, inspect opening notices, or look up an operation receipt. Batch command: session.{action}.</param>
     /// <param name="file_path">Full Windows path or URL. Required for test. Batch args key: filePath.</param>
     /// <param name="timeout_seconds">Timeout for test, in seconds (10-3600). Batch args key: timeoutSeconds.</param>
-    /// <param name="workbook_session_id">Session to inspect for notices. Attach a discovered Protected View workbook first. Reports verified restrictions and explicit inspection gaps; complete:false does not mean content is enabled. Batch entry key: sessionId (outside args).</param>
+    /// <param name="workbook_session_id">Session for notices or the original session for operation-result. Attach a discovered Protected View workbook before inspecting notices. Batch entry key: sessionId (outside args).</param>
+    /// <param name="operation_id">UUID supplied with the tracked command. Required for operation-result. Batch args key: operationId.</param>
     [McpServerTool(Name = "file_read", Title = "Read-Only File Operations", ReadOnly = true,
         Destructive = false)]
     [McpMeta("category", "session")]
@@ -107,9 +112,15 @@ public static partial class ExcelFileTool
         ServiceBridge.ServiceBridge bridge,
         [McpActionParameter("test", Required = true), DefaultValue(null)] string? file_path,
         [McpActionParameter("test"), DefaultValue(120)] int timeout_seconds = 120,
-        [McpActionParameter("notices", Required = true), DefaultValue(null)] string? workbook_session_id = null,
+        [McpActionParameter("notices", Required = true), McpActionParameter("operation-result", Required = true)]
+        [DefaultValue(null)] string? workbook_session_id = null,
+        [McpActionParameter("operation-result", Required = true), DefaultValue(null)] string? operation_id = null,
         CancellationToken cancellationToken = default) =>
-        ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken);
+        action == FileReadAction.OperationResult
+            ? ExcelToolsBase.ExecuteToolActionAsync("file_read", "operation-result",
+                () => ExcelToolsBase.ForwardToServiceAsync(bridge, OperationReceipts.LookupCommand, workbook_session_id,
+                    new { operationId = operation_id }, cancellationToken), cancellationToken)
+            : ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken);
 
     private static Task<CallToolResult> ExecuteFileReadAsync(
         FileReadAction action, ServiceBridge.ServiceBridge bridge, string? filePath,

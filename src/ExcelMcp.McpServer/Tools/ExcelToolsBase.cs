@@ -35,10 +35,11 @@ public static class ExcelToolsBase
         string command,
         string? sessionId,
         object? args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? operationId = null)
     {
         var response = await bridge.SendAsync(command, sessionId,
-            args, cancellationToken: cancellationToken);
+            args, cancellationToken: cancellationToken, operationId: operationId);
         return ReadServiceResponse(response, command);
     }
 

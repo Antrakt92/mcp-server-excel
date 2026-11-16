@@ -98,6 +98,8 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             try
             {
                 ServiceRegistry.ValidateCommandArguments(cmd.Command, argsJson);
+                if (cmd.OperationId is { } operationId)
+                    OperationReceipts.ValidateTracking(cmd.Command, operationId);
                 var bound = ServiceRegistry.BindLocalInputFileArguments(cmd.Command, argsJson, callerDirectory);
                 if (!ReferenceEquals(bound, argsJson))
                     boundArgs[i] = bound;
@@ -157,7 +159,8 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
                 Command = cmd.Command,
                 SessionId = sessionId,
                 Args = boundArgs[i] ?? cmd.Args?.GetRawText(),
-                Source = "cli-batch"
+                Source = "cli-batch",
+                OperationId = cmd.OperationId
             };
 
             ServiceResponse response;
@@ -344,6 +347,9 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
 
         [JsonPropertyName("sessionId")]
         public string? SessionId { get; init; }
+
+        [JsonPropertyName("operationId")]
+        public string? OperationId { get; init; }
 
         [JsonPropertyName("args")]
         public JsonElement? Args { get; init; }

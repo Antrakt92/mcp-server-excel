@@ -14,6 +14,28 @@ the formula or resolve function/UDF availability, external references, defined
 names, circular references, or overwrite/write eligibility. The later write still
 uses its own destination and overwrite checks.
 
+## Conditional cell edits
+
+Use MCP `range` action `patch-cells` with `patch_options`, or CLI
+`range patch-cells --patch-options <json>`, to update a short list of exact
+addresses on one worksheet. For example:
+
+```json
+{"edits":[{"address":"H27","expected":{"formula":"=F27*G27"},"replacement":{"formula":"=ROUND(F27*G27,2)"}}]}
+```
+
+Use `value: null` for a blank. A string under `value` stays literal even if
+it starts with `=`. Supply formulas in Excel's stored A1 spelling. The
+action uses scalar formula entry and excludes tables, merged cells, spills,
+legacy arrays, and protected locked cells.
+
+A conflict in the initial pass returns before any write. Excel events and
+other edits can intervene after that pass, so every write has another
+comparison. Inspect `writeReturnedAddresses`, `confirmedAddresses`, and any
+`unconfirmedAddress` before retrying. A confirmed address held the requested
+content at readback and may already have held it before the patch. The action
+operates on the open workbook and does not request a save.
+
 ## Finding matching cells
 
 CLI `range get-special-cells` and MCP `range_read` action `get-special-cells`
@@ -24,6 +46,21 @@ command verifies their absence with a whole-range check rather than reading
 each cell separately. An unexpected selection or verification failure remains
 an error, not an empty result. These checks do not edit cells or request a
 refresh.
+
+## Check what Excel displays
+
+Use MCP action `inspect-cells` in `range_read` or CLI `range inspect-cells`
+for a small region where the stored value and formatted result may differ.
+For example, a numeric ID may have the value 123 and display as 00123, and a
+date may have a numeric serial value. The action reads Excel's current cached
+values and display text without recalculating. Display text can vary by locale
+and available width. Use a screenshot to judge the visual layout.
+
+An inspection returns each address with its value, formula when applicable,
+and displayed text. Blank cells have a null value. Check the text truncation
+flags before using a returned
+field for an exact comparison. The inspection accepts a single rectangle of
+up to 64 cells. Use `get-values-page` for larger data reads.
 
 ## Reusable cell styles
 

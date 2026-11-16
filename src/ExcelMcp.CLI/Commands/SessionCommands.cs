@@ -315,6 +315,56 @@ internal sealed class SessionListCommand : AsyncCommand
     }
 }
 
+internal sealed class SessionOperationResultCommand : AsyncCommand<SessionOperationResultCommand.Settings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.SessionId))
+            return CliErrorOutput.WriteError("Session ID is required.");
+        Guid id;
+        try
+        {
+            id = OperationReceipts.ParseId(settings.OperationId);
+        }
+        catch (ArgumentException ex)
+        {
+            return CliErrorOutput.WriteError(ex.Message);
+        }
+
+        var pipeName = DaemonAutoStart.GetPipeName();
+        var connection = CliCommandRuntime.Current.DaemonConnection;
+        var request = new ServiceRequest
+        {
+            Command = OperationReceipts.LookupCommand,
+            SessionId = settings.SessionId,
+            Args = JsonSerializer.Serialize(new { operationId = id }, ServiceProtocol.JsonOptions)
+        };
+        var response = await CliTelemetry.TrackCommandAsync(request, () => connection.SendControlRequestAsync(
+            pipeName, request, cancellationToken, DaemonConnectionPolicy.ControlTimeout));
+        if (!response.Success && connection.ResolveFailureState(pipeName, response).Name == DaemonConnectionPolicy.StoppedState)
+            return CliResultOutput.WriteJson(JsonSerializer.Serialize(new
+            {
+                success = true,
+                operationId = id,
+                state = "unknown",
+                message = "The original host is stopped. Inspect the workbook before repeating the command."
+            }, ServiceProtocol.JsonOptions));
+
+        return CliResultOutput.Write(response, request.Command);
+    }
+
+    internal sealed class Settings : CommandSettings
+    {
+        [CommandOption("-s|--session <SESSION>")]
+        [Description("Workbook session of the tracked batch command.")]
+        public string? SessionId { get; init; }
+
+        [CommandOption("--operation-id <UUID>")]
+        [Description("Caller-generated UUID supplied as operationId in the original batch entry.")]
+        public string? OperationId { get; init; }
+    }
+}
+
 internal sealed class SessionTestCommand : AsyncCommand<SessionTestCommand.Settings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

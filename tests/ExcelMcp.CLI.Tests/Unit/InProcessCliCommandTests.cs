@@ -1392,6 +1392,24 @@ public sealed class InProcessCliCommandTests
     }
 
     [Fact]
+    public async Task Batch_TrackedSaveCarriesReceiptIdBesideArguments()
+    {
+        var operationId = Guid.NewGuid().ToString();
+        var factory = new RecordingClientFactory(
+            new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" });
+        var output = new StringWriter();
+        var runtime = CreateRuntime(factory, output, new StringWriter(),
+            $$"""{"command":"session.save","sessionId":"target","operationId":"{{operationId}}"}""");
+
+        Assert.Equal(0, await Program.RunAsync(["--quiet", "batch"], runtime));
+        var request = Assert.Single(factory.Requests);
+        Assert.Equal("session.save", request.Command);
+        Assert.Equal("target", request.SessionId);
+        Assert.Equal(operationId, request.OperationId);
+        Assert.Null(request.Args);
+    }
+
+    [Fact]
     public async Task Batch_UsesRealParserAndSendsEachValidatedRequest()
     {
         var factory = new RecordingClientFactory(

@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using Sbroenne.ExcelMcp.McpServer.ServiceBridge;
 using Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
@@ -16,6 +17,40 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 [Trait("RequiresExcel", "false")]
 public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task OperationResult_InvalidAndMissingReceiptsStayDistinct()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var input = new Pipe();
+        var outputPipe = new Pipe();
+        var host = await ProgramTransportTestHost.StartAsync(input, outputPipe, cancellation.Token, "OperationResultClient");
+        try
+        {
+            var operationId = Guid.NewGuid();
+            var args = new Dictionary<string, object?>
+            {
+                ["action"] = "operation-result",
+                ["workbook_session_id"] = "unseen-session",
+                ["operation_id"] = operationId.ToString()
+            };
+            var knownFormat = await host.Client.CallToolAsync("file_read", args);
+            Assert.False(knownFormat.IsError is true);
+            using var unknown = JsonDocument.Parse(Assert.Single(knownFormat.Content.OfType<TextContentBlock>()).Text);
+            Assert.Equal(operationId, unknown.RootElement.GetProperty("operationId").GetGuid());
+            Assert.Equal("unknown", unknown.RootElement.GetProperty("state").GetString());
+
+            args["operation_id"] = "not-a-uuid";
+            var malformedId = await host.Client.CallToolAsync("file_read", args);
+            Assert.True(malformedId.IsError);
+            using var malformed = JsonDocument.Parse(Assert.Single(malformedId.Content.OfType<TextContentBlock>()).Text);
+            Assert.Equal("InvalidInput", malformed.RootElement.GetProperty("errorCategory").GetString());
+        }
+        finally
+        {
+            await ProgramTransportTestHost.StopAsync(host.Client, input, outputPipe, host.ServerTask, output, cancellation);
+        }
+    }
+
     [Theory]
     [InlineData("exception")]
     [InlineData("invalid-json")]

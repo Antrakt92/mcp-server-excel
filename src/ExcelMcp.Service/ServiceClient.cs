@@ -53,7 +53,7 @@ public sealed class ServiceClient : IDisposable
     }
 
     internal static bool IsControlCommand(string command) =>
-        command is "service.ping" or "service.status" or "service.shutdown" or "session.list"
+        command is "service.ping" or "service.status" or "service.shutdown" or "session.list" or OperationReceipts.LookupCommand
             or "window.show" or "window.hide";
 
     internal static string GetControlPipeName(string pipeName) => pipeName + "-control";

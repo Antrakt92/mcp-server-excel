@@ -89,7 +89,8 @@ public sealed class ServiceBridge : IDisposable
         string? sessionId = null,
         object? args = null,
         int? timeoutSeconds = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? operationId = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (timeoutSeconds.HasValue)
@@ -100,7 +101,7 @@ public sealed class ServiceBridge : IDisposable
         lock (_stateLock)
             ObjectDisposedException.ThrowIf(_disposed, this);
         // These controller-local reads never take a worker's execution slot.
-        var slots = command is "session.list" or "service.status" or "service.ping"
+        var slots = command is "session.list" or "service.status" or "service.ping" or OperationReceipts.LookupCommand
             ? _statusDispatchSlots : _dispatchSlots;
         if (!slots.Wait(0))
             return new ServiceResponse
@@ -114,7 +115,7 @@ public sealed class ServiceBridge : IDisposable
         var lease = new DispatchLease(slots);
         try
         {
-            return await SendAdmittedAsync(command, sessionId, args, timeoutSeconds, cancellationToken, lease);
+            return await SendAdmittedAsync(command, sessionId, args, timeoutSeconds, cancellationToken, lease, operationId);
         }
         finally
         {
@@ -125,7 +126,7 @@ public sealed class ServiceBridge : IDisposable
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Service startup failures are logged and transported as Success=false ServiceStartup responses; caller cancellation and disposal are explicitly excluded from this boundary.")]
     private async Task<ServiceResponse> SendAdmittedAsync(string command, string? sessionId,
-        object? args, int? timeoutSeconds, CancellationToken cancellationToken, DispatchLease lease)
+        object? args, int? timeoutSeconds, CancellationToken cancellationToken, DispatchLease lease, string? operationId)
     {
         IServiceBridgeBackend instance;
         try
@@ -159,6 +160,7 @@ public sealed class ServiceBridge : IDisposable
             Command = command,
             SessionId = sessionId,
             Args = args is null ? null : JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions),
+            OperationId = operationId,
             CallerCancellation = deadline.Token
         };
 

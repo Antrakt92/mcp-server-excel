@@ -48,6 +48,9 @@ public sealed class ServiceRequest
 
     /// <summary>Source of the request (CLI or MCP).</summary>
     public string? Source { get; init; }
+
+    /// <summary>Optional caller-selected receipt ID for a supported workbook command.</summary>
+    public string? OperationId { get; init; }
 }
 
 /// <summary>

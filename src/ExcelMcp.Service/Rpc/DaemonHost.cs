@@ -251,8 +251,7 @@ internal sealed class DaemonHost : BackgroundService
     private async Task<ServiceResponse> DispatchRequestAsync(ServiceRequest request)
     {
         var sessionId = request.SessionId;
-        var control = request.Command is "service.ping" or "service.status" or "service.shutdown" or "session.list"
-            or "window.show" or "window.hide";
+        var control = ServiceClient.IsControlCommand(request.Command);
         var sessionless = ExcelMcpService.IsSessionlessCommand(request.Command);
         var claimSession = !control && !sessionless && !string.IsNullOrWhiteSpace(sessionId);
         if (claimSession && !_busySessions.TryAdd(sessionId!, 0))

@@ -44,8 +44,13 @@ public sealed class ServiceRequest
     /// <summary>Source of the request.</summary>
     public string? Source { get; init; }
 
+    /// <summary>Optional caller-selected receipt ID for a supported workbook command.</summary>
+    public string? OperationId { get; init; }
+
     // Host-only cancellation of this request's unstarted Excel work; never serialized.
     internal CancellationToken CallerCancellation { get; set; }
+    internal Task? LateNativeCompletion { get; set; }
+    internal Task<ServiceResponse?>? LateWorkerResponse { get; set; }
 
     /// <summary>
     /// Converts to shared request type for serialization.
@@ -55,7 +60,8 @@ public sealed class ServiceRequest
         Command = Command,
         SessionId = SessionId,
         Args = Args,
-        Source = Source ?? "cli"
+        Source = Source ?? "cli",
+        OperationId = OperationId
     };
 }
 
