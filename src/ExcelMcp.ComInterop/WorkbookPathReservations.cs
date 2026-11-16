@@ -62,6 +62,52 @@ internal sealed class WorkbookPathReservations<T>(Func<T, T, bool>? sameOwner = 
         }
     }
 
+    internal bool TryReserveAlias(string key, T value, Predicate<T> mayShare, out bool added)
+    {
+        lock (_sync)
+        {
+            var identity = Prepare(key);
+            added = false;
+            if (Matching(identity).Any(entry => !mayShare(entry.Value.Owner)))
+                return false;
+            if (_claims.ContainsKey(identity.Path))
+                return true;
+
+            // A native Save As may replace this directory entry rather than the
+            // original file. Remember the destination separately before dispatch.
+            var claim = new Claim(value);
+            Remember(claim, identity);
+            _claims.Add(identity.Path, claim);
+            added = true;
+            return true;
+        }
+    }
+
+    internal bool TryPublish(string key, T value, Predicate<T> isProvisionalOwner)
+    {
+        lock (_sync)
+        {
+            var identity = Prepare(key);
+            var matches = Matching(identity).ToArray();
+            if (matches.Any(entry => !_sameOwner(entry.Value.Owner, value)
+                && !isProvisionalOwner(entry.Value.Owner)))
+                return false;
+
+            // Excel can report another hard-link name for an open reserved file.
+            // Transfer the worker's provisional claim without touching a separate
+            // in-flight Save As claim that already belongs to the same session.
+            foreach (var entry in matches)
+                if (isProvisionalOwner(entry.Value.Owner))
+                    entry.Value.Owner = value;
+
+            if (!_claims.TryGetValue(identity.Path, out var claim))
+                _claims.Add(identity.Path, claim = new(value));
+            claim.Owner = value;
+            Remember(claim, identity);
+            return true;
+        }
+    }
+
     internal bool TryUpdate(string key, T value, T comparison)
     {
         lock (_sync)

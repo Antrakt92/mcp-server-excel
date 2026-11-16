@@ -309,14 +309,12 @@ internal sealed class ExcelController : IDisposable
                     && target.ValueKind == JsonValueKind.String && target.GetString() is { } targetPath)
                 {
                     var normalized = WorkbookLocation.GetOwnershipKey(FilePathValidation.NormalizeAbsoluteWindowsPath(targetPath));
-                    if (!_paths.TryGetValue(normalized, out var existing) || existing.SessionId != request.SessionId)
-                    {
-                        if (!_paths.TryAdd(normalized, reservation))
-                            return ExcelWorkerHost.Failure(request, "Conflict", "The Save As destination belongs to another session or pending request.");
+                    if (!_paths.TryReserveAlias(normalized, reservation,
+                        existing => existing.Token == "recorded" && existing.SessionId == request.SessionId,
+                        out var added))
+                        return ExcelWorkerHost.Failure(request, "Conflict", "The Save As destination belongs to another session or pending request.");
+                    if (added)
                         reservedPaths.Add(normalized);
-                    }
-                    else
-                        _paths[normalized] = existing;
                 }
             }
             if (!worker.Registration.Worker.IsAlive())
@@ -476,13 +474,9 @@ internal sealed class ExcelController : IDisposable
     {
         BeforeRecordPathPublicationHookForTests?.Invoke(sessionId, path);
         var recorded = new PathReservation("recorded", sessionId);
-        if (_paths.TryGetValue(path, out var existing))
-        {
-            if (existing.SessionId != sessionId && existing.Token != worker.Registration.PipeName)
-                throw new InvalidOperationException("The workbook's physical path is reserved by another worker or session.");
-            if (_paths.TryUpdate(path, recorded, existing)) return;
-        }
-        _paths[path] = recorded;
+        if (!_paths.TryPublish(path, recorded,
+            existing => existing.SessionId is null && existing.Token == worker.Registration.PipeName))
+            throw new InvalidOperationException("The workbook's physical path is reserved by another worker or session.");
     }
 
     internal async Task<ExcelWorkerClient> StartWorkerAsync(ExcelProcessIdentity? excel, CancellationToken cancellationToken)

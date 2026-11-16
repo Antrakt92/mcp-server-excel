@@ -140,18 +140,48 @@ public sealed class WorkbookPhysicalOwnershipTests
             Link(destination, source);
             var claims = new WorkbookPathReservations<string>();
             Assert.True(claims.TryAdd(source, "session"));
-            Assert.True(claims.TryGetValue(destination, out var owner));
-            Assert.Equal("session", owner);
-            claims[destination] = owner;
+            Assert.True(claims.TryReserveAlias(destination, "session", owner => owner == "session", out var added));
+            Assert.True(added);
+            Assert.False(claims.TryReserveAlias(destination, "other", owner => owner == "other", out _));
             File.WriteAllText(temporary, "synthetic-replacement");
             File.Move(temporary, destination, overwrite: true);
             Assert.True(claims.TryRemove(source, out _));
             Assert.True(claims.TryAdd(source, "other-source"));
             Assert.False(claims.TryAdd(destination, "other"));
-            Assert.True(claims.TryGetValue(destination, out owner));
+            Assert.True(claims.TryGetValue(destination, out var owner));
             Assert.Equal("session", owner);
             Assert.True(claims.TryRemove(new(destination, "session")));
             Assert.True(claims.TryAdd(destination, "other"));
+        });
+    }
+
+    [Fact]
+    public void Reservations_SnapshotOfOldPathDoesNotConsumePendingSaveAsAlias()
+    {
+        WithDirectory((root, actual, alias) =>
+        {
+            var source = Path.Combine(actual, "source.xlsx");
+            var destination = Path.Combine(root, "destination.xlsx");
+            var reported = Path.Combine(root, "reported.xlsx");
+            File.WriteAllText(source, "synthetic-original");
+            Link(destination, source);
+            Link(reported, source);
+            // Distinct claims for the same session, like a recorded path and
+            // the temporary Save As reservation that must survive polling.
+            var claims = new WorkbookPathReservations<(string Session, string Kind)>((first, second) =>
+                first.Session == second.Session);
+            Assert.True(claims.TryAdd(source, ("session", "recorded")));
+            Assert.True(claims.TryReserveAlias(destination, ("session", "pending"),
+                owner => owner == ("session", "recorded"), out var added));
+            Assert.True(added);
+            Assert.False(claims.TryReserveAlias(destination, ("session", "pending-2"),
+                owner => owner == ("session", "recorded"), out _));
+            Assert.True(claims.TryPublish(reported, ("session", "recorded"), _ => false));
+            Assert.True(claims.TryRemove(new(destination, ("session", "pending"))));
+            Assert.False(claims.TryAdd(destination, ("other", "pending")));
+            Assert.True(claims.TryRemove(new(source, ("session", "recorded"))));
+            Assert.True(claims.TryRemove(new(reported, ("session", "recorded"))));
+            Assert.True(claims.TryAdd(destination, ("other", "pending")));
         });
     }
 
