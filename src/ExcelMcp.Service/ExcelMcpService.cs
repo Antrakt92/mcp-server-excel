@@ -1524,6 +1524,26 @@ public sealed class ExcelMcpService : IDisposable
 
         return ex switch
         {
+            RangePatchException patch => new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = errorCategory,
+                ErrorMessage = errorMessage,
+                ExceptionType = exceptionType,
+                HResult = hresult,
+                InnerError = innerError,
+                PartialState = MergeExecutionDiagnostics(JsonSerializer.Serialize(new
+                {
+                    patch.State.SheetName,
+                    patch.State.WriteReturnedAddresses,
+                    patch.State.ConfirmedAddresses,
+                    patch.State.ConflictAddresses,
+                    patch.State.UnconfirmedAddress,
+                    patch.State.ReadbackMismatch
+                }, ServiceProtocol.JsonOptions), ex)
+            },
             _ when FindVbaSourceEdit(ex) is { } vbaEx => new ServiceResponse
             {
                 Success = false,

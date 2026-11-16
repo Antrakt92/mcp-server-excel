@@ -147,6 +147,18 @@ public interface IRangeCommands
     [ServiceAction("set-values")]
     OperationResult SetValues(IExcelBatch batch, [AllowEmptyString] string sheetName, [RequiredParameter] string rangeAddress, List<List<object?>>? values = null, [LocalInputFile] string? valuesFile = null, [FromString] OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty);
 
+    /// <summary>
+    /// Apply up to 100 single-cell edits on one worksheet. Compare all expectations before writing
+    /// and recheck each cell before its write. Reports conflicts and confirmed addresses. Excel
+    /// events and interactive edits can still intervene. Changes are not rolled back or saved.
+    /// Tables, merged cells, spills and legacy arrays are excluded. Formulas use scalar A1 entry.
+    /// </summary>
+    /// <param name="sheetName">Exact worksheet name.</param>
+    /// <param name="patchOptions">Object with edits: [{address, expected, replacement}]. Each state specifies either formula (an A1 formula starting with '=') or value (number, boolean, literal text, or null for blank).</param>
+    [ServiceAction("patch-cells")]
+    RangePatchResult PatchCells(IExcelBatch batch, [RequiredParameter] string sheetName,
+        [RequiredParameter] RangePatchOptions patchOptions);
+
     // === FORMULA OPERATIONS ===
 
     /// <summary>

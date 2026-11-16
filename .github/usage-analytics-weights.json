@@ -420,6 +420,7 @@
         "get-values-page": "light",
         "get-values": "light",
         "set-formulas": "medium",
+        "patch-cells": "medium",
         "set-number-format": "medium",
         "set-number-formats": "medium",
         "set-values": "medium",

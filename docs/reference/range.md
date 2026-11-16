@@ -14,6 +14,28 @@ the formula or resolve function/UDF availability, external references, defined
 names, circular references, or overwrite/write eligibility. The later write still
 uses its own destination and overwrite checks.
 
+## Conditional cell edits
+
+Use MCP `range` action `patch-cells` with `patch_options`, or CLI
+`range patch-cells --patch-options <json>`, to update a short list of exact
+addresses on one worksheet. For example:
+
+```json
+{"edits":[{"address":"H27","expected":{"formula":"=F27*G27"},"replacement":{"formula":"=ROUND(F27*G27,2)"}}]}
+```
+
+Use `value: null` for a blank. A string under `value` stays literal even if
+it starts with `=`. Supply formulas in Excel's stored A1 spelling. The
+action uses scalar formula entry and excludes tables, merged cells, spills,
+legacy arrays, and protected locked cells.
+
+A conflict in the initial pass returns before any write. Excel events and
+other edits can intervene after that pass, so every write has another
+comparison. Inspect `writeReturnedAddresses`, `confirmedAddresses`, and any
+`unconfirmedAddress` before retrying. A confirmed address held the requested
+content at readback and may already have held it before the patch. The action
+operates on the open workbook and does not request a save.
+
 ## Finding matching cells
 
 CLI `range get-special-cells` and MCP `range_read` action `get-special-cells`
