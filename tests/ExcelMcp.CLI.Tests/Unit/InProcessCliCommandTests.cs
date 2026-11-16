@@ -216,6 +216,36 @@ public sealed class InProcessCliCommandTests
     }
 
     [Fact]
+    public async Task SaveCopyAs_PackageOptionAndRefusalKeepExactContract()
+    {
+        const string policy = """{"baselinePath":"C:/source.xlsm","allowedParts":["xl/vbaProject.bin"]}""";
+        var factory = new RecordingClientFactory(new ServiceResponse
+        {
+            Success = true,
+            Result = """
+                {"success":false,"errorCategory":"Conflict","errorMessage":"Package change refused.","filePublished":false,"packageComparison":{"matchesAllowlist":false,"changes":[]}}
+                """
+        });
+        var output = new StringWriter();
+        var exit = await Program.RunAsync(
+            ["--quiet", "workbook", "save-copy-as", "--session", "active",
+                "--target-path", "C:/result.xlsm", "--package-check", policy],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(1, exit);
+        var request = Assert.Single(factory.Requests);
+        Assert.Equal("workbook.save-copy-as", request.Command);
+        Assert.Equal("active", request.SessionId);
+        using var args = JsonDocument.Parse(request.Args!);
+        Assert.Equal("C:/source.xlsm", args.RootElement.GetProperty("packageCheck").GetProperty("baselinePath").GetString());
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.Equal("Conflict", result.RootElement.GetProperty("error").GetProperty("category").GetString());
+        var data = result.RootElement.GetProperty("data");
+        Assert.False(data.GetProperty("filePublished").GetBoolean());
+        Assert.False(data.GetProperty("packageComparison").GetProperty("matchesAllowlist").GetBoolean());
+    }
+
+    [Fact]
     public async Task NonRedirectedOperation_WritesOnlyJsonToStdout()
     {
         var factory = new RecordingClientFactory(new ServiceResponse

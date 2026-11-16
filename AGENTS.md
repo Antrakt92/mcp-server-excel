@@ -123,8 +123,10 @@ assumption that passing compilation proves runtime correctness.
   explicit `session.compare-packages` action is an offline exception for
   hashing parts of two caller-selected, saved XLSX/XLSM files. Keep it
   read-only, bound its archive inputs and output, and return part identities
-  and hashes without returning their content. Normal workbook commands must
-  not open workbook ZIPs or interpret their XML. The Power Query user settings
+  and hashes without returning their content. The optional package check for
+  `workbook.save-copy-as` uses the same read-only comparator on a saved
+  baseline and Excel's staged output before publication. Other workbook
+  commands must not open workbook ZIPs or interpret their XML. The Power Query user settings
   archive is separate from workbook content. Pre-open binary detection
   may read only IRM/AIP protection metadata.
 - Behavioral changes require a focused failing regression test before the fix.

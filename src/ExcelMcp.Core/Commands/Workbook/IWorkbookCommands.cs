@@ -230,11 +230,16 @@ public interface IWorkbookCommands
         bool overwrite = false);
 
     /// <summary>Saves a copy without changing the active workbook or session path. The output extension must match the active workbook.</summary>
+    /// <param name="batch">Excel batch session</param>
+    /// <param name="targetPath">Absolute output path in an existing directory</param>
+    /// <param name="overwrite">Whether an existing output file may be replaced</param>
+    /// <param name="packageCheck">Optional XLSX/XLSM package check. Supply an absolute baselinePath of the same format and an explicit allowedParts array of exact ZIP part names. The staged copy is published only when all changes are allowed.</param>
     [ServiceAction("save-copy-as")]
-    OperationResult SaveCopyAs(
+    WorkbookSaveCopyResult SaveCopyAs(
         IExcelBatch batch,
         [RequiredParameter] string targetPath,
-        bool overwrite = false);
+        bool overwrite = false,
+        WorkbookCopyPackageCheck? packageCheck = null);
 
     /// <summary>Exports the workbook to PDF or XPS using Excel's fixed-format renderer.</summary>
     /// <param name="batch">Excel batch session</param>

@@ -1,3 +1,4 @@
+using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Core.Utilities;
@@ -9,6 +10,7 @@ public partial class WorkbookCommands
 {
     internal static Action<string>? BeforeNativeSaveAsHookForTests { get; set; }
     internal static Action<string>? BeforeOutputCommitHookForTests { get; set; }
+    internal static Action<string>? BeforeCheckedStageOpenForTests { get; set; }
 
     /// <inheritdoc />
     public OperationResult SaveAs(
@@ -97,12 +99,28 @@ public partial class WorkbookCommands
     }
 
     /// <inheritdoc />
-    public OperationResult SaveCopyAs(IExcelBatch batch, string targetPath, bool overwrite = false)
+    public WorkbookSaveCopyResult SaveCopyAs(
+        IExcelBatch batch, string targetPath, bool overwrite = false, WorkbookCopyPackageCheck? packageCheck = null)
     {
-        var normalizedPath = ValidateOutputPath(targetPath, overwrite);
+        var normalizedPath = ValidateOutputPath(
+            packageCheck is null ? targetPath : WorkbookPackageComparison.NormalizePackagePath(targetPath), overwrite);
         var outputExtension = Path.GetExtension(normalizedPath);
+        string? baselinePath = null;
+        string[]? allowedParts = null;
+        if (packageCheck is not null)
+        {
+            baselinePath = WorkbookPackageComparison.NormalizePackagePath(packageCheck.BaselinePath);
+            if (!outputExtension.Equals(Path.GetExtension(baselinePath), StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("A checked copy and its baseline must have the same .xlsx or .xlsm extension.", nameof(packageCheck));
+            if (packageCheck.AllowedParts is null)
+                throw new ArgumentException("Supply allowedParts explicitly. Use [] to require no package changes.", nameof(packageCheck));
+
+            allowedParts = WorkbookPackageComparison.ValidateAllowlist(packageCheck.AllowedParts).ToArray();
+            ValidateCheckedCopyDestination(baselinePath, normalizedPath, batch.WorkbookPath);
+        }
+
         var writePath = CreateOutputStagingPath(normalizedPath);
-        return batch.Execute((context, _) =>
+        return batch.Execute((context, cancellationToken) =>
         {
             var currentExtension = string.IsNullOrEmpty(context.Book.Path)
                 ? context.Book.FileFormat switch
@@ -121,17 +139,58 @@ public partial class WorkbookCommands
                     $"Save Copy As preserves the current workbook format. Output extension must be '{currentExtension}'.",
                     nameof(targetPath));
             }
+
+            // Keep the baseline stable across Excel's native save, comparison, and output commit.
+            using var baseline = baselinePath is null ? null :
+                new FileStream(baselinePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (baseline is not null)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            FileStream? staged = null;
+            bool published = false;
+            bool checkedStageNeedsHandle = false;
             Exception? operationFailure = null;
             try
             {
                 context.Book.SaveCopyAs(writePath);
-                BeforeOutputCommitHookForTests?.Invoke(writePath);
-                PublishStagedOutput(writePath, normalizedPath, overwrite);
-                return new OperationResult
+                WorkbookPackageComparisonResult? comparison = null;
+                if (baseline is null)
+                {
+                    BeforeOutputCommitHookForTests?.Invoke(writePath);
+                    PublishStagedOutput(writePath, normalizedPath, overwrite);
+                }
+                else
+                {
+                    // Verify and publish through the same Windows file handle.
+                    checkedStageNeedsHandle = true;
+                    BeforeCheckedStageOpenForTests?.Invoke(writePath);
+                    staged = CheckedWorkbookCopyFile.Open(writePath);
+                    BeforeOutputCommitHookForTests?.Invoke(writePath);
+                    comparison = WorkbookPackageComparison.Compare(
+                        baseline, staged, baselinePath!, writePath, allowedParts, cancellationToken);
+                    if (!comparison.MatchesAllowlist)
+                        return new WorkbookSaveCopyResult
+                        {
+                            Action = "save-copy-as",
+                            FilePublished = false,
+                            PackageComparison = comparison,
+                            ErrorCategory = "Conflict",
+                            ErrorMessage = "Excel changed package parts outside the allowlist. The staged copy was discarded."
+                        };
+
+                    ValidateCheckedCopyDestination(baselinePath!, normalizedPath, context.WorkbookPath);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    CheckedWorkbookCopyFile.Publish(staged, normalizedPath, overwrite);
+                }
+
+                published = true;
+                return new WorkbookSaveCopyResult
                 {
                     Success = true,
                     Action = "save-copy-as",
                     FilePath = normalizedPath,
+                    FilePublished = comparison is null ? null : true,
+                    PackageComparison = comparison,
                     Message = $"Workbook copy saved to '{normalizedPath}'"
                 };
             }
@@ -142,9 +201,29 @@ public partial class WorkbookCommands
             }
             finally
             {
-                OperationCleanup.Run(() => File.Delete(writePath), operationFailure);
+                if (staged is not null)
+                {
+                    using (staged)
+                    {
+                        if (!published)
+                            OperationCleanup.Run(() => CheckedWorkbookCopyFile.MarkForDeletion(staged, writePath), operationFailure);
+                    }
+                }
+                else if (!checkedStageNeedsHandle)
+                {
+                    OperationCleanup.Run(() => File.Delete(writePath), operationFailure);
+                }
             }
         });
+    }
+
+    private static void ValidateCheckedCopyDestination(string baselinePath, string destinationPath, string currentWorkbookPath)
+    {
+        if (WorkbookLocation.MatchesReportedLocation(baselinePath, destinationPath))
+            throw new ArgumentException("The checked copy destination must not refer to the baseline workbook.", nameof(destinationPath));
+        if (!WorkbookLocation.IsRemote(currentWorkbookPath) && Path.IsPathFullyQualified(currentWorkbookPath) &&
+            WorkbookLocation.MatchesReportedLocation(currentWorkbookPath, destinationPath))
+            throw new ArgumentException("The checked copy destination must not refer to the active workbook.", nameof(destinationPath));
     }
 
     /// <inheritdoc />
