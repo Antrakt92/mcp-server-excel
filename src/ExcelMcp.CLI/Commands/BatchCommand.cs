@@ -65,15 +65,6 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             return 1;
         }
 
-        // Admit the complete batch before validation or connection: a later sensitive
-        // command must not allow earlier file-based commands to run first.
-        if (!string.IsNullOrEmpty(settings.InputFile) && settings.InputFile != "-"
-            && commands.Any(command => command is not null && _CliCategoryMetadata.RequiresBatchStdin(command.Command)))
-        {
-            WriteError(_CliCategoryMetadata.BatchStdinOnlyMessage);
-            return 1;
-        }
-
         // Validate all commands have a command field
         for (int i = 0; i < commands.Count; i++)
         {
@@ -87,6 +78,16 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         // Service routing and its policy checks use canonical names. Keep the
         // supplied spelling for the item's output, like MCP batch.
         var canonicalCommands = commands.Select(entry => entry.Command.ToLowerInvariant()).ToArray();
+
+        // Admit the whole batch with the same names used for dispatch, before
+        // argument validation or any connection.
+        if (!string.IsNullOrEmpty(settings.InputFile) && settings.InputFile != "-"
+            && canonicalCommands.Any(_CliCategoryMetadata.RequiresBatchStdin))
+        {
+            WriteError(_CliCategoryMetadata.BatchStdinOnlyMessage);
+            return 1;
+        }
+
         var validationErrors = new Dictionary<int, (Exception Cause, long DurationMs)>();
         var validationDurations = new long[commands.Count];
         var boundArgs = new string?[commands.Count];

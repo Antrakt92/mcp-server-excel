@@ -116,6 +116,7 @@ public sealed class CliStdinOnlyPolicyTests
     [Theory]
     [InlineData("vba.protect-project")]
     [InlineData("VBA.UNLOCK-PROJECT")]
+    [InlineData("vba.unloc\u212A-project")]
     [InlineData("vba.verify-password")]
     public async Task MixedFileBatch_IsRejectedBeforeAnyConnectionOrDispatch(string command)
     {
