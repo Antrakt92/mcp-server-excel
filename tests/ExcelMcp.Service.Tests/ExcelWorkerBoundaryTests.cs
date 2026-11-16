@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Service.Workers;
@@ -222,9 +223,11 @@ public sealed class ExcelWorkerBoundaryTests
     }
 
     [Theory(Timeout = 15000)]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ProcessIdentity_ExitDuringReadDoesNotHideLiveProbeFailures(bool remainAlive)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ProcessIdentity_ExitDuringReadDoesNotHideLiveProbeFailures(bool remainAlive, bool accessDenied)
     {
         using var process = Process.Start(new ProcessStartInfo("pwsh")
         {
@@ -239,13 +242,20 @@ public sealed class ExcelWorkerBoundaryTests
         {
             WorkerProcess.BeforeIdentityReadForTests = probe =>
             {
+                if (!remainAlive)
+                {
+                    process.StandardInput.Close();
+                    Assert.True(process.WaitForExit(5000));
+                    probe.Refresh();
+                }
+                if (accessDenied)
+                    throw new Win32Exception(5);
                 if (remainAlive)
                     throw new InvalidOperationException("Live process identity could not be read.");
-                process.StandardInput.Close();
-                Assert.True(process.WaitForExit(5000));
-                probe.Refresh();
             };
-            if (remainAlive)
+            if (remainAlive && accessDenied)
+                Assert.Equal(5, Assert.Throws<Win32Exception>(() => identity.IsAlive()).NativeErrorCode);
+            else if (remainAlive)
                 Assert.Equal("Live process identity could not be read.",
                     Assert.Throws<InvalidOperationException>(() => identity.IsAlive()).Message);
             else
@@ -312,6 +322,61 @@ public sealed class ExcelWorkerBoundaryTests
             registry.Remove(record.PipeName);
             File.Delete(Path.Combine(directory, record.PipeName + ".json.tmp"));
             Directory.Delete(directory);
+        }
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task Registry_AccessDeniedPreservesUnconfirmedRecordsAndContinuesReading()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-denied-worker-");
+        var registry = new WorkerRegistry(directory.FullName);
+        var current = WorkerProcess.Current;
+        var exited = current with { StartedAtUtcFileTime = current.StartedAtUtcFileTime - 1 };
+        using var process = Process.Start(new ProcessStartInfo("pwsh")
+        {
+            ArgumentList = { "-NoProfile", "-Command", "[Console]::ReadLine() | Out-Null" },
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        })!;
+        var denied = WorkerProcess.From(process);
+        WorkerRegistration CreateRecord(WorkerProcess worker, WorkerProcess controller, bool released = false) =>
+            new($"excelmcp-worker-{Guid.NewGuid():N}", worker, controller, "generation", WorkerRegistry.Build, null,
+                ReleaseConfirmed: released);
+        var inaccessibleWorker = CreateRecord(denied, exited);
+        var inaccessibleController = CreateRecord(exited, denied);
+        var inaccessibleReleaseOwner = CreateRecord(exited, denied, released: true);
+        var live = CreateRecord(current, current);
+        var stale = CreateRecord(exited, exited);
+        var records = new[] { inaccessibleWorker, inaccessibleController, inaccessibleReleaseOwner, live, stale };
+        try
+        {
+            foreach (var record in records)
+                registry.Write(record);
+            WorkerProcess.BeforeIdentityReadForTests = probe =>
+            {
+                if (probe.Id == denied.ProcessId)
+                    throw new Win32Exception(5);
+            };
+
+            var retained = registry.Read();
+            Assert.Equal(3, retained.Count);
+            Assert.Contains(inaccessibleWorker, retained);
+            Assert.Contains(inaccessibleReleaseOwner, retained);
+            Assert.Contains(live, retained);
+            Assert.Equal(inaccessibleWorker, registry.Read(inaccessibleWorker.PipeName));
+            Assert.Equal(inaccessibleController, registry.Read(inaccessibleController.PipeName));
+            Assert.Equal(inaccessibleReleaseOwner, registry.Read(inaccessibleReleaseOwner.PipeName));
+            Assert.Null(registry.Read(stale.PipeName));
+        }
+        finally
+        {
+            WorkerProcess.BeforeIdentityReadForTests = null;
+            process.StandardInput.Close();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            foreach (var record in records)
+                registry.Remove(record.PipeName);
+            directory.Delete();
         }
     }
 
