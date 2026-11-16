@@ -436,13 +436,38 @@ public sealed class ExcelMcpService : IDisposable
         WithSessionAsync(request, batch =>
         {
             batch.Save();
-            return new ServiceResponse
-            {
-                Success = true,
-                Result = JsonSerializer.Serialize(new { success = true, sessionId = request.SessionId, saved = true },
-                    ServiceProtocol.JsonOptions)
-            };
+            return SavedResponse(request.SessionId);
         }).GetAwaiter().GetResult();
+
+    private static ServiceResponse SavedResponse(string? sessionId) => new()
+    {
+        Success = true,
+        Result = JsonSerializer.Serialize(new { success = true, sessionId, saved = true }, ServiceProtocol.JsonOptions)
+    };
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A late Excel callback failure is returned with its original details. Uncertain outcomes remain unknown and workbook work is never retried.")]
+    internal async Task<ServiceResponse?> ResolveLateNativeResponseAsync(ServiceRequest request)
+    {
+        try
+        {
+            // Only these commands execute one native callback after the write-access preflight.
+            if (request.Command == "table.append" && request.LateNativeCompletion is Task<OperationResult> append)
+                return WrapResult(JsonSerializer.Serialize(await append.ConfigureAwait(false), ServiceProtocol.JsonOptions));
+            if (request.Command == "session.save" && request.LateNativeCompletion is Task<int> save)
+            {
+                await save.ConfigureAwait(false);
+                return SavedResponse(request.SessionId);
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return IsFatalExcelDisconnect(ex)
+                ? null
+                : CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null, includeOperationStatus: false);
+        }
+    }
 
     private static readonly Dictionary<string, string> SessionParameterDescriptions = new(StringComparer.Ordinal)
     {
@@ -455,6 +480,7 @@ public sealed class ExcelMcpService : IDisposable
         ["approved"] = "true only after explicit approval of this action on the selected workbook",
         ["allowRememberedTrust"] = "true only after approval that Excel can remember this file as trusted",
         ["allowReopen"] = "true only after separate approval to close and reopen the saved workbook; opening macros can run",
+        ["operationId"] = "UUID from a tracked table.append or session.save request",
     };
 
     internal static void ValidateSessionActionArguments(string action, string? argsJson)
@@ -468,6 +494,7 @@ public sealed class ExcelMcpService : IDisposable
             "attach" => ["workbookId"],
             "enable-editing" or "enable-connections" => ["approved", "allowRememberedTrust"],
             "enable-macros" => ["approved", "allowReopen"],
+            "operation-result" => ["operationId"],
             _ => []
         };
         var unknownParameters = ServiceRegistry.GetJsonPropertyNames(argsJson, includeNullValues: true)
@@ -1162,6 +1189,9 @@ public sealed class ExcelMcpService : IDisposable
                 ConnectionCommands.ValidateAccountSettingsReadiness(batch!);
             }
             ServiceRegistry.ValidateWorkbookWriteAccess(request.Command, batch!, request.Args);
+            if (request.OperationId is not null && OperationReceipts.Supports(request.Command))
+                owner?.SetOperationContext(request.Command, request.CallerCancellation,
+                    completion => request.LateNativeCompletion = completion);
             var response = action(batch!);
             return Task.FromResult(response);
         }
@@ -1471,7 +1501,12 @@ public sealed class ExcelMcpService : IDisposable
 
     private ServiceResponse CreateErrorResponse(
         Exception ex, string? command = null, string? sessionId = null,
-        IReadOnlyList<string>? retainedFiles = null, Exception? recoveryFailure = null)
+        IReadOnlyList<string>? retainedFiles = null, Exception? recoveryFailure = null) =>
+        CreateErrorResponseCore(ex, command, sessionId, retainedFiles, recoveryFailure, includeOperationStatus: true);
+
+    private ServiceResponse CreateErrorResponseCore(
+        Exception ex, string? command, string? sessionId,
+        IReadOnlyList<string>? retainedFiles, Exception? recoveryFailure, bool includeOperationStatus)
     {
         if (ex is SessionStartupPendingException pending)
         {
@@ -1488,7 +1523,7 @@ public sealed class ExcelMcpService : IDisposable
         string? innerError = null;
         var errorCategory = OperationFailureClassifier.Classify(ex);
         var errorMessage = $"{exceptionType}: {ex.Message}";
-        if (errorCategory == "Busy" && sessionId is not null &&
+        if (includeOperationStatus && errorCategory == "Busy" && sessionId is not null &&
             !errorMessage.Contains(ExcelBusyException.DialogGuidance, StringComparison.Ordinal))
         {
             // Reporting the error must not retire a session or reveal its window.
@@ -1522,6 +1557,7 @@ public sealed class ExcelMcpService : IDisposable
                 $"Recovery reveal also failed: {recoveryFailure.GetType().Name}: {recoveryFailure.Message}";
         }
 
+        var operation = includeOperationStatus && sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null;
         return ex switch
         {
             RangePatchException patch => new ServiceResponse
@@ -1555,7 +1591,7 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = recoveryFailure is null ? DescribeDisconnectedInnerErrors(ex) : innerError,
                 PartialState = MergeExecutionDiagnostics(SerializeVbaEditState(vbaEx.State,
-                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    operation,
                     sessionId, retainedFiles), ex)
             },
             _ when FindVbaProjectProtection(ex) is { } protection => new ServiceResponse
@@ -1569,7 +1605,7 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = innerError,
                 PartialState = MergeExecutionDiagnostics(SerializeVbaProtectionState(protection.State,
-                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    operation,
                     sessionId, retainedFiles), ex)
             },
             _ when FindVbaProjectAuthentication(ex) is { } authentication => new ServiceResponse
@@ -1583,7 +1619,7 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = innerError,
                 PartialState = MergeExecutionDiagnostics(SerializeVbaAuthenticationState(authentication.State,
-                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    operation,
                     sessionId, retainedFiles), ex)
             },
             PowerQueryCommandException pqEx => new ServiceResponse
@@ -1597,8 +1633,24 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = innerError,
                 PartialState = MergeExecutionDiagnostics(SerializePartialState(pqEx.PartialState,
-                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    operation,
                     sessionId, retainedFiles), ex)
+            },
+            TableAppendException append => new ServiceResponse
+            {
+                Success = false,
+                Command = command,
+                SessionId = sessionId,
+                ErrorCategory = errorCategory,
+                ErrorMessage = errorMessage,
+                ExceptionType = exceptionType,
+                HResult = hresult,
+                InnerError = innerError,
+                PartialState = MergeExecutionDiagnostics(JsonSerializer.Serialize(new
+                {
+                    outcome = append.PartialState.ExpansionVerified ? "partially-applied" : "unknown",
+                    append = append.PartialState
+                }, ServiceProtocol.JsonOptions), ex)
             },
             _ => new ServiceResponse
             {
@@ -1611,7 +1663,7 @@ public sealed class ExcelMcpService : IDisposable
                 HResult = hresult,
                 InnerError = innerError,
                 PartialState = MergeExecutionDiagnostics(SerializeStartupFailureState(ex, SerializePartialState(null,
-                    sessionId is not null ? _sessionManager.GetOperationStatus(sessionId) : null,
+                    operation,
                     sessionId, retainedFiles)), ex)
             }
         };

@@ -21,7 +21,7 @@ internal static class CliTelemetry
     {
         ["service"] = ["start", "stop", "status", "shutdown", "ping"],
         ["session"] = ["create", "open", "save", "close", "list", "test", "discover", "attach",
-            "notices", "enable-editing", "enable-connections", "enable-macros"],
+            "notices", "operation-result", "enable-editing", "enable-connections", "enable-macros"],
         ["batch"] = ["run"],
         ["list-actions"] = ["run"]
     };

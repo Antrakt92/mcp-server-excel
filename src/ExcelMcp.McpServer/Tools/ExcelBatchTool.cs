@@ -10,6 +10,7 @@ using ModelContextProtocol.Server;
 using Sbroenne.ExcelMcp.Core.Attributes;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.McpServer.Telemetry;
+using Sbroenne.ExcelMcp.Service;
 
 namespace Sbroenne.ExcelMcp.McpServer.Tools;
 
@@ -33,6 +34,11 @@ public sealed class BatchCommandEntry
     [JsonPropertyName("sessionId")]
     [Description("Optional session override for this entry, outside args.")]
     public string? SessionId { get; init; }
+
+    /// <summary>Optional UUID for a table.append or session.save operation receipt.</summary>
+    [JsonPropertyName("operationId")]
+    [Description("Optional caller-generated UUID for table.append or session.save. Query file_read operation-result for its outcome if the reply is lost. Use only once.")]
+    public string? OperationId { get; init; }
 
     /// <summary>Command arguments using Service camelCase keys, not MCP snake_case inputs or CLI flags.</summary>
     [JsonPropertyName("args")]
@@ -59,6 +65,8 @@ public static partial class ExcelBatchTool
     /// Other returned values are not substituted. Use individual tools when later steps need inspection.
     /// Continues after errors by default; set stop_on_error:true for dependent steps.
     /// Timeouts, cancellation, and reported unknown completion always stop further commands, because Excel work may still be running.
+    /// For table.append or session.save, supply a caller-generated operationId outside args to track its outcome.
+    /// After an uncertain response, query file_read operation-result with that UUID and the same workbook session.
     /// After 8 MiB of result JSON, the batch keeps the last result intact and stops before another command.
     /// If commands remain, the reply reports stopReason:result-budget. Inspect the returned results before continuing.
     /// Results contain each executed or rejected entry's zero-based index, command, success and normal MCP JSON fields.
@@ -206,7 +214,7 @@ public static partial class ExcelBatchTool
             var validationFailure = await Task.Run(() => ValidateCommand(entry, operation, command, sessionId, validateArguments),
                 cancellationToken).WaitAsync(cancellationToken);
             var outcome = validationFailure ?? await ExcelToolsBase.ForwardResultToServiceAsync(
-                bridge, command, sessionId, entry.Args, cancellationToken);
+                bridge, command, sessionId, entry.Args, cancellationToken, entry.OperationId);
             invocation = ExcelToolsBase.ClassifyToolResponse(tool, action, outcome.ToToolJson());
             return outcome;
         }
@@ -240,6 +248,8 @@ public static partial class ExcelBatchTool
                 throw new ArgumentException("args must be a JSON object or null.");
             var argsJson = entry.Args?.GetRawText();
             validateArguments(command, argsJson);
+            if (entry.OperationId is { } operationId)
+                OperationReceipts.ValidateTracking(command, operationId);
             ServiceRegistry.BindLocalInputFileArguments(command, argsJson, callerDirectory: null);
             return null;
         }

@@ -115,6 +115,9 @@ public sealed partial class ExcelControllerTests
             return Task.FromResult(new WorkerExecution(new ServiceResponse { Success = false }, false, Snapshot()));
         }
 
+        public Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId,
+            CancellationToken cancellationToken = default) => Task.FromResult<ServiceResponse?>(null);
+
         public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default)
         {
             ReleaseCalls++;

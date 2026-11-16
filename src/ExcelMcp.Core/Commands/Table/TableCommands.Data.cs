@@ -33,7 +33,10 @@ public partial class TableCommands
             Excel.Range? firstNewCell = null;
             Excel.Range? destination = null;
             bool expansionAttempted = false;
+            bool expansionVerified = false;
             bool writeAttempted = false;
+            int originalRowCount = 0;
+            int expectedRows = 0;
 
             try
             {
@@ -54,7 +57,7 @@ public partial class TableCommands
                 }
 
                 listRows = table.ListRows;
-                int originalRowCount = listRows.Count;
+                originalRowCount = listRows.Count;
                 bool showTotals = table.ShowTotals;
                 // An empty table's Range can include its blank insert row, which ListRows excludes.
                 int dataAndHeaderHeight = originalRowCount == 0 && !showTotals
@@ -74,11 +77,11 @@ public partial class TableCommands
 
                 expandedRange = tableRange.Resize[dataAndHeaderHeight + rowsToAdd, columnCount];
                 ct.ThrowIfCancellationRequested();
+                expectedRows = originalRowCount + rowsToAdd;
                 expansionAttempted = true;
                 table.Resize(expandedRange);
 
                 body = table.DataBodyRange;
-                int expectedRows = originalRowCount + rowsToAdd;
                 int actualRows = listRows.Count;
                 var bodySize = body is null ? (Rows: 0, Columns: 0) : RangeHelpers.GetDimensions(body);
                 bool actualTotals = table.ShowTotals;
@@ -87,6 +90,7 @@ public partial class TableCommands
                         $"Excel returned {actualRows} table rows and a {bodySize.Rows} by {bodySize.Columns} data range " +
                         $"(totals visible: {actualTotals}); expected {expectedRows} rows and {columnCount} columns " +
                         $"(totals visible: {showTotals}).");
+                expansionVerified = true;
 
                 bodyCells = body!.Cells;
                 firstNewCell = bodyCells[originalRowCount + 1, 1];
@@ -104,9 +108,10 @@ public partial class TableCommands
                 string state = writeAttempted
                     ? "Writing the new rows began. Their values may have changed."
                     : "Writing the supplied values did not begin. Excel may have filled formulas in the new rows.";
-                throw new InvalidOperationException(
+                throw new TableAppendException(
                     $"Append to table '{tableName}' failed after table expansion began. " +
-                    $"{state} Inspect the table before retrying. {ex.Message}", ex);
+                    $"{state} Inspect the table before retrying. {ex.Message}",
+                    new(tableName, originalRowCount, expectedRows, expansionVerified, writeAttempted), ex);
             }
             finally
             {

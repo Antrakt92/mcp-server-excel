@@ -72,6 +72,24 @@ See [window management](window.md#visibility-and-placement).
 - Report what actually succeeded, the saved file when relevant, and any remaining
   failure. Do not present an attempted action as a completed result.
 
+For an append or save that must be recoverable after a timeout, put a fresh UUID
+in the batch entry's `operationId`, beside `command` and `sessionId`. Use it only
+once. The two tracked commands are `table.append` and `session.save`.
+
+After losing a reply, look up the same UUID and session with MCP `file_read`
+action `operation-result` (`operation_id`, `workbook_session_id`) or
+`excelcli session operation-result --operation-id <UUID> --session <ID>`.
+A receipt is `pending` while the host waits for the original operation,
+`completed` when that operation succeeded, `partially-applied` when an append
+failed after its table expansion was verified, or `failed` when the operation
+returned another error. Failure can leave workbook changes. `unknown` means the host has no
+confirmed result. Inspect the affected workbook before sending a replacement
+command. A completed append can still require a separate save.
+
+Up to 128 receipts live in the original host's memory for 15 minutes after completion.
+The host rejects a duplicate UUID while it is retained. After a restart or
+expiry, inspect the workbook if the previous outcome is still in doubt.
+
 Use MCP `file_read` with action `test` (CLI: `excelcli session test`) when access
 or protection is uncertain.
 Ordinary files are briefly opened read-only for this check. IRM/AIP workbooks

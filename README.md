@@ -22,7 +22,7 @@ This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroen
 [Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-4.1.0.md)
 
 The latest portable release, **4.1.0**, includes upstream **2.6.11** and exposes
-446 operations through 64 MCP tools across 33 feature areas. It adds native
+447 operations through 64 MCP tools across 33 feature areas. It adds native
 process exit history and separates operation errors from visibility-snapshot
 errors. CLI and MCP batches stop when an Excel disconnect leaves completion
 uncertain. Existing VBA password and screenshot capabilities remain available.
@@ -149,7 +149,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ### Command coverage
 
-The combined catalogue provides **64 MCP tools across 33 feature areas, with 446 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 446 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **64 MCP tools across 33 feature areas, with 447 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 447 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 

@@ -39,6 +39,9 @@ public enum FileAction
     [System.Text.Json.Serialization.JsonStringEnumMemberName("notices")]
     Notices,
 
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("operation-result")]
+    OperationResult,
+
     [System.Text.Json.Serialization.JsonStringEnumMemberName("enable-editing")]
     EnableEditing,
 

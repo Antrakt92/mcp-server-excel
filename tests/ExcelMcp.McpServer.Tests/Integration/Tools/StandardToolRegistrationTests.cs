@@ -51,7 +51,7 @@ public sealed class StandardToolRegistrationTests(ITestOutputHelper output)
             tool.ProtocolTool.Annotations?.ReadOnlyHint == true,
             $"{tool.Name} must advertise readOnlyHint=true."));
         Assert.Equal("attach,close,create,enable-connections,enable-editing,enable-macros,open,save", ActionNames("file"));
-        Assert.Equal("discover,list,notices,test", ActionNames("file_read"));
+        Assert.Equal("discover,list,notices,operation-result,test", ActionNames("file_read"));
         Assert.Equal("list", ActionNames("worksheet_read"));
         Assert.Equal("get-settings", ActionNames("calculation_mode_read"));
         Assert.DoesNotContain(

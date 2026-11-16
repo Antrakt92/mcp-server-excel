@@ -81,8 +81,14 @@ internal sealed class ExcelWorkerClient
 
     internal async Task<WorkerExecution> ExecuteWithAdmissionAsync(ServiceRequest request, CancellationToken cancellationToken)
     {
-        var execution = await CallAsync(rpc => rpc.ExecuteAsync(new(Guid.NewGuid().ToString("N"), _generation, request), cancellationToken),
+        var operationId = request.OperationId is { } receiptId
+            ? OperationReceipts.ParseId(receiptId).ToString("N") : Guid.NewGuid().ToString("N");
+        var execution = await CallAsync(rpc => rpc.ExecuteAsync(new(operationId, _generation, request), cancellationToken),
             CancellationToken.None, ServiceClient.DefaultRequestTimeout);
+        if (execution.HasLateNativeCompletion)
+            request.LateWorkerResponse = CallAsync(
+                rpc => rpc.ObserveLateCompletionAsync(_generation, operationId, CancellationToken.None),
+                CancellationToken.None, ServiceClient.DefaultRequestTimeout);
         return execution with { Snapshot = RecordSnapshot(execution.Snapshot) };
     }
 

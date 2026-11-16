@@ -68,7 +68,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     private bool? _originalDisplayAlerts;
     internal Action? BeforeApplicationLeaseReleaseHookForTests { get; set; }
     private readonly List<string> _closedWorkbookPathsDuringShutdown = [];
-    private readonly AsyncLocal<(string? Command, CancellationToken CallerCancellation)> _commandContext = new();
+    private readonly AsyncLocal<(string? Command, CancellationToken CallerCancellation,
+        Action<Task>? RegisterLateCompletion)> _commandContext = new();
     private string? _operationCommand;
     private long _operationStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
     private DateTime _operationStartedAtUtc = DateTime.UtcNow;
@@ -1324,8 +1325,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             _windowReveal = outcome;
     }
 
-    internal void SetOperationContext(string command, CancellationToken callerCancellation) =>
-        _commandContext.Value = (command, callerCancellation);
+    internal void SetOperationContext(string command, CancellationToken callerCancellation,
+        Action<Task>? registerLateCompletion = null) =>
+        _commandContext.Value = (command, callerCancellation, registerLateCompletion);
 
     private void FinishOperation(Exception? error)
     {
@@ -1428,7 +1430,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
         cancellationToken.ThrowIfCancellationRequested();
-        var (command, callerCancellation) = _commandContext.Value;
+        var (command, callerCancellation, registerLateCompletion) = _commandContext.Value;
         callerCancellation.ThrowIfCancellationRequested();
 
         // Fail fast if a previous operation timed out or was cancelled while the STA thread
@@ -1537,6 +1539,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 return completion.Task.GetAwaiter().GetResult();
             // Only cancellation of this wait's actual deadline is a session timeout.
             var expiredWhileQueued = workItem.TryDiscard();
+            if (!expiredWhileQueued)
+                registerLateCompletion?.Invoke(completion.Task);
             if (!expiredWhileQueued && !completion.Task.IsCompleted)
             {
                 _operationTimedOut = true;
@@ -1564,6 +1568,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         catch (OperationCanceledException)
         {
             var cancelledWhileQueued = workItem.TryDiscard();
+            if (!cancelledWhileQueued)
+                registerLateCompletion?.Invoke(completion.Task);
             _logger.LogDebug("Operation cancelled or timed out for {FileName}", Path.GetFileName(_workbookPath));
             if (!cancelledWhileQueued && !completion.Task.IsCompleted)
             {

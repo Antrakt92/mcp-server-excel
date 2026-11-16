@@ -68,7 +68,8 @@ internal sealed record WorkerRegistration(
 
 internal sealed record WorkerClaim(WorkerProcess Controller, string Generation, string Build);
 internal sealed record WorkerCall(string OperationId, string Generation, ServiceRequest Request);
-internal sealed record WorkerExecution(ServiceResponse Response, bool Accepted, WorkerSnapshot Snapshot);
+internal sealed record WorkerExecution(ServiceResponse Response, bool Accepted, WorkerSnapshot Snapshot,
+    bool HasLateNativeCompletion = false);
 internal sealed record WorkerRelease(ServiceResponse Response, WorkerSnapshot Snapshot);
 internal sealed record WorkerSnapshot(
     WorkerRegistration Registration,
@@ -88,6 +89,7 @@ internal partial interface IExcelWorkerRpc
     Task<WorkerSnapshot> ClaimAsync(WorkerClaim claim, CancellationToken cancellationToken = default);
     Task<WorkerSnapshot> SnapshotAsync(string generation, CancellationToken cancellationToken = default);
     Task<WorkerExecution> ExecuteAsync(WorkerCall call, CancellationToken cancellationToken = default);
+    Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId, CancellationToken cancellationToken = default);
     Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default);
 }
 

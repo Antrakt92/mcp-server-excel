@@ -256,6 +256,7 @@
         "discover": "light",
         "attach": "light",
         "notices": "light",
+        "operation-result": "light",
         "enable-editing": "medium",
         "enable-connections": "medium",
         "enable-macros": "medium",

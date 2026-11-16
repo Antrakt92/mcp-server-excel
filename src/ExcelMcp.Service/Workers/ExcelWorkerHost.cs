@@ -24,6 +24,7 @@ internal sealed class ExcelWorkerHost : IDisposable
     private WorkerSnapshot _snapshot;
     private string? _pendingOperation;
     private string? _pendingCommand;
+    private readonly Dictionary<(string Generation, string Id), Task<ServiceResponse?>> _lateCompletions = [];
     private bool _releasing;
     private Task? _refresh;
     private string? _statusError;
@@ -174,6 +175,8 @@ internal sealed class ExcelWorkerHost : IDisposable
             if ((_registration.Controller != claim.Controller || _registration.Generation != claim.Generation)
                 && _registration.Controller.IsAlive())
                 throw new InvalidOperationException("This Excel worker still belongs to another running controller.");
+            if (_registration.Generation != claim.Generation)
+                _lateCompletions.Clear();
             _registration = _registration with { Controller = claim.Controller, Generation = claim.Generation };
             _registry.Write(_registration);
             return SnapshotCore();
@@ -293,10 +296,18 @@ internal sealed class ExcelWorkerHost : IDisposable
             var response = await Task.Run(() => ProcessAsync(call.Request), CancellationToken.None);
             if (cancellationToken.IsCancellationRequested)
                 _service.RevealAbandonedRequest(call.Request, response);
+            var lateCompletion = call.Request.LateNativeCompletion is not null
+                ? _service.ResolveLateNativeResponseAsync(call.Request) : null;
             lock (_stateLock)
             {
                 _pendingOperation = null;
                 _pendingCommand = null;
+                if (lateCompletion is not null && _registration.Generation == call.Generation)
+                {
+                    if (_lateCompletions.Count >= 16)
+                        _lateCompletions.Remove(_lateCompletions.Keys.First());
+                    _lateCompletions.Add((call.Generation, call.OperationId), lateCompletion);
+                }
             }
             using (SessionDiagnostics.BeginCloseStage("worker-completion"))
             {
@@ -317,7 +328,8 @@ internal sealed class ExcelWorkerHost : IDisposable
                     response = response.WithCompletionFailure(call.Request, ex);
                 }
             }
-            return Completed(closeTimings is null ? response : response.WithCloseTimings(closeTimings.Snapshot()), accepted: true);
+            var execution = Completed(closeTimings is null ? response : response.WithCloseTimings(closeTimings.Snapshot()), accepted: true);
+            return execution with { HasLateNativeCompletion = lateCompletion is not null };
         }
 
         finally
@@ -522,6 +534,17 @@ internal sealed class ExcelWorkerHost : IDisposable
 
         public Task<WorkerExecution> ExecuteAsync(WorkerCall call, CancellationToken cancellationToken = default) =>
             host.ExecuteAsync(call, clientId, cancellationToken);
+
+        public async Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            host.Authorize(generation, clientId);
+            Task<ServiceResponse?>? completion;
+            lock (host._stateLock)
+                host._lateCompletions.Remove((generation, operationId), out completion);
+            return completion is null ? null : await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default) =>
             host.ReleaseAsync(generation, clientId);

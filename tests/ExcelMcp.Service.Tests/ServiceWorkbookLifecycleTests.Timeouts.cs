@@ -333,8 +333,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
         });
     }
 
-    [Fact]
-    public async Task PrivateWorker_CancelledRunningSave_RevealsExcelBeforeCompletion()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PrivateWorker_RunningSave_RevealsExcelAndCanReportLateCompletion(bool waitForNativeTimeout)
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>
         {
@@ -351,7 +353,11 @@ public sealed partial class ServiceWorkbookLifecycleTests
             var failure = await Record.ExceptionAsync(async () =>
             {
                 await worker.InitializeAsync();
-                var session = await CreateSessionAsync(service, path);
+                var session = GetSessionId(await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.create",
+                    Args = JsonSerializer.Serialize(new { filePath = path, timeoutSeconds = 10 }, ServiceProtocol.JsonOptions)
+                }));
                 sessions[session] = 0;
                 await WriteMarkerAsync(service, session, "Saved only by the requested running save");
                 var batch = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(session));
@@ -366,11 +372,13 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     saving.TrySetResult();
                     Assert.True(release.Wait(TimeSpan.FromSeconds(30)));
                 };
-                save = worker.ExecuteAsync(new ServiceRequest
+                var saveRequest = new ServiceRequest
                 {
                     Command = "session.save",
-                    SessionId = session
-                }, cancellation.Token);
+                    SessionId = session,
+                    OperationId = waitForNativeTimeout ? Guid.NewGuid().ToString() : null
+                };
+                save = worker.ExecuteAsync(saveRequest, cancellation.Token);
                 await saving.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 foreach (var command in PrivateWorkerTraceReadCommands)
                 {
@@ -385,7 +393,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     Assert.True(batch.OperationStatus.ExecutionPending);
                     Assert.False(save.IsCompleted);
                 }
-                cancellation.Cancel();
+                if (waitForNativeTimeout)
+                    Assert.Equal("Timeout", (await save.WaitAsync(TimeSpan.FromSeconds(15))).ErrorCategory);
+                else
+                    cancellation.Cancel();
                 Assert.True(SpinWait.SpinUntil(() =>
                 {
                     excel.Refresh();
@@ -393,10 +404,19 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 }, TimeSpan.FromSeconds(3)),
                     $"Wait expired: {batch.OperationStatus.WaitExpired}; window: {batch.OperationStatus.WindowReveal}.");
                 Assert.True(batch.OperationStatus.ExecutionPending);
-                Assert.False(save.IsCompleted);
+                Assert.Equal(waitForNativeTimeout, save.IsCompleted);
                 ExcelShutdownService.BeforeSaveHookForTests = null;
                 release.Set();
-                RequireSuccess(await save.WaitAsync(TimeSpan.FromSeconds(10)));
+                if (waitForNativeTimeout)
+                {
+                    var late = await (saveRequest.LateWorkerResponse
+                        ?? throw new InvalidOperationException("The native completion was not retained.")).WaitAsync(TimeSpan.FromSeconds(10));
+                    RequireSuccess(late ?? throw new InvalidOperationException("The worker returned no save receipt."));
+                    using var receipt = JsonDocument.Parse(late.Result!);
+                    Assert.True(receipt.RootElement.GetProperty("saved").GetBoolean());
+                }
+                else
+                    RequireSuccess(await save.WaitAsync(TimeSpan.FromSeconds(10)));
                 Assert.Equal("Saved only by the requested running save", await ReadMarkerAsync(service, session));
                 await CloseSessionAsync(service, session, save: false);
                 sessions.TryRemove(session, out _);
@@ -405,7 +425,7 @@ public sealed partial class ServiceWorkbookLifecycleTests
             release.Set();
             var completion = await Record.ExceptionAsync(async () =>
             {
-                if (save is not null)
+                if (save is not null && !waitForNativeTimeout)
                     RequireSuccess(await save.WaitAsync(TimeSpan.FromSeconds(10)));
                 foreach (var session in sessions.Keys)
                 {
