@@ -47,7 +47,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "Value/formula writes attempt to restore the prior calculation mode; restoration can fail without failing the write. Verify the mode when later work depends on it; manual mode needs calculation_mode calculate. " +
         "To create an Excel Table use table create, not range. Use range_edit for insert/delete/find/sort/fill, range_format for styling/validation, and range_link for hyperlinks/protection.")]
 [McpReadOnlyActions("get-values", "get-formulas", "get-spill-info", "validate-formulas", "get-number-formats",
-    "get-used-range", "get-current-region", "get-info", "get-used-range-info", "get-values-page", "get-special-cells", "trace-precedents", "trace-dependents")]
+    "get-used-range", "get-current-region", "get-info", "get-used-range-info", "get-values-page", "inspect-cells", "get-special-cells", "trace-precedents", "trace-dependents")]
 public interface IRangeCommands
 {
     /// <summary>
@@ -106,6 +106,20 @@ public interface IRangeCommands
     [ServiceAction("get-values-page")]
     RangeReadPageResult GetValuesPage(IExcelBatch batch, [AllowEmptyString] string sheetName,
         [RequiredParameter] string rangeAddress, int rowOffset = 0, int columnOffset = 0, int pageRows = 100, int pageColumns = 100);
+
+    /// <summary>
+    /// Reads typed values, A1 formulas and Excel's native displayed text for at most 64 cells.
+    /// Text reflects Excel's formatting, locale, and width (including characters such as ####).
+    /// Values of dates and times are Excel serial numbers. Recognized native errors are returned
+    /// as canonical Excel error names and codes. Each text field is capped at 512 UTF-16 code
+    /// units, with a separate flag for each truncated field. Does not recalculate or change the view.
+    /// </summary>
+    /// <param name="batch">Excel batch session</param>
+    /// <param name="sheetName">Worksheet name, or empty string for a named range</param>
+    /// <param name="rangeAddress">One rectangular range with at most 64 cells</param>
+    [ServiceAction("inspect-cells")]
+    RangeCellInspectionResult InspectCells(IExcelBatch batch, [AllowEmptyString] string sheetName,
+        [RequiredParameter] string rangeAddress);
 
     // === VALUE OPERATIONS ===
 

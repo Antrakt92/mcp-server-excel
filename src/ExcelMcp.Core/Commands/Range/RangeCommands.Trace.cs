@@ -159,8 +159,8 @@ public partial class RangeCommands
                     object? value = cell.Value2;
                     if (ExcelErrorMapper.TryGet(value, out _, out var mapped) && IsNativeError(context, cell, 1, 1))
                         value = mapped.Name;
-                    string? formulaPreview = LimitTraceText(formula, maxPreviewCharacters);
-                    object? valuePreview = value is string text ? LimitTraceText(text, maxPreviewCharacters) : value;
+                    string? formulaPreview = LimitCellPreviewText(formula, maxPreviewCharacters);
+                    object? valuePreview = value is string text ? LimitCellPreviewText(text, maxPreviewCharacters) : value;
                     bool formulaTruncated = formulaPreview != formula;
                     bool valueTruncated = !Equals(valuePreview, value);
                     result.Truncation.PreviewTextTruncated |= formulaTruncated || valueTruncated;
@@ -177,7 +177,7 @@ public partial class RangeCommands
         }
     }
 
-    private static string? LimitTraceText(string? text, int limit)
+    private static string? LimitCellPreviewText(string? text, int limit)
     {
         if (text is null || text.Length <= limit)
             return text;

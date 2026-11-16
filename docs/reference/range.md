@@ -47,6 +47,21 @@ each cell separately. An unexpected selection or verification failure remains
 an error, not an empty result. These checks do not edit cells or request a
 refresh.
 
+## Check what Excel displays
+
+Use MCP action `inspect-cells` in `range_read` or CLI `range inspect-cells`
+for a small region where the stored value and formatted result may differ.
+For example, a numeric ID may have the value 123 and display as 00123, and a
+date may have a numeric serial value. The action reads Excel's current cached
+values and display text without recalculating. Display text can vary by locale
+and available width. Use a screenshot to judge the visual layout.
+
+An inspection returns each address with its value, formula when applicable,
+and displayed text. Blank cells have a null value. Check the text truncation
+flags before using a returned
+field for an exact comparison. The inspection accepts a single rectangle of
+up to 64 cells. Use `get-values-page` for larger data reads.
+
 ## Reusable cell styles
 
 Use an existing style when it expresses the requested meaning. A custom cell

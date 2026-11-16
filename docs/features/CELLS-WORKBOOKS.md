@@ -57,10 +57,11 @@ Disabling it cannot restore lost digits.
 
 ---
 
-## Ranges (68 operations)
+## Ranges (69 operations)
 
 - **Conditional cell edits:** Compare the current values or formulas, update specific cells, and read back the result.
 - **Inspect large sheets:** Read UsedRange bounds without values, then page a fixed rectangle within cell/byte limits.
+- **Check displayed cells:** Read the stored value, formula, and text that Excel displays in a small range.
 - **Inspect formatting:** Read aggregate stored/displayed properties and mixed fields without per-cell formatting output.
 
 - **Work with data:** Read and write values or formulas, search and replace, copy selected content, and insert or remove cells, rows, and columns.

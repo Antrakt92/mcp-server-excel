@@ -418,6 +418,7 @@
         "get-spill-info": "light",
         "get-used-range": "light",
         "get-used-range-info": "light",
+        "inspect-cells": "light",
         "get-values-page": "light",
         "get-values": "light",
         "set-formulas": "medium",

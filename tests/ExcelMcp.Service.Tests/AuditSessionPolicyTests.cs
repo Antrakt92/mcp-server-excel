@@ -40,6 +40,7 @@ public sealed class AuditSessionPolicyTests
     [InlineData("range.get-used-range")]
     [InlineData("range.get-used-range-info")]
     [InlineData("range.get-values-page")]
+    [InlineData("range.inspect-cells")]
     [InlineData("rangeformat.get-format-summary")]
     [InlineData("chartconfig.get-text-format")]
     [InlineData("vba.view")]
