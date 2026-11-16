@@ -36,6 +36,31 @@ public sealed class CliStdinOnlyPolicyTests
     }
 
     [Theory]
+    [InlineData(null, null)]
+    [InlineData("--whole-word", null)]
+    [InlineData("--match-case", null)]
+    [InlineData("--whole-word", "false")]
+    public async Task DirectUnicodeAction_IsRefusedBeforeParsingTypedArguments(string? option, string? value)
+    {
+        const string marker = "SyntheticProbeOnly7";
+        var arguments = new List<string> { "vba" };
+        if (option is not null)
+            arguments.Add(option);
+        if (value is not null)
+            arguments.Add(value);
+        arguments.AddRange(["unloc\u212A-project", "--session", "owned", "--start-line", marker]);
+        var result = await Run(arguments.ToArray());
+
+        Assert.DoesNotContain(marker, result.Output + result.Error, StringComparison.Ordinal);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(0, result.Client.Connections);
+        Assert.Empty(result.Client.Requests);
+        using var output = JsonDocument.Parse(result.Output);
+        Assert.Equal(_CliCategoryMetadata.BatchStdinOnlyMessage,
+            output.RootElement.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Theory]
     [InlineData("--session:owned")]
     [InlineData("-s:owned")]
     [InlineData("--session=owned")]
