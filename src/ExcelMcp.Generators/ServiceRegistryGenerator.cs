@@ -125,7 +125,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             ("session.list", "Sbroenne.ExcelMcp.Core.Models.SessionListResult"),
             ("session.discover", "Sbroenne.ExcelMcp.ComInterop.Session.WorkbookDiscoveryResult"),
             ("session.notices", "Sbroenne.ExcelMcp.Core.Models.SessionNoticesResult"),
-            ("session.test", "Sbroenne.ExcelMcp.Core.Models.FileValidationInfo")
+            ("session.test", "Sbroenne.ExcelMcp.Core.Models.FileValidationInfo"),
+            ("session.compare-packages", "Sbroenne.ExcelMcp.Core.Models.WorkbookPackageComparisonResult")
         })
             if (compilation.GetTypeByMetadataName(typeName) is { } type)
                 Emit(command, type, true);

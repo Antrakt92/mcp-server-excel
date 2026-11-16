@@ -35,5 +35,7 @@ public enum FileReadAction
     [JsonStringEnumMemberName("notices")]
     Notices,
     [JsonStringEnumMemberName("operation-result")]
-    OperationResult
+    OperationResult,
+    [JsonStringEnumMemberName("compare-packages")]
+    ComparePackages
 }

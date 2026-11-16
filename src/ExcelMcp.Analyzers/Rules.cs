@@ -63,6 +63,6 @@ internal static class Rules
     public static readonly DiagnosticDescriptor WorkbookPackageAccess = new(
         "EXL009",
         "Workbook contents must be accessed through Excel",
-        "'{0}' accesses an Excel workbook package. Use Excel COM in production; package access belongs only in test fixtures.",
+        "'{0}' accesses an Excel workbook package. Use Excel COM for workbook content. Only the explicit read-only package comparator may inspect saved package parts.",
         ComSafety, DiagnosticSeverity.Error, isEnabledByDefault: true);
 }

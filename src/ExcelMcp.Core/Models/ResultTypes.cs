@@ -681,6 +681,26 @@ public class NamedRangeInfo
 /// </summary>
 public class NamedRangeValue
 {
+    /// <summary>Native visibility, returned when reading metadata.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Visible { get; set; }
+
+    /// <summary>LocalRange, ExternalRange, or Unavailable when Excel cannot return a range.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResolutionStatus { get; set; }
+
+    /// <summary>Number of areas in a range resolved inside the selected workbook.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? AreaCount { get; set; }
+
+    /// <summary>Native HRESULT when Excel rejects the reference-to-range conversion.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ResolutionHResult { get; set; }
+
+    /// <summary>Native message accompanying a reported resolution failure.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResolutionMessage { get; set; }
+
     /// <summary>
     /// Name of the named range
     /// </summary>

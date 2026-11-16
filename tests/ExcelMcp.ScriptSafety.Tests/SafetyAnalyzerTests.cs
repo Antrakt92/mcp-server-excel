@@ -465,6 +465,20 @@ public sealed class SafetyAnalyzerTests
     }
 
     [Theory]
+    [InlineData("WorkbookPackageComparison", "[Content_Types].xml", false)]
+    [InlineData("WorkbookPackageComparison", "xl/worksheets/sheet1.xml", true)]
+    [InlineData("OtherWorkbookReader", "[Content_Types].xml", true)]
+    public async Task WorkbookPackageComparison_AllowsOnlyRequiredMetadataLiteral(
+        string type, string part, bool expected)
+    {
+        var diagnostics = await AnalyzeAsync($$"""
+            namespace Sbroenne.ExcelMcp.Core.Utilities;
+            class {{type}} { const string Part = "{{part}}"; }
+            """, new ComAccessAnalyzer(), path: "src/ExcelMcp.Core/Utilities/WorkbookPackageComparison.cs");
+        Assert.Equal(expected, diagnostics.Any(diagnostic => diagnostic.Id == "EXL009"));
+    }
+
+    [Theory]
     [InlineData("", "EXL020")]
     [InlineData("[Trait(\"RequiresExcel\", \"sometimes\")]", "EXL020")]
     [InlineData("[Trait(\"RequiresExcel\", \"true\")]", "EXL021")]

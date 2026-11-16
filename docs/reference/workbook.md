@@ -150,6 +150,51 @@ Save Copy As preserves the source format. For a never-saved workbook, Excel's
 actual workbook format determines the required output extension; copying does
 not give the source a saved path or save its pending edits.
 
+## Compare saved workbook packages
+
+Use MCP `file_read` with action `compare-packages` or
+`excelcli session compare-packages` to compare two saved XLSX or XLSM files
+without opening them in Excel. Supply absolute paths as `before_path` and
+`after_path` in MCP, or `--before-path` and `--after-path` in the CLI.
+The comparison hashes uncompressed ZIP part bytes, so a different compression
+level or ZIP timestamp alone does not show up as a workbook part change.
+
+Pass exact, case-sensitive package part names in MCP `allowed_parts` or repeat
+CLI `--allow-part` for each name. Omit the list to allow zero changes. Read
+`matchesAllowlist` to decide whether the result meets the policy. A completed
+comparison returns added, removed and changed entries even on a policy
+mismatch. The report contains part names and hashes. For a scope such as
+VBA project bytes, allow only the exact VBA part name and check that it
+appears as changed. File comparison alone cannot establish VBA compatibility,
+Excel calculation results, or rendering. The comparator caps each ZIP at
+256 MiB and 8,192 parts, and reports up to 1,024 changed parts. It rejects
+split, encrypted, or ZIP64 archives and returns an error if a limit is exceeded.
+
+### Check a copy before publishing it
+
+For an XLSX or XLSM copy, set `package_check` on MCP `workbook` action
+`save-copy-as`, or pass `--package-check` JSON to
+`excelcli workbook save-copy-as`. Use `packageCheck` in batch arguments.
+The object takes an absolute `baselinePath` to a saved file of the same format
+and an explicit `allowedParts` array. Use a baseline Excel can share for read
+access and a separate output path. An empty array requires all parts to match.
+
+Excel saves a temporary candidate next to the requested destination. MCP
+checks its parts and publishes the verified candidate only when every observed
+difference is allowed. A policy refusal returns `filePublished: false` with
+the complete `packageComparison` and leaves the destination intact. With
+`overwrite` disabled, a different process that creates the destination first
+keeps its file. If the staged file cannot be locked, the error reports the
+unpublished staging path for inspection.
+
+For a VBA edit in a standard XLSM, an allowlist containing only
+`xl/vbaProject.bin` permits changes to that part. Check that it appears as
+`changed` in `packageComparison`. Excel can rewrite other parts during a
+save and those differences cause a refusal. This checks package bytes. VBA
+references, signatures, and behavior inside a changed project need their own
+verification. If the client loses the response, inspect the destination and
+session before retrying.
+
 ## Metadata and document properties
 
 Use built-in properties for existing document metadata and custom properties

@@ -147,7 +147,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             var cmd = commands[i];
             var command = canonicalCommands[i];
             var itemTimer = Stopwatch.StartNew();
-            var sessionId = cmd.SessionId ?? activeSession;
+            var sessionId = command == ExcelController.PackageComparisonCommand ? null : cmd.SessionId ?? activeSession;
             if (validationErrors.TryGetValue(i, out var validationError))
             {
                 WriteValidationError(i, cmd, validationError.Cause, validationError.DurationMs);

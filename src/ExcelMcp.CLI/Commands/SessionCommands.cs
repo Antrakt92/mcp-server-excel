@@ -365,6 +365,41 @@ internal sealed class SessionOperationResultCommand : AsyncCommand<SessionOperat
     }
 }
 
+internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionComparePackagesCommand.Settings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        var request = new ServiceRequest
+        {
+            Command = ExcelController.PackageComparisonCommand,
+            Args = JsonSerializer.Serialize(new
+            {
+                beforePath = settings.BeforePath,
+                afterPath = settings.AfterPath,
+                allowedParts = settings.AllowedParts
+            }, ServiceProtocol.JsonOptions)
+        };
+        using var client = await CliCommandRuntime.Current.ClientFactory.ConnectAsync(cancellationToken);
+        var response = await CliTelemetry.TrackCommandAsync(request, () => client.SendAsync(request, cancellationToken));
+        return CliResultOutput.Write(response, request.Command);
+    }
+
+    internal sealed class Settings : CommandSettings
+    {
+        [CommandOption("--before-path <FILE>")]
+        [Description("Absolute path to the original saved XLSX/XLSM.")]
+        public string? BeforePath { get; init; }
+
+        [CommandOption("--after-path <FILE>")]
+        [Description("Absolute path to the resulting saved XLSX/XLSM.")]
+        public string? AfterPath { get; init; }
+
+        [CommandOption("--allow-part <PART>")]
+        [Description("Exact package part allowed to change. Repeat for multiple parts.")]
+        public string[] AllowedParts { get; init; } = [];
+    }
+}
+
 internal sealed class SessionTestCommand : AsyncCommand<SessionTestCommand.Settings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

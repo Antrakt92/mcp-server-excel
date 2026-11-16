@@ -320,9 +320,21 @@ coauthoring state.
 Named ranges can refer to cells, constants, or formulas. Create/update references
 use English formula syntax, including decimal points, regardless of regional
 settings. Define a cell reference before writing through the name.
-Discovery omits internal/hidden names and can omit large value previews; read
-the intended name when values are needed. Changing a query parameter does not
-itself refresh its load.
+Discovery omits internal and hidden names and can omit large value previews.
+To create a hidden name, set `visible: false` in MCP `namedrange` with action
+`create`, or use `excelcli namedrange create --visible false`. The default is
+visible.
+
+Use MCP `namedrange_read` with action `read` and `metadata_only: true`, or
+`excelcli namedrange read --metadata-only true`, to inspect a known name, including
+a hidden name. Supply the sheet-qualified name for a sheet-scoped name. The
+result includes `visible`, the stored `refersTo` formula and
+`resolutionStatus`. A local range reports `areaCount`, including disjoint
+ranges. An external range has status `ExternalRange`. If Excel cannot return
+a range, the status is `Unavailable`; when Excel reports an error, the
+response gives its HRESULT and message and preserves the formula. This mode
+does not read cell values. Ordinary reads still require a single rectangular
+range to return values. Changing a query parameter does not refresh its load.
 
 Creation first adds the requested name with reference `=0`, then assigns the
 requested reference. Invalid names are rejected before that first step completes.

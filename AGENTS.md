@@ -119,11 +119,16 @@ assumption that passing compilation proves runtime correctness.
   work on duplicate workbooks as a prerequisite to requested edits. Explain
   destructive consequences without adding file-copy steps. Copying or exporting
   is appropriate only when part of the user's request.
-- Production code must access workbook contents through Excel COM. Never open
-  an Excel workbook file as a ZIP/OOXML package or parse/modify its internal XML
-  outside tests. The isolated Power Query user-settings archive reader is not a
-  workbook-content path. Pre-open binary container detection may read only
-  IRM/AIP protection metadata; it must not parse workbook content.
+- Production code uses Excel COM to read or change workbook content. The
+  explicit `session.compare-packages` action is an offline exception for
+  hashing parts of two caller-selected, saved XLSX/XLSM files. Keep it
+  read-only, bound its archive inputs and output, and return part identities
+  and hashes without returning their content. The optional package check for
+  `workbook.save-copy-as` uses the same read-only comparator on a saved
+  baseline and Excel's staged output before publication. Other workbook
+  commands must not open workbook ZIPs or interpret their XML. The Power Query user settings
+  archive is separate from workbook content. Pre-open binary detection
+  may read only IRM/AIP protection metadata.
 - Behavioral changes require a focused failing regression test before the fix.
   Documentation/configuration-only changes do not need synthetic tests.
 - MCP Server and `excelcli` are the only supported product entry points. Do not

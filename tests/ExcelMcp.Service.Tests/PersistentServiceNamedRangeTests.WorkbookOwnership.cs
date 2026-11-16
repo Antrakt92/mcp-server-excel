@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -80,6 +81,18 @@ public sealed partial class PersistentServiceNamedRangeTests
                 Assert.Equal("InvalidInput", response.ErrorCategory);
                 Assert.Contains("another workbook", response.ErrorMessage, StringComparison.Ordinal);
             }
+
+            var metadataResponse = _fixture.Send("namedrange.read", new { name, metadataOnly = true });
+            Assert.True(metadataResponse.Success, metadataResponse.ErrorMessage);
+            using var metadataDocument = JsonDocument.Parse(metadataResponse.Result!);
+            var metadata = metadataDocument.RootElement;
+            Assert.Equal("ExternalRange", metadata.GetProperty("resolutionStatus").GetString());
+            Assert.Equal("NotRead", metadata.GetProperty("valueType").GetString());
+            Assert.True(metadata.GetProperty("visible").GetBoolean());
+            Assert.Contains(Assert.IsType<string>(foreignName),
+                metadata.GetProperty("refersTo").GetString(), StringComparison.Ordinal);
+            Assert.False(metadata.TryGetProperty("areaCount", out _));
+            Assert.False(metadata.TryGetProperty("value", out _));
 
             var listed = RequireSuccess(_parameterCommands.List(_fixture.BatchToken));
             var linked = Assert.Single(listed.NamedRanges, item => item.Name == name);

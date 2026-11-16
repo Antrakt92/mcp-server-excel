@@ -40,16 +40,18 @@ public interface INamedRangeCommands
         [RequiredParameter, FromString("value")] string value);
 
     /// <summary>
-    /// Gets the value of one rectangular named range in the selected workbook. Large results are bounded; use range get-values-page for large names and separate range reads for disjoint areas.
+    /// Reads one named range by exact name. Value reads require one rectangular range in the selected workbook and are bounded. Metadata reads include hidden names, the original formula and whether Excel resolved it to a range.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
-    /// <param name="name">Name of the named range</param>
-    /// <returns>Named range value information</returns>
+    /// <param name="name">Exact name, with a sheet qualifier for a sheet-scoped name</param>
+    /// <param name="metadataOnly">Return visibility, formula, and range resolution without reading cell values. Defaults to false.</param>
+    /// <returns>Named range values or metadata</returns>
     /// <exception cref="InvalidOperationException">If named range not found</exception>
     [ServiceAction("read")]
     NamedRangeValue Read(
         IExcelBatch batch,
-        [RequiredParameter, FromString("name")] string name);
+        [RequiredParameter, FromString("name")] string name,
+        bool metadataOnly = false);
 
     /// <summary>
     /// Updates a named range reference
@@ -71,13 +73,15 @@ public interface INamedRangeCommands
     /// <param name="batch">Excel batch session</param>
     /// <param name="name">Name for the new named range</param>
     /// <param name="reference">Cell reference (e.g., Sheet1!$A$1:$B$10)</param>
+    /// <param name="visible">Whether Excel displays the name. Defaults to true. Hidden names can be read by exact name and are omitted from list.</param>
     /// <exception cref="ArgumentException">If name invalid or too long</exception>
     /// <exception cref="InvalidOperationException">If named range already exists</exception>
     [ServiceAction("create")]
     OperationResult Create(
         IExcelBatch batch,
         [RequiredParameter, FromString("name")] string name,
-        [RequiredParameter, FromString("reference")] string reference);
+        [RequiredParameter, FromString("reference")] string reference,
+        bool visible = true);
 
     /// <summary>
     /// Deletes a named range

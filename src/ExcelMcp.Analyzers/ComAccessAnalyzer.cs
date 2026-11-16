@@ -125,6 +125,11 @@ public sealed class ComAccessAnalyzer : DiagnosticAnalyzer
         context.ReportDiagnostic(Diagnostic.Create(Rules.WorkbookPackageAccess, syntax.GetLocation(), symbol));
     }
 
+    private static bool IsWorkbookComparison(SyntaxTree tree, ISymbol? symbol) =>
+        tree.FilePath.Replace('\\', '/').EndsWith(
+            "src/ExcelMcp.Core/Utilities/WorkbookPackageComparison.cs", StringComparison.OrdinalIgnoreCase) &&
+        symbol?.ContainingType?.ToDisplayString() == "Sbroenne.ExcelMcp.Core.Utilities.WorkbookPackageComparison";
+
     private static void AnalyzeLiteral(SyntaxNodeAnalysisContext context)
     {
         var literal = (LiteralExpressionSyntax)context.Node;
@@ -132,7 +137,10 @@ public sealed class ComAccessAnalyzer : DiagnosticAnalyzer
         var workbookPart = value.Equals("[Content_Types].xml", StringComparison.OrdinalIgnoreCase) ||
             value.Split('/').Any(segment => segment.Equals("xl", StringComparison.OrdinalIgnoreCase)) &&
             value.EndsWith(".xml", StringComparison.OrdinalIgnoreCase);
-        if (workbookPart)
+        if (workbookPart &&
+            !(value == "[Content_Types].xml" &&
+                IsWorkbookComparison(literal.SyntaxTree,
+                    context.SemanticModel.GetEnclosingSymbol(literal.SpanStart, context.CancellationToken))))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rules.WorkbookPackageAccess, literal.GetLocation(), literal.Token.ValueText));
         }
