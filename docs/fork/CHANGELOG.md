@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.2.0) | 2026-11-16 | Workbook package checks and hidden defined names |
 | [5.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.1.0) | 2026-11-16 | Cell inspection and edits, write receipts, and workbook recovery |
 | [5.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.0.0) | 2026-11-12 | Workbook and file safety, faster DAX reads, and recoverable Excel sessions |
 | [4.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v4.1.0) | 2026-11-05 | Native exit history, clearer failure diagnostics and safer disconnected batches |
@@ -23,6 +24,24 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.2.0 — 2026-11-16
+
+ExcelMCP 5.2.0 adds package comparison for saved workbooks, a check before publishing native Excel copies, and metadata reads for defined names. The portable builds include upstream ExcelMCP 2.6.12.
+
+### Defined names
+
+- Set `visible: false` when creating a name to keep a persistent marker out of Excel's visible name list. Existing calls still create visible names by default.
+- Use `metadata_only: true` with MCP `namedrange_read` or `--metadata-only true` with `excelcli namedrange read`. Look up the exact name to see its visibility, original `RefersTo` formula and resolution status, even when one area contains `#REF!`. Metadata mode skips cell values.
+
+### Workbook packages
+
+- Compare saved XLSX and XLSM files with MCP `file_read` → `compare-packages` or `excelcli session compare-packages`. It reports added, removed and changed parts with SHA-256 hashes. Use `matchesAllowlist` to check an exact list of allowed part names. The command works in batches alongside workbook sessions.
+- Comparison rejects overlapping ZIP records and invalid compression or size claims. ZIP timestamp and compression changes alone do not count as workbook part changes.
+- Set `package_check` on MCP `workbook` → `save-copy-as`, or pass `--package-check` JSON to the CLI. Give it a saved baseline and exact allowed part names. Excel writes a temporary copy, and ExcelMCP publishes the checked file only if its package differences fit the list. If the check refuses publication, the destination remains intact and the response includes the diff. If another process locks the staged file, the error gives its path.
+- For a standard VBA workbook, an allowlist containing only `xl/vbaProject.bin` will reject a copy if Excel also rewrites a worksheet or any other part. The check covers package bytes. VBA behavior, references and signatures still require their own verification.
+
+The catalogue now has 449 operations across 64 MCP tools. Runtime dependency versions are unchanged.
 
 ## 5.1.0 — 2026-11-16
 
