@@ -146,7 +146,8 @@ public partial class PivotTableCommands
                 field.Delete();
 
                 // Refresh the PivotTable
-                pivot.RefreshTable();
+                RefreshAfterMutation(pivot,
+                    $"Excel completed deletion of calculated field '{fieldName}' but did not confirm refreshing PivotTable '{pivotTableName}'. Use list-calculated-fields before retrying.");
 
                 return new OperationResult
                 {
@@ -160,6 +161,22 @@ public partial class PivotTableCommands
                 ComUtilities.Release(ref pivot);
             }
         });
+    }
+
+    internal static void RefreshAfterMutation(Excel.PivotTable pivot, string failureMessage)
+    {
+        bool refreshed;
+        try
+        {
+            refreshed = pivot.RefreshTable();
+        }
+        catch (Exception ex)
+        {
+            throw new OperationCompletionUnconfirmedException(failureMessage, ex);
+        }
+
+        if (!refreshed)
+            throw new OperationCompletionUnconfirmedException(failureMessage);
     }
 }
 

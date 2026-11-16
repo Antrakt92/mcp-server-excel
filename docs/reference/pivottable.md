@@ -150,6 +150,8 @@ name (`[Measures].[Amount.SUM]`) or bare name (`Amount.SUM`). Dots in a
 measure name are not hierarchy separators. The requested aggregation is ignored
 because the source measure defines it. Only workbook Data Model columns can
 automatically create DAX measures.
+If the refresh after measure creation fails, the measure can exist even if it
+was never placed in Values. Check `datamodel_read list-measures` before retrying.
 Closing brackets use MDX escaping in qualified names: bare `Margin]Pct` is
 `[Measures].[Margin]]Pct]`.
 
@@ -165,6 +167,12 @@ Regular calculated-field definitions belong to the PivotCache, not only the
 report used to create them. Creation, formula changes and deletion can affect
 other reports sharing that cache. Place a field in each report's Values area
 separately.
+
+If Excel cannot refresh before grouping or calculated-field creation, the
+requested grouping or creation is skipped. A refresh failure after field
+creation or deletion leaves that change in place. Use
+`pivottable_calc_read list-calculated-fields` to check the definition before
+retrying.
 
 For a regular PivotTable with a numeric `Sales` field, doubling Sales is safe.
 This example shows the distinction between defining a calculation, placing it

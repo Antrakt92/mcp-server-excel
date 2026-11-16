@@ -11,13 +11,13 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 internal static class CreatedObjectFailure
 {
     /// <summary>
-    /// Returns false for cancellation and lost-Excel failures, which must keep their original shape.
+    /// Returns false for cancellation, lost Excel, or unconfirmed changes that need Service failure details.
     /// </summary>
     internal static bool CanReport(Exception exception)
     {
         for (Exception? current = exception; current != null; current = current.InnerException)
         {
-            if (current is OperationCanceledException)
+            if (current is OperationCanceledException or OperationCompletionUnconfirmedException)
                 return false;
             if (current is AggregateException aggregate)
                 return aggregate.InnerExceptions.All(CanReport);

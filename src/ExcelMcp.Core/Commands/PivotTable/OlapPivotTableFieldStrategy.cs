@@ -391,7 +391,8 @@ public partial class OlapPivotTableFieldStrategy : IPivotTableFieldStrategy
             );
 
             // Refresh the PivotTable connection to make the measure available in CubeFields
-            pivot.RefreshTable();
+            PivotTableCommands.RefreshAfterMutation(pivot,
+                $"Excel created Data Model measure '{measureName}' but did not confirm refreshing the PivotTable. Check list-measures before retrying.");
 
             // Find the measure in CubeFields - measures appear with [Measures]. prefix
             // Use CubeFieldType to ensure we only match measures, not hierarchies
