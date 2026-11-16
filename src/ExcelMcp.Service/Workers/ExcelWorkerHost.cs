@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -448,12 +449,10 @@ internal sealed class ExcelWorkerHost : IDisposable
             {
                 lock (_stateLock)
                 {
-                    if (_registration.Controller.IsAlive())
-                    {
+                    var controllerAlive = ReadControllerLiveness();
+                    if (controllerAlive is true)
                         revealed.Clear();
-                        continue;
-                    }
-                    if (_releasing)
+                    if (controllerAlive is not false || _releasing)
                         continue;
                 }
                 foreach (var sessionId in _service.SessionManager.ActiveSessionIds.Where(id => !revealed.Contains(id)))
@@ -475,7 +474,7 @@ internal sealed class ExcelWorkerHost : IDisposable
                     {
                         lock (_stateLock)
                         {
-                            if (_registration.Controller.IsAlive())
+                            if (ReadControllerLiveness() is not false)
                                 continue;
                             _releasing = true;
                         }
@@ -493,6 +492,21 @@ internal sealed class ExcelWorkerHost : IDisposable
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
             return;
+        }
+    }
+
+    // An access-denied probe leaves ownership unresolved until the next monitor tick.
+    private bool? ReadControllerLiveness()
+    {
+        try
+        {
+            return _registration.Controller.IsAlive();
+        }
+        catch (Win32Exception error) when (error.NativeErrorCode == WorkerProcess.ErrorAccessDenied)
+        {
+            System.Diagnostics.Trace.TraceWarning("Excel controller {0} could not be verified during monitoring: {1}",
+                _registration.Controller.ProcessId, error.Message);
+            return null;
         }
     }
 
