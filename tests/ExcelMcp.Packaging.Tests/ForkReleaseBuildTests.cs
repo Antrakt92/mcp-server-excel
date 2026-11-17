@@ -1,3 +1,6 @@
+using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Xunit;
 using static Sbroenne.ExcelMcp.Tests.Infrastructure.PackagingScriptTestHelper;
 
@@ -11,6 +14,99 @@ namespace Sbroenne.ExcelMcp.Packaging.Tests;
 public sealed class ForkReleaseBuildTests
 {
     private static string Builder => Path.Combine(RepoRoot, "scripts", "Build-ForkRelease.ps1");
+
+    [Fact(Timeout = 30000)]
+    public async Task ForkBundle_UsesExactLocalExecutableAndBindsRegistryDownload()
+    {
+        const string version = "5.4.0";
+        const string executableName = "Sbroenne.ExcelMcp.McpServer.exe";
+        const string entryPoint = "server/" + executableName;
+        const string bundleName = "ExcelMcp-Antrakt-MCPB-5.4.0-win-x64.mcpb";
+        const string repository = "https://github.com/Antrakt92/mcp-server-excel";
+        var sandbox = CreateSandbox("fork-mcpb");
+        try
+        {
+            var executable = Path.Combine(sandbox, executableName);
+            var originalBytes = new byte[] { 0x4d, 0x5a, 0x30, 0x1f };
+            File.WriteAllBytes(executable, originalBytes);
+            var helpers = Path.Combine(RepoRoot, "scripts", "PackageHelpers.ps1")
+                .Replace("'", "''", StringComparison.Ordinal);
+            var builder = Builder.Replace("'", "''", StringComparison.Ordinal);
+            var root = RepoRoot.Replace("'", "''", StringComparison.Ordinal);
+            var runner = Path.Combine(sandbox, "bundle.ps1");
+            File.WriteAllText(runner, $$"""
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                . '{{helpers}}'
+                $tokens = $null; $errors = $null
+                $ast = [Management.Automation.Language.Parser]::ParseFile('{{builder}}', [ref]$tokens, [ref]$errors)
+                if ($errors.Count) { throw 'Builder parse failed.' }
+                foreach ($name in @('New-ForkZip', 'New-ForkMcpBundle')) {
+                    $node = $ast.Find({ param($candidate)
+                        $candidate -is [Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -eq $name
+                    }, $true)
+                    . ([scriptblock]::Create($node.Extent.Text))
+                }
+                $root = '{{root}}'
+                $Version = '{{version}}'
+                $repository = '{{repository}}'
+                $stamp = [DateTimeOffset]::Parse('2026-01-02T12:00:00Z')
+                $release = Join-Path $PSScriptRoot 'release'
+                [IO.Directory]::CreateDirectory($release) | Out-Null
+                $bundle = New-ForkMcpBundle $PSScriptRoot $release (Join-Path $PSScriptRoot '{{executableName}}')
+                Write-PackageJson (Join-Path $PSScriptRoot 'bundle.json') $bundle
+                """);
+            var result = await RunPowerShellFileAsync(runner, [], timeoutMs: 20000);
+            Assert.True(result.ExitCode == 0, result.CombinedOutput);
+            var release = Path.Combine(sandbox, "release");
+            var bundlePath = Path.Combine(release, bundleName);
+            var registryPath = Path.Combine(release, "server.json");
+            var bundleBytes = File.ReadAllBytes(bundlePath);
+            var registryBytes = File.ReadAllBytes(registryPath);
+            var bundleHash = Convert.ToHexStringLower(SHA256.HashData(bundleBytes));
+            using var zip = ZipFile.OpenRead(bundlePath);
+            Assert.Equal(new[] { "FORK-NOTICE.md", "LICENSE", "icon-512.png", "manifest.json", entryPoint },
+                zip.Entries.Select(entry => entry.FullName).Order(StringComparer.Ordinal));
+            using var runtime = zip.GetEntry(entryPoint)!.Open();
+            using var payload = new MemoryStream();
+            runtime.CopyTo(payload);
+            Assert.Equal(originalBytes, payload.ToArray());
+            using var manifestStream = zip.GetEntry("manifest.json")!.Open();
+            using var manifest = JsonDocument.Parse(manifestStream);
+            var extension = manifest.RootElement;
+            Assert.Equal("0.3", extension.GetProperty("manifest_version").GetString());
+            Assert.Equal("excel-mcp-antrakt", extension.GetProperty("name").GetString());
+            Assert.Equal(version, extension.GetProperty("version").GetString());
+            Assert.Equal(repository, extension.GetProperty("repository").GetProperty("url").GetString());
+            Assert.Equal("win32", Assert.Single(extension.GetProperty("compatibility").GetProperty("platforms").EnumerateArray()).GetString());
+            var server = extension.GetProperty("server");
+            Assert.Equal("binary", server.GetProperty("type").GetString());
+            Assert.Equal(entryPoint, server.GetProperty("entry_point").GetString());
+            var config = server.GetProperty("mcp_config");
+            Assert.Equal("${__dirname}/" + entryPoint, config.GetProperty("command").GetString());
+            Assert.Empty(config.GetProperty("args").EnumerateArray());
+            Assert.Equal("off", config.GetProperty("env").GetProperty("EXCELMCP_TELEMETRY_MODE").GetString());
+            using var registry = JsonDocument.Parse(registryBytes);
+            Assert.Equal("io.github.Antrakt92/mcp-server-excel", registry.RootElement.GetProperty("name").GetString());
+            Assert.Equal(version, registry.RootElement.GetProperty("version").GetString());
+            Assert.Equal(repository, registry.RootElement.GetProperty("repository").GetProperty("url").GetString());
+            var package = Assert.Single(registry.RootElement.GetProperty("packages").EnumerateArray());
+            Assert.Equal("mcpb", package.GetProperty("registryType").GetString());
+            Assert.Equal($"{repository}/releases/download/v{version}/{bundleName}", package.GetProperty("identifier").GetString());
+            Assert.Equal(bundleHash, package.GetProperty("fileSha256").GetString());
+            Assert.Equal("stdio", package.GetProperty("transport").GetProperty("type").GetString());
+            using var record = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(sandbox, "bundle.json")));
+            var receipt = record.RootElement;
+            Assert.Equal(bundleName, receipt.GetProperty("file").GetString());
+            Assert.Equal(bundleBytes.LongLength, receipt.GetProperty("bytes").GetInt64());
+            Assert.Equal(bundleHash, receipt.GetProperty("sha256").GetString());
+            Assert.Equal(entryPoint, receipt.GetProperty("executable").GetString());
+            Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(originalBytes)), receipt.GetProperty("executableSHA256").GetString());
+            Assert.Equal("server.json", receipt.GetProperty("registryManifestFile").GetString());
+            Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(registryBytes)), receipt.GetProperty("registryManifestSHA256").GetString());
+        }
+        finally { DeleteDirectoryIfExists(sandbox); }
+    }
 
     [Theory(Timeout = 45000)]
     [InlineData("conflicting-lightweight", true)]
