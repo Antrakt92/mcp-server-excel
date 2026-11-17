@@ -109,6 +109,7 @@ public static partial class ExcelFileTool
     /// <param name="before_path">Absolute Windows path to the original saved XLSX/XLSM. Required for compare-packages. Batch args key: beforePath.</param>
     /// <param name="after_path">Absolute Windows path to the resulting saved XLSX/XLSM. Required for compare-packages. Batch args key: afterPath.</param>
     /// <param name="allowed_parts">Exact package part names allowed to change. Omit to allow no changes. Batch args key: allowedParts.</param>
+    /// <param name="include_structure">Include bounded saved sheet identities, relationships, local name scopes and parent-style candidates. Does not change matchesAllowlist. Batch args key: includeStructure.</param>
     [McpServerTool(Name = "file_read", Title = "Read-Only File Operations", ReadOnly = true,
         Destructive = false)]
     [McpMeta("category", "session")]
@@ -124,6 +125,7 @@ public static partial class ExcelFileTool
         [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? before_path = null,
         [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? after_path = null,
         [McpActionParameter("compare-packages"), DefaultValue(null)] string[]? allowed_parts = null,
+        [McpActionParameter("compare-packages"), DefaultValue(false)] bool include_structure = false,
         CancellationToken cancellationToken = default) =>
         action switch
         {
@@ -132,7 +134,7 @@ public static partial class ExcelFileTool
                     new { operationId = operation_id }, cancellationToken), cancellationToken),
             FileReadAction.ComparePackages => ExcelToolsBase.ExecuteToolActionAsync("file_read", "compare-packages",
                 () => ExcelToolsBase.ForwardToServiceAsync(bridge, ExcelController.PackageComparisonCommand, null,
-                    new { beforePath = before_path, afterPath = after_path, allowedParts = allowed_parts },
+                    new { beforePath = before_path, afterPath = after_path, allowedParts = allowed_parts, includeStructure = include_structure },
                     cancellationToken), cancellationToken),
             _ => ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken)
         };

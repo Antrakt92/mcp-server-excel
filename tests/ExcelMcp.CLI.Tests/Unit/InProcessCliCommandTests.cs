@@ -171,7 +171,7 @@ public sealed class InProcessCliCommandTests
         int exit = await Program.RunAsync(
             ["--quiet", "session", "compare-packages", "--before-path", @"C:\source.xlsm",
                 "--after-path", @"C:\saved.xlsm", "--allow-part", "xl/vbaProject.bin",
-                "--allow-part", "docProps/core.xml"],
+                "--allow-part", "docProps/core.xml", "--include-structure"],
             CreateRuntime(factory, output, new StringWriter()));
 
         Assert.Equal(0, exit);
@@ -181,6 +181,7 @@ public sealed class InProcessCliCommandTests
         using var arguments = JsonDocument.Parse(request.Args!);
         Assert.Equal(@"C:\source.xlsm", arguments.RootElement.GetProperty("beforePath").GetString());
         Assert.Equal(@"C:\saved.xlsm", arguments.RootElement.GetProperty("afterPath").GetString());
+        Assert.True(arguments.RootElement.GetProperty("includeStructure").GetBoolean());
         string[] expectedParts = ["xl/vbaProject.bin", "docProps/core.xml"];
         Assert.Equal(expectedParts,
             arguments.RootElement.GetProperty("allowedParts").EnumerateArray().Select(part => part.GetString()));

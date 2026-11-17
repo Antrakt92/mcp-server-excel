@@ -170,6 +170,31 @@ Excel calculation results, or rendering. The comparator caps each ZIP at
 256 MiB and 8,192 parts, and reports up to 1,024 changed parts. It rejects
 split, encrypted, or ZIP64 archives and returns an error if a limit is exceeded.
 
+Set MCP `include_structure` to `true`, or add CLI `--include-structure`, for
+structural diagnostics. Batch arguments use `includeStructure`. The optional
+`structure` contains before/after manifests with saved tab positions, sheet
+names, `sheetId`, relationship IDs, part names, sheet types and `CodeName`.
+Defined names include their zero-based `localSheetId` and resolved sheet scope.
+Their formulas and cell values are excluded. Relationship records identify each
+owner and resolved internal target, including missing owners or targets.
+External target URLs are excluded and never opened.
+
+`parentStyleMappings` pairs named parent styles using their names and definition
+fingerprints, including referenced fonts, fills, borders and number formats.
+It reports changed, added, removed and ambiguous definitions. A match describes
+the inspected definitions and cannot establish rendered equivalence or approve
+rewriting style indices. `unreachableParts` lists non-relationship parts that
+cannot be reached through internal relationships from the package root.
+Reachability alone cannot establish whether deleting a part is safe.
+
+Structural diagnostics leave `matchesAllowlist` based on the exact byte changes.
+They inspect saved metadata and do not predict what a future Excel save will
+rewrite. Structural metadata is capped at 2 MiB per part, 16 MiB per input,
+64 XML levels and 4,096 records per collection. The structure report is capped
+at 4 MiB. Sheet properties are read as a stream without loading cell data.
+Unsupported or ambiguous structural metadata and exceeded limits return errors.
+Omit the option for the existing hash-only comparison.
+
 ### Check a copy before publishing it
 
 For an XLSX or XLSM copy, set `package_check` on MCP `workbook` action

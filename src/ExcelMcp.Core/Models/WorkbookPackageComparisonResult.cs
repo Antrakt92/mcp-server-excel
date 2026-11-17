@@ -16,6 +16,10 @@ public sealed class WorkbookPackageComparisonResult : ResultBase
 
     /// <summary>Added, removed, and changed entries, ordered by their exact names.</summary>
     public required IReadOnlyList<WorkbookPackagePartChange> Changes { get; init; }
+
+    /// <summary>Optional saved-package structural diagnostics. These do not change allowlist decisions.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkbookPackageStructureReport? Structure { get; init; }
 }
 
 /// <summary>A saved workbook package entry whose presence or decompressed bytes changed.</summary>

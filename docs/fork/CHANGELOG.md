@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.3.0) | 2026-11-17 | Saved sheet identities, relationship ownership and parent-style diagnostics |
 | [5.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.2.0) | 2026-11-16 | Workbook package checks and hidden defined names |
 | [5.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.1.0) | 2026-11-16 | Cell inspection and edits, write receipts, and workbook recovery |
 | [5.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.0.0) | 2026-11-12 | Workbook and file safety, faster DAX reads, and recoverable Excel sessions |
@@ -24,6 +25,24 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.3.0 — 2026-11-17
+
+Saved workbook comparisons can now explain structural changes after a native Excel save. This helps inspect sheet moves, deleted tabs and renumbered package parts in complex XLSX and XLSM files.
+
+### Structural package diagnostics
+
+- Set `include_structure: true` on MCP `file_read` with action `compare-packages`, or add `--include-structure` to `excelcli session compare-packages`. Batch arguments use `includeStructure`.
+- The optional `structure` report includes both saved tab orders, sheet names, `sheetId`, relationship IDs, part names, sheet types and `CodeName`. Defined names include their `localSheetId` and resolved sheet scope, so a moved sheet's filter scope can be checked against the new tab order.
+- Relationship records identify the source owner and resolved internal target, including missing owners and targets. Graph-unreachable parts are listed for inspection. External URLs, defined-name formulas and cell values are excluded from the report.
+- Named parent styles are compared using their names and fingerprints of the parent definitions, including referenced fonts, fills, borders and number formats. The report identifies shifted parent indices, removed styles, changed definitions and ambiguous candidates.
+- Structural diagnostics retain the exact part allowlist. A parent-style match describes the saved definitions and does not establish rendered equivalence or approve rewriting the package. The command inspects saved files without opening Excel.
+
+### Limits and compatibility
+
+The option is off by default. Existing hash-only comparisons and checked `save-copy-as` calls keep their current behavior. Structural metadata, XML depth, style candidate counts and report size have explicit limits. Unsupported leading sheet extensions and ambiguous internal targets return an error. See [saved package comparisons](../reference/workbook.md#compare-saved-workbook-packages) for the limits and result semantics.
+
+The catalogue remains at 449 operations across 64 MCP tools. Runtime and development dependency versions are unchanged from 5.2.0. The portable builds retain upstream ExcelMCP 2.6.12.
 
 ## 5.2.0 — 2026-11-16
 

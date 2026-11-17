@@ -376,7 +376,8 @@ internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionCompar
             {
                 beforePath = settings.BeforePath,
                 afterPath = settings.AfterPath,
-                allowedParts = settings.AllowedParts
+                allowedParts = settings.AllowedParts,
+                includeStructure = settings.IncludeStructure
             }, ServiceProtocol.JsonOptions)
         };
         using var client = await CliCommandRuntime.Current.ClientFactory.ConnectAsync(cancellationToken);
@@ -397,6 +398,10 @@ internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionCompar
         [CommandOption("--allow-part <PART>")]
         [Description("Exact package part allowed to change. Repeat for multiple parts.")]
         public string[] AllowedParts { get; init; } = [];
+
+        [CommandOption("--include-structure")]
+        [Description("Include saved sheet identities, relationship owners, local name scopes and parent-style candidates. Does not change allowlist decisions.")]
+        public bool IncludeStructure { get; init; }
     }
 }
 
