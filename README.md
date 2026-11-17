@@ -1,11 +1,11 @@
-<h1 align="center">ExcelMCP — Antrakt Fork</h1>
+<h1 align="center">Excel MCP Server for Windows</h1>
 
-<p align="center">Control desktop Microsoft Excel through MCP or the excelcli command line.</p>
+<p align="center">Inspect, edit, and verify workbooks in desktop Microsoft Excel from an MCP client or the excelcli command line.</p>
 
 <p align="center">
   <a href="https://github.com/Antrakt92/mcp-server-excel/releases/latest"><strong>Download</strong></a>
   · <a href="#connect-an-mcp-client"><strong>MCP setup</strong></a>
-  · <a href="#use-the-cli"><strong>CLI</strong></a>
+  · <a href="#try-a-read-only-audit"><strong>Try a workbook audit</strong></a>
   · <a href="docs/fork/AGENT-WORKFLOWS.md">Agent workflows</a>
 </p>
 
@@ -15,19 +15,23 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Antrakt92/mcp-server-excel" alt="MIT license"></a>
 </p>
 
-This independent fork of [ExcelMcp by Stefan Broenner](https://github.com/sbroenne/mcp-server-excel) adds read-only audit sessions, bounded range reads and VBA edits with source checks. Workbook operations use Excel's native COM interface.
+ExcelMCP — Antrakt Fork is built on [Stefan Broenner’s ExcelMcp](https://github.com/sbroenne/mcp-server-excel). It uses Excel’s native COM interface for workbook operations, including formulas, charts, PivotTables, Power Query, and VBA.
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Features](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Verification](docs/fork/VERIFICATION-5.3.0.md)
+[Command catalogue](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Release verification](docs/fork/VERIFICATION-5.3.0.md)
 
-The latest portable release, **5.3.0**, includes upstream **2.6.12**. Inspect how saved workbook sheets, relationships, local names and parent styles changed with optional structural package diagnostics. See the [5.3.0 release notes](docs/fork/CHANGELOG.md#530--2026-11-17).
+## What this fork adds
 
-**CLI migration:** all three VBA password actions require batch JSON on stdin.
-Direct password flags and file batches containing password actions are refused;
-see [migration](#migrate-password-calls-from-fork-360). MCP tool inputs remain available.
+- **Audit an existing workbook.** Open a persistent read-only session and page through large ranges. The server refuses Excel edits, explicit calculation, macro execution, and saves in audit mode.
+- **Update a VBA module safely.** Pass the source hash from your last read when replacing a module. If the code changed in the meantime, the replacement is refused. The server reads the stored source back after a successful edit.
+- **Check what a save changed.** Compare two saved XLSX or XLSM files by package part. Optional structural details show sheet identities, relationships, local name scopes, and parent-style references.
+
+See [agent workflows](docs/fork/AGENT-WORKFLOWS.md) for examples and [the fork overview](docs/fork/OVERVIEW.md) for lifecycle changes and scope.
 
 ## Choose a package
+
+Use these ZIPs to install this fork. The npm, NuGet, and marketplace packages linked from the [upstream README](README.upstream.md) install the upstream project.
 
 | Package | Use |
 | --- | --- |
@@ -81,6 +85,44 @@ Extract the CLI ZIP and run:
 
 MCP and CLI provide the same underlying Excel capabilities through different interfaces. Their command names and parameter spelling differ; use current CLI help or the connected MCP tool descriptions.
 
+## Try a read-only audit
+
+In PowerShell, run this from the extracted CLI folder. Point `$path` to a closed test copy of an XLSX or XLSM workbook.
+
+```powershell
+$path = (Resolve-Path 'C:\Work\Example.xlsx' -ErrorAction Stop).Path
+$before = (Get-FileHash -LiteralPath $path).Hash
+$opened = .\excelcli.exe -q session open $path --read-only | ConvertFrom-Json
+if (-not $opened.success) { throw $opened.error.message }
+
+$session = $opened.data.sessionId
+$listed = $false
+try {
+    if (-not $opened.data.auditOnly) { throw 'Expected an audit session.' }
+    .\excelcli.exe -q sheet list --session $session
+    if ($LASTEXITCODE -ne 0) { throw 'Sheet listing failed.' }
+    $listed = $true
+}
+finally {
+    .\excelcli.exe -q session close --session $session
+    $closeExit = $LASTEXITCODE
+    if ($closeExit -ne 0 -and -not $listed) {
+        Write-Warning "Closing failed. Check session $session before retrying."
+    }
+}
+if ($closeExit -ne 0) { throw 'Closing the audit session failed.' }
+if ((Get-FileHash -LiteralPath $path).Hash -ne $before) {
+    throw 'The saved workbook changed.'
+}
+'Workbook SHA-256 unchanged.'
+```
+
+The output includes the sheet list and close result. In an MCP client, use `file` action `open` with `read_only: true`. Pass the returned session ID as `workbook_session_id` to `worksheet_read` action `list`, then use `file` action `close` with the same ID and `save: false`. See [persistent inspection](docs/fork/AGENT-WORKFLOWS.md#persistent-inspection) for the session limits. To try an edit, use the [sample workbook script](examples/README.md).
+
+## Upgrading
+
+The portable release **5.3.0** is based on upstream **2.6.12**. See the [5.3.0 notes](docs/fork/CHANGELOG.md#530--2026-11-17) for the release contents.
+
 ## Migrate password calls from fork 3.6.0
 
 Replace direct `vba protect-project --password ...` calls and password-bearing
@@ -122,20 +164,7 @@ Replace CLI `--sheet` with `--sheet-name` and `--range` with `--range-address`. 
 
 Normal file opens disable VBA macros. Running a macro does not enable them: the separate `file enable-macros` operation requires explicit approval and permission to reopen a saved owned workbook (CLI: `session enable-macros --approved --allow-reopen`). Audit sessions reject macro execution, workbook edits, calculation and saving. See [agent workflows](docs/fork/AGENT-WORKFLOWS.md) and [upgrade/recovery](docs/fork/RECOVERY.md) before continuing an existing automation.
 
-## What this fork changes
-
-- MCP shutdown observes stdin EOF, terminal stdout failure and owning-client exit without a competing stdin reader.
-- Stdout remains a single JSON-RPC protocol stream.
-- MCP request admission is bounded through the underlying operation and cancellation cleanup.
-- CLI shutdown drains client connections within a bounded grace period; retained idle clients cannot hold the daemon open indefinitely.
-- MCP response conversion shares its normalized JSON parse between result construction and error classification.
-- Persistent audit sessions refuse agent edits, explicit calculation, macros and saving.
-- Bounded range pages and formatting summaries avoid materializing oversized reads.
-- Guarded whole-module VBA replacement detects stale source; typed invocation returns bounded scalar or rectangular results.
-
-Excel remains the calculation and workbook engine. Read [the fork scope](docs/fork/OVERVIEW.md) for version boundaries and validation limits. Release-specific results belong in the release verification receipt (`VERIFICATION-RESULTS.json`); measurements from the older 2.4.1 patch are not performance evidence for this release.
-
-### Workbook safety
+## Workbook safety
 
 Discover and attach to an already-open workbook when supported; do not reopen it just to create another automation session. Operate only on the intended workbook in your own Windows session.
 
@@ -143,7 +172,7 @@ Normal shutdown closes saved workbooks opened by the host, leaves unsaved workbo
 
 Do not terminate unrelated Excel or MCP processes during recovery. See [recovery](docs/fork/RECOVERY.md).
 
-### Command coverage
+## Command coverage
 
 The combined catalogue provides **64 MCP tools across 33 feature areas, with 449 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 449 operations. These counts are checked against the compiled contracts.
 

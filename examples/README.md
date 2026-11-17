@@ -1,67 +1,39 @@
-# ExcelMcp CLI Examples
+# Create a sample workbook
 
-This directory contains example scripts demonstrating ExcelMcp CLI features.
+Use the Windows x64 CLI ZIP from the [fork releases](https://github.com/Antrakt92/mcp-server-excel/releases/latest). Run this in PowerShell from the extracted CLI directory on a Windows desktop with Excel installed.
 
-## Session Mode Demo
-
-The session mode demo shows how to use sessions for high-performance multi-operation workflows.
-
-### Requirements
-
-- Windows with Excel installed
-- Excel CLI installed (standalone exe from the [latest release](https://github.com/sbroenne/mcp-server-excel/releases/latest) or via `dotnet tool install --global Sbroenne.ExcelMcp.CLI`)
-
-### Running the Demo
-
-Run these commands from PowerShell on Windows:
+The script creates a new workbook in your temporary directory, adds a worksheet, and saves the workbook. Each command uses the same open Excel session.
 
 ```powershell
-# 1. Create a new workbook and open a session (captures the session ID)
-$session = (excelcli session create test-session.xlsx | ConvertFrom-Json).sessionId
+$path = Join-Path $env:TEMP ("ExcelMcp-demo-{0:N}.xlsx" -f [guid]::NewGuid())
+$created = .\excelcli.exe -q session create $path | ConvertFrom-Json
+if (-not $created.success) { throw $created.error.message }
 
-# 2. Perform multiple operations against the same Excel instance
-excelcli sheet create --session $session --sheet-name Sales
-excelcli sheet create --session $session --sheet-name Customers
-excelcli sheet create --session $session --sheet-name Products
-excelcli sheet list --session $session
-excelcli powerquery list --session $session
+$session = $created.data.sessionId
+$save = $false
+try {
+    .\excelcli.exe -q sheet create --session $session --sheet-name Sales
+    if ($LASTEXITCODE -ne 0) { throw 'Adding the Sales sheet failed.' }
 
-# 3. List active sessions
-excelcli session list
+    .\excelcli.exe -q sheet list --session $session
+    if ($LASTEXITCODE -ne 0) { throw 'Sheet listing failed.' }
 
-# 4. Save all changes and close the session
-excelcli session close --session $session --save
+    $save = $true
+}
+finally {
+    if ($save) {
+        .\excelcli.exe -q session close --session $session --save
+    }
+    else {
+        .\excelcli.exe -q session close --session $session
+    }
+    $closeExit = $LASTEXITCODE
+    if ($closeExit -ne 0 -and -not $save) {
+        Write-Warning "Closing failed. Check session $session before retrying."
+    }
+}
+if ($closeExit -ne 0) { throw 'Closing the sample workbook failed.' }
+$path
 ```
 
-### What the Demo Does
-
-1. Creates a test workbook (`test-session.xlsx`)
-2. Opens a session and captures the session ID
-3. Performs multiple operations using the same Excel instance:
-   - Creates 3 worksheets (Sales, Customers, Products)
-   - Lists worksheets
-   - Lists Power Queries
-4. Lists active sessions
-5. Closes the session with `--save` (saves all changes)
-6. Leaves a saved workbook that you can open to verify the changes
-
-### Expected Performance
-
-Session mode is **75-90% faster** than running individual commands because:
-- Only one Excel instance is opened
-- No file open/close overhead between operations
-- All changes committed atomically
-
-### Cleanup
-
-```powershell
-Remove-Item test-session.xlsx
-```
-
-## Use Cases
-
-Session mode is ideal for:
-- **RPA workflows** - Automated report generation
-- **Data pipelines** - ETL operations with multiple steps
-- **Testing** - Setting up test data across multiple sheets
-- **Bulk operations** - Making many changes to a workbook
+Use the printed path in the [read-only audit example](../README.md#try-a-read-only-audit) to list the saved worksheets and check the workbook hash. You can delete the sample workbook after closing the audit session.
