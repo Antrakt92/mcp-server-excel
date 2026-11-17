@@ -189,6 +189,24 @@ public sealed class InProcessCliCommandTests
         Assert.False(result.RootElement.GetProperty("data").GetProperty("matchesAllowlist").GetBoolean());
     }
 
+    [Theory]
+    [InlineData("""[{"command":"session.list","command":"session.close","args":{"save":true}}]""")]
+    [InlineData("""[{"command":"session.save"},{"command":"session.close","args":{"save":false,"save":true}}]""")]
+    public async Task Batch_DuplicateCommandPropertyDoesNotDispatch(string input)
+    {
+        var factory = new RecordingClientFactory();
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var runtime = new CliCommandRuntime(factory, new StringReader(input), output, error, isOutputRedirected: true);
+
+        int exit = await Program.RunAsync(["--quiet", "batch", "--input", "-", "--session", "owned"], runtime);
+
+        Assert.Equal(1, exit);
+        Assert.Empty(factory.Requests);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Equal("InvalidInput", json.RootElement.GetProperty("error").GetProperty("category").GetString());
+    }
+
     [Fact]
     public async Task ComparePackages_InBatchDoesNotUseOrClearActiveWorkbookSession()
     {

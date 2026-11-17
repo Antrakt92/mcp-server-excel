@@ -14,6 +14,21 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
 public sealed class BatchToolProtocolTests(RecordingProgramTransportFixture fixture)
 {
     [Theory]
+    [InlineData("""[{"command":"session.list","command":"session.close","args":{"save":true}}]""")]
+    [InlineData("""[{"command":"session.save"},{"command":"session.close","args":{"save":false,"save":true}}]""")]
+    public async Task DuplicateCommandProperty_IsRejectedBeforeBinding(string commands)
+    {
+        var arguments = Arguments(commands);
+        var call = await fixture.CallSequenceAsync("batch", arguments,
+            RecordingToolTest.Success("""{"success":true}"""));
+
+        Assert.Empty(call.Requests);
+        Assert.True(call.Result.IsError);
+        using var output = Parse(call.Result);
+        Assert.Equal("InvalidInput", output.RootElement.GetProperty("errorCategory").GetString());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RelativeInputFile_IsRejectedWithoutDispatch(bool batch)
