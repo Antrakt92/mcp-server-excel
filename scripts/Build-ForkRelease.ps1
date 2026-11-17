@@ -4,8 +4,8 @@
 Builds local portable Antrakt fork MCP and CLI release packages; never publishes.
 .DESCRIPTION
 Requires Windows, the pinned SDK and a clean Git checkout by default. Produces
-ZIPs, SHA256SUMS and RELEASE-MANIFEST.json in a new output directory. This command
-builds packages only; it does not run Excel or claim runtime/test acceptance.
+portable ZIPs, an MCP bundle, registry metadata, SHA256SUMS and RELEASE-MANIFEST.json
+in a new output directory. The command does not run Excel or validate client installation.
 .PARAMETER Version
 Pass an unused fork version, or reproduce the exact HEAD already tagged with that version.
 .PARAMETER AllowDirtySource
@@ -79,8 +79,9 @@ function New-ForkZip {
     try {
         $zip = [IO.Compression.ZipArchive]::new($file, [IO.Compression.ZipArchiveMode]::Create, $true)
         try {
-            foreach ($item in Get-ChildItem -LiteralPath $Source -File | Sort-Object Name) {
-                $entry = $zip.CreateEntry($item.Name, [IO.Compression.CompressionLevel]::Optimal)
+            foreach ($item in Get-ChildItem -LiteralPath $Source -File -Recurse | Sort-Object FullName) {
+                $entryName = [IO.Path]::GetRelativePath($Source, $item.FullName).Replace('\', '/')
+                $entry = $zip.CreateEntry($entryName, [IO.Compression.CompressionLevel]::Optimal)
                 $entry.LastWriteTime = $Timestamp
                 $target = $entry.Open()
                 try {
@@ -92,11 +93,86 @@ function New-ForkZip {
     } finally { $file.Dispose() }
 }
 
+function New-ForkMcpBundle {
+    param([string]$Stage, [string]$Release, [string]$Executable)
+
+    $package = Join-Path $Stage 'package-MCPB'
+    $server = Join-Path $package 'server'
+    [IO.Directory]::CreateDirectory($server) | Out-Null
+    $executableName = [IO.Path]::GetFileName($Executable)
+    $entryPoint = "server/$executableName"
+    $description = 'MCP for Windows x64 with desktop Microsoft Excel. Audit workbooks, compare saved files and edit VBA.'
+    $manifest = [ordered]@{
+        manifest_version = '0.3'
+        name = 'excel-mcp-antrakt'
+        display_name = 'Excel MCP Server for Windows (Antrakt Fork)'
+        version = $Version
+        description = $description
+        long_description = 'Requires Windows x64, Microsoft Excel 2016 or later and an interactive desktop. Based on ExcelMcp by Stefan Broenner and contributors.'
+        author = [ordered]@{ name = 'Antrakt92'; url = 'https://github.com/Antrakt92' }
+        repository = [ordered]@{ type = 'git'; url = $repository }
+        homepage = $repository
+        documentation = "$repository/blob/v$Version/README.md"
+        support = "$repository/issues"
+        icon = 'icon-512.png'
+        license = 'MIT'
+        privacy_policies = @("$repository/blob/v$Version/PRIVACY.md")
+        server = [ordered]@{
+            type = 'binary'
+            entry_point = $entryPoint
+            mcp_config = [ordered]@{
+                command = '${__dirname}/' + $entryPoint
+                args = @()
+                env = [ordered]@{ EXCELMCP_TELEMETRY_MODE = 'off' }
+            }
+        }
+        tools_generated = $true
+        compatibility = [ordered]@{ platforms = @('win32') }
+    }
+    Write-PackageJson (Join-Path $package 'manifest.json') $manifest
+    Copy-PackageItem $Executable (Join-Path $package $entryPoint)
+    Copy-PackageItem (Join-Path $root 'mcpb/icon-512.png') (Join-Path $package 'icon-512.png')
+    foreach ($name in @('LICENSE', 'FORK-NOTICE.md')) {
+        Copy-PackageItem (Join-Path $root $name) (Join-Path $package $name)
+    }
+    $filename = "ExcelMcp-Antrakt-MCPB-$Version-win-x64.mcpb"
+    $archive = Join-Path $Release $filename
+    New-ForkZip $package $archive $stamp
+    $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $registryFilename = 'server.json'
+    $registryPath = Join-Path $Release $registryFilename
+    Write-PackageJson $registryPath ([ordered]@{
+        '$schema' = 'https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json'
+        name = 'io.github.Antrakt92/mcp-server-excel'
+        title = $manifest.display_name
+        description = $description
+        version = $Version
+        repository = [ordered]@{ source = 'github'; url = $repository }
+        websiteUrl = $repository
+        packages = @([ordered]@{
+            registryType = 'mcpb'
+            identifier = "$repository/releases/download/v$Version/$filename"
+            fileSha256 = $archiveHash
+            transport = [ordered]@{ type = 'stdio' }
+        })
+    })
+    [ordered]@{
+        file = $filename
+        bytes = ([IO.FileInfo]$archive).Length
+        sha256 = $archiveHash
+        executable = $entryPoint
+        executableSHA256 = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
+        registryManifestFile = $registryFilename
+        registryManifestSHA256 = (Get-FileHash -LiteralPath $registryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 Invoke-PackageStage 'ForkRelease' {
     param($stage)
     $release = Join-Path $stage 'release'
     [IO.Directory]::CreateDirectory($release) | Out-Null
     $packages = @()
+    $bundle = $null
     foreach ($component in @(
         @{ Name = 'MCP'; Project = 'McpServer'; Executable = 'Sbroenne.ExcelMcp.McpServer.exe' },
         @{ Name = 'CLI'; Project = 'CLI'; Executable = 'excelcli.exe' }
@@ -170,6 +246,9 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
             executable = $component.Executable
             executableSHA256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
         }
+        if ($component.Name -ceq 'MCP') {
+            $bundle = New-ForkMcpBundle $stage $release $executable
+        }
     }
     Assert-ForkSourceUnchanged
     $manifest = [ordered]@{
@@ -196,10 +275,13 @@ Recovery: $repository/blob/v$Version/docs/fork/RECOVERY.md
             desktopExcel = 'not run by this packaging command'
         }
         packages = $packages
+        bundle = $bundle
     }
     $manifestPath = Join-Path $release 'RELEASE-MANIFEST.json'
     Write-PackageJson $manifestPath $manifest
     $checksums = @($packages | ForEach-Object { "$($_.sha256)  $($_.file)" })
+    $checksums += "$($bundle.sha256)  $($bundle.file)"
+    $checksums += "$($bundle.registryManifestSHA256)  $($bundle.registryManifestFile)"
     $checksums += "$((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())  RELEASE-MANIFEST.json"
     [IO.File]::WriteAllText((Join-Path $release 'SHA256SUMS'), ($checksums -join "`n") + "`n")
     Assert-PackageOutputPath $output $root

@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.4.0) | 2026-11-17 | Windows MCP bundle, workbook edits, and batch validation |
 | [5.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.3.0) | 2026-11-17 | Saved sheet identities, relationship ownership and parent-style diagnostics |
 | [5.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.2.0) | 2026-11-16 | Workbook package checks and hidden defined names |
 | [5.1.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.1.0) | 2026-11-16 | Cell inspection and edits, write receipts, and workbook recovery |
@@ -25,6 +26,29 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.4.0 — 2026-11-17
+
+### Installation
+
+- The Windows x64 `.mcpb` contains the same self-contained server as the MCP ZIP. Clients with a desktop extension installer can launch it directly. Installed desktop Microsoft Excel and an interactive Windows session are required.
+- The release includes `server.json` for the fork's MCP Registry identity. The manifest, verification receipt and checksums identify the exact published bundle and binary.
+- The README includes a sample workbook and a read-only audit that checks the saved file's SHA-256. Manual MCP and CLI ZIP downloads remain available.
+
+### Workbook behavior
+
+- Cross-file worksheet moves with no explicit destination position now place the worksheet after the final tab, including chart tabs.
+- Named-range writes preserve literal text beginning with an equals sign or an apostrophe. Large value previews are omitted while list responses keep the range metadata.
+- Table creation without headers keeps the first data row. Structured references escape special characters in column names and emit valid current-row references. Totals apply the selected minimum, maximum or variance function. Invalid totals arguments leave a hidden totals row hidden.
+- Saved workbook comparisons resolve relationships that differ only in case, accept ZIP comments containing footer-like bytes and bound memory use when checking the structural report size.
+
+### Commands and recovery
+
+- MCP and CLI reject duplicate JSON properties in a batch before the first operation runs. Individual raw commands also reject duplicate keys.
+- Worker shutdown preserves a workbook session opened during controller exit. The CLI retains the original shutdown warning if a second error occurs while stopping.
+- The CLI skips telemetry response processing when telemetry is off. A malformed service reply keeps its failure classification through the CLI invocation.
+
+The release retains upstream ExcelMcp 2.6.12. Runtime and development dependency versions are unchanged.
 
 ## 5.3.0 — 2026-11-17
 

@@ -19,7 +19,7 @@ ExcelMCP — Antrakt Fork is built on [Stefan Broenner’s ExcelMcp](https://git
 
 **Requires Windows x64, installed Microsoft Excel 2016 or later, and an interactive desktop.** Portable release packages include their .NET runtime; Excel itself is not included.
 
-[Command catalogue](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Release verification](docs/fork/VERIFICATION-5.3.0.md)
+[Command catalogue](FEATURES.md) · [Changelog](docs/fork/CHANGELOG.md) · [Release verification](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.4.0/VERIFICATION-RESULTS.json)
 
 ## What this fork adds
 
@@ -31,12 +31,13 @@ See [agent workflows](docs/fork/AGENT-WORKFLOWS.md) for examples and [the fork o
 
 ## Choose a package
 
-Use these ZIPs to install this fork. The npm, NuGet, and marketplace packages linked from the [upstream README](README.upstream.md) install the upstream project.
+Use the packages below to install this fork. The npm, NuGet, and marketplace packages linked from the [upstream README](README.upstream.md) install the upstream project.
 
 | Package | Use |
 | --- | --- |
-| [ExcelMcp-Antrakt-MCP-5.3.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.3.0/ExcelMcp-Antrakt-MCP-5.3.0-win-x64.zip) | A local stdio MCP server for a compatible AI client. |
-| [ExcelMcp-Antrakt-CLI-5.3.0-win-x64.zip](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.3.0/ExcelMcp-Antrakt-CLI-5.3.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
+| [Windows MCP bundle](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.4.0/ExcelMcp-Antrakt-MCPB-5.4.0-win-x64.mcpb) | Install as a desktop extension in a client that supports MCPB. Contains the Windows x64 server and disables telemetry in its launch configuration. |
+| [Windows MCP ZIP](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.4.0/ExcelMcp-Antrakt-MCP-5.4.0-win-x64.zip) | Configure a compatible MCP client to launch the local stdio server. |
+| [Windows CLI ZIP](https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.4.0/ExcelMcp-Antrakt-CLI-5.4.0-win-x64.zip) | The portable `excelcli` command line and its background service. |
 
 Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.json** from the same release. The manifest identifies the source revision, upstream base, package hashes and packaging checks. The separate verification receipt records protocol, native Excel and CLI checks against the exact executable hashes. Match their source revision and executable hashes. GitHub also provides source ZIP and tar archives on the release page.
 
@@ -44,13 +45,13 @@ Download **SHA256SUMS**, **RELEASE-MANIFEST.json** and **VERIFICATION-RESULTS.js
 <summary>Download with PowerShell</summary>
 
 ```powershell
-$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.3.0'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-5.3.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-5.3.0-win-x64.zip'
-Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-5.3.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-5.3.0-win-x64.zip'
+$release = 'https://github.com/Antrakt92/mcp-server-excel/releases/download/v5.4.0'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-MCP-5.4.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-MCP-5.4.0-win-x64.zip'
+Invoke-WebRequest "$release/ExcelMcp-Antrakt-CLI-5.4.0-win-x64.zip" -OutFile 'ExcelMcp-Antrakt-CLI-5.4.0-win-x64.zip'
 Invoke-WebRequest "$release/SHA256SUMS" -OutFile 'SHA256SUMS'
 Invoke-WebRequest "$release/RELEASE-MANIFEST.json" -OutFile 'RELEASE-MANIFEST.json'
 Invoke-WebRequest "$release/VERIFICATION-RESULTS.json" -OutFile 'VERIFICATION-RESULTS.json'
-Get-FileHash .\ExcelMcp-Antrakt-*-5.3.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\ExcelMcp-Antrakt-*-5.4.0-win-x64.zip -Algorithm SHA256
 Get-FileHash -LiteralPath 'RELEASE-MANIFEST.json', 'VERIFICATION-RESULTS.json' -Algorithm SHA256
 ```
 
@@ -60,7 +61,9 @@ Compare each hash with `SHA256SUMS` before extracting. Keep releases in separate
 
 ## Connect an MCP client
 
-Extract the MCP ZIP, then configure your client to launch `Sbroenne.ExcelMcp.McpServer.exe`. For clients using an `mcpServers` configuration, the following is an example; replace the executable path with your extraction location:
+For MCPB, verify the downloaded archive against `SHA256SUMS` and use your desktop client's extension installer. In Claude Desktop, open **Settings → Desktop app → Manage Extensions → Advanced settings → Install Extension** and select the bundle. If you already configured ExcelMCP manually, use one connection so the tool list stays unambiguous.
+
+For a manual stdio connection, extract the MCP ZIP and configure your client to launch `Sbroenne.ExcelMcp.McpServer.exe`. Replace the executable path with your extraction location in this example for clients that use `mcpServers`.
 
 ```json
 {
@@ -121,7 +124,7 @@ The output includes the sheet list and close result. In an MCP client, use `file
 
 ## Upgrading
 
-The portable release **5.3.0** is based on upstream **2.6.12**. See the [5.3.0 notes](docs/fork/CHANGELOG.md#530--2026-11-17) for the release contents.
+The portable release **5.4.0** is based on upstream **2.6.12**. See the [5.4.0 notes](docs/fork/CHANGELOG.md#540--2026-11-17) for the release contents.
 
 ## Migrate password calls from fork 3.6.0
 

@@ -72,13 +72,15 @@ The earlier cumulative 2.4.1 lifecycle patch is historical work. If distributed 
 
 The MCP and CLI ZIPs are portable Windows x64 distributions with a bundled .NET runtime. Installed desktop Excel and an interactive Windows session are still required. Fork downloads come from this fork's GitHub releases; upstream npm, extension, marketplace and installer links remain upstream distributions unless explicitly identified otherwise.
 
+Starting with 5.4.0, the fork publishes an MCPB desktop extension containing the same Windows x64 server as its MCP ZIP. The generated `server.json` identifies this bundle by its release URL and SHA-256 for MCP Registry publication.
+
 Each release includes `SHA256SUMS`, `RELEASE-MANIFEST.json` and `VERIFICATION-RESULTS.json`. Preserve them with the downloaded packages. GitHub's automatic source archives provide the tagged source snapshot. See [4.1.0 verification](VERIFICATION-4.1.0.md) and [recovery](RECOVERY.md) for verification and switching versions.
 
 ## Build and verify
 
 Use the SDK in `global.json` and PowerShell 7.4 or later. Follow [scripts/AGENTS.md](../../scripts/AGENTS.md), [testing guidance](../../tests/AGENTS.md) and the repository build instructions. The fork packaging entry point is [scripts/Build-ForkRelease.ps1](../../scripts/Build-ForkRelease.ps1); inspect its help for current parameters.
 
-Fork standalone releases use that local builder with explicit version metadata, followed by authenticated GitHub CLI publication. The inherited upstream Actions publication routes remain disabled on this fork. No upstream npm, NuGet, marketplace or registry identity is published by this procedure.
+Fork standalone releases use that local builder with explicit version metadata, followed by authenticated GitHub CLI publication. Submit the generated `server.json` to the MCP Registry only after downloading and checking the public bundle. The fork uses the `io.github.Antrakt92/mcp-server-excel` namespace. The inherited upstream Actions publication routes remain disabled on this fork.
 
 Verification must distinguish compilation and tests without Excel, actual stdio/process lifetime checks, and tests using desktop Excel. Passing protocol tests does not prove workbook behavior, native dialogs, rendering or numerical correctness. A release manifest records what was actually checked and any omitted checks; older receipts do not replace new validation.
 
