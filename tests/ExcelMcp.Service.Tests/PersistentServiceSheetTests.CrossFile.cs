@@ -531,8 +531,17 @@ public sealed partial class PersistentServiceSheetTests
             "retained workbook marker", 71, 79, "=B1+8");
         foreach (var sheet in sourceSheets.Where(name => name != "Sheet1"))
             AssertCrossFileServiceCells(service, sessionId, sheet, "transferred marker", 3, 6, "=B1*2");
-        using (var discovery = ReadCrossFileServiceResult(service, "session.discover", sessionId: null))
+        var processId = Assert.IsType<int>(service.SessionManager.GetSession(sessionId)?.ExcelProcessId);
+        var previousFind = RunningExcelWindows.FindHookForTests;
+        var nativeWindows = RunningExcelWindows.Find();
+        // This fixture verifies its retained Excel process. Other desktop Excel
+        // processes can make an unfiltered discovery incomplete.
+        RunningExcelWindows.FindHookForTests = () => new RunningExcelWindows.Discovery(
+            nativeWindows.Windows.Where(window => window.Process.ProcessId == processId).ToArray(),
+            nativeWindows.Errors.Where(error => error.ProcessId is null || error.ProcessId == processId).ToArray());
+        try
         {
+            using var discovery = ReadCrossFileServiceResult(service, "session.discover", sessionId: null);
             Assert.True(discovery.RootElement.GetProperty("complete").GetBoolean());
             Assert.Empty(discovery.RootElement.GetProperty("errors").EnumerateArray());
             var workbooks = discovery.RootElement.GetProperty("workbooks").EnumerateArray().ToArray();
@@ -540,11 +549,16 @@ public sealed partial class PersistentServiceSheetTests
             {
                 var workbook = Assert.Single(workbooks, entry => entry.GetProperty("location").GetString() == path);
                 Assert.Equal(sessionId, workbook.GetProperty("sessionId").GetString());
+                Assert.Equal(processId, workbook.GetProperty("processId").GetInt32());
                 Assert.Equal(Path.GetFileName(path), workbook.GetProperty("name").GetString());
                 Assert.Equal(saved, workbook.GetProperty("saved").GetBoolean());
             }
+            AssertRetainedTargetThroughService(targetFile, targetSheets, targetSaved, targetReadOnly, targetDuplicateGuard);
         }
-        AssertRetainedTargetThroughService(targetFile, targetSheets, targetSaved, targetReadOnly, targetDuplicateGuard);
+        finally
+        {
+            RunningExcelWindows.FindHookForTests = previousFind;
+        }
         using var primary = ReadCrossFileServiceResult(service, "workbook.get-info", sessionId);
         Assert.Equal(sourceFile, primary.RootElement.GetProperty("fullName").GetString());
     }
