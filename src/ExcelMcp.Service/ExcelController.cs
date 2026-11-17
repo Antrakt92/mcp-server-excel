@@ -187,7 +187,7 @@ internal sealed class ExcelController : IDisposable
         try
         {
             var result = await Task.Run(() => WorkbookPackageComparison.Compare(
-                beforePath, afterPath, options.AllowedParts, request.CallerCancellation), request.CallerCancellation);
+                beforePath, afterPath, options.AllowedParts, request.CallerCancellation, options.IncludeStructure), request.CallerCancellation);
             return new ServiceResponse
             {
                 Success = true,
@@ -206,6 +206,7 @@ internal sealed class ExcelController : IDisposable
         public string? BeforePath { get; init; }
         public string? AfterPath { get; init; }
         public string[]? AllowedParts { get; init; }
+        public bool IncludeStructure { get; init; }
     }
 
     private static bool StartsWorkbookWorker(string command) =>

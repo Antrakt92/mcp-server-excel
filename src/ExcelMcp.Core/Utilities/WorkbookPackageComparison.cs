@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -22,7 +23,7 @@ public static class WorkbookPackageComparison
     private const ushort DataDescriptor = 0x0008;
     private const ushort Stored = 0;
     private const ushort Deflated = 8;
-    private const string ContentTypesEntry = "[Content_Types].xml";
+    internal const string ContentTypesEntry = "[Content_Types].xml";
     private const string RootRelationshipsEntry = "_rels/.rels";
     private static readonly XNamespace ContentTypesNamespace = "http://schemas.openxmlformats.org/package/2006/content-types";
     private static readonly XNamespace RelationshipsNamespace = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -30,7 +31,8 @@ public static class WorkbookPackageComparison
 
     /// <summary>Returns the complete difference and checks it against exact case-sensitive ZIP entry names.</summary>
     public static WorkbookPackageComparisonResult Compare(
-        string beforePath, string afterPath, IReadOnlyList<string>? allowedParts, CancellationToken cancellationToken)
+        string beforePath, string afterPath, IReadOnlyList<string>? allowedParts, CancellationToken cancellationToken,
+        bool includeStructure = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string beforeFile = NormalizePackagePath(beforePath);
@@ -39,7 +41,7 @@ public static class WorkbookPackageComparison
         // Hold both inputs open for the comparison. On Windows this sharing mode excludes concurrent writers and renames.
         using var beforeStream = new FileStream(beforeFile, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var afterStream = new FileStream(afterFile, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return ComparePinned(beforeStream, afterStream, beforeFile, afterFile, allowlist, cancellationToken);
+        return ComparePinned(beforeStream, afterStream, beforeFile, afterFile, allowlist, cancellationToken, includeStructure);
     }
 
     // The checked save keeps these file identities pinned until publication. The paths supply their expected formats.
@@ -54,10 +56,12 @@ public static class WorkbookPackageComparison
 
     private static WorkbookPackageComparisonResult ComparePinned(
         FileStream beforeStream, FileStream afterStream, string beforeFile, string afterFile,
-        HashSet<string> allowlist, CancellationToken cancellationToken)
+        HashSet<string> allowlist, CancellationToken cancellationToken, bool includeStructure = false)
     {
-        var before = ReadInventory(beforeStream, Path.GetExtension(beforeFile), cancellationToken);
-        var after = ReadInventory(afterStream, Path.GetExtension(afterFile), cancellationToken);
+        var beforeInventory = ReadInventory(beforeStream, Path.GetExtension(beforeFile), cancellationToken, includeStructure);
+        var afterInventory = ReadInventory(afterStream, Path.GetExtension(afterFile), cancellationToken, includeStructure);
+        var before = beforeInventory.Hashes;
+        var after = afterInventory.Hashes;
         var changes = new List<WorkbookPackagePartChange>();
 
         foreach (string name in before.Keys.Union(after.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal))
@@ -81,13 +85,19 @@ public static class WorkbookPackageComparison
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        var structure = includeStructure ? WorkbookPackageStructure.Compare(
+            beforeInventory.Metadata, before.Keys, beforeInventory.CodeNames,
+            afterInventory.Metadata, after.Keys, afterInventory.CodeNames, cancellationToken) : null;
+        if (structure is not null && JsonSerializer.SerializeToUtf8Bytes(structure).Length > 4 * 1024 * 1024)
+            throw new InvalidDataException("The package structure report exceeds the 4 MiB output limit.");
         return new WorkbookPackageComparisonResult
         {
             Success = true,
             BeforePartCount = before.Count,
             AfterPartCount = after.Count,
             MatchesAllowlist = changes.All(part => part.Allowed),
-            Changes = changes
+            Changes = changes,
+            Structure = structure
         };
     }
 
@@ -150,8 +160,11 @@ public static class WorkbookPackageComparison
         return allowlist;
     }
 
-    private static Dictionary<string, string> ReadInventory(
-        FileStream stream, string extension, CancellationToken cancellationToken)
+    private sealed record PackageInventory(Dictionary<string, string> Hashes,
+        Dictionary<string, byte[]> Metadata, Dictionary<string, string?> CodeNames);
+
+    private static PackageInventory ReadInventory(
+        FileStream stream, string extension, CancellationToken cancellationToken, bool includeStructure)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var directory = ReadZipDirectory(stream);
@@ -176,21 +189,120 @@ public static class WorkbookPackageComparison
         var hashes = new Dictionary<string, string>(entries.Count, StringComparer.Ordinal);
         var buffer = new byte[64 * 1024];
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var metadataBuffer = new byte[(int)Math.Max(contentTypes.Length, relationships.Length)];
-        XElement? types = null;
+        var metadata = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var codeNames = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var typesBytes = new byte[contentTypes.Length];
+        hashes.Add(contentTypes.Name, HashEntry(stream, contentTypes, digest, buffer, typesBytes, cancellationToken));
+        var types = ReadMetadata(contentTypes, ContentTypesNamespace + "Types", typesBytes);
+        (Dictionary<string, string> Overrides, Dictionary<string, string> Defaults)? partTypes =
+            includeStructure ? ReadContentTypes(types) : null;
+        if (includeStructure)
+            metadata.Add(contentTypes.Name, typesBytes);
+        long metadataBytes = typesBytes.Length;
         XElement? root = null;
         foreach (var entry in entries.Values.OrderBy(entry => entry.DataOffset))
         {
-            bool isMetadata = entry == contentTypes || entry == relationships;
-            hashes.Add(entry.Name, HashEntry(stream, entry, digest, buffer, isMetadata ? metadataBuffer : null, cancellationToken));
             if (entry == contentTypes)
-                types = ReadMetadata(entry, ContentTypesNamespace + "Types", metadataBuffer);
-            else if (entry == relationships)
-                root = ReadMetadata(entry, RelationshipsNamespace + "Relationships", metadataBuffer);
+                continue;
+            string? contentType = partTypes?.Overrides.GetValueOrDefault("/" + entry.Name) ??
+                partTypes?.Defaults.GetValueOrDefault(Path.GetExtension(entry.Name).TrimStart('.'));
+            bool isMetadata = entry == relationships || includeStructure &&
+                (entry.Name.EndsWith(".rels", StringComparison.Ordinal) || IsStructuralMetadata(contentType));
+            byte[]? captured = null;
+            if (isMetadata)
+            {
+                if (entry.Length > 2 * MaxMetadataBytes || includeStructure && metadataBytes + entry.Length > 16 * MaxMetadataBytes)
+                    throw new InvalidDataException("The package exceeds the structural metadata size limit.");
+                captured = new byte[entry.Length];
+                metadataBytes += entry.Length;
+            }
+            hashes.Add(entry.Name, HashEntry(stream, entry, digest, buffer, captured, cancellationToken));
+            if (entry == relationships)
+                root = ReadMetadata(entry, RelationshipsNamespace + "Relationships", captured!);
+            if (includeStructure && captured is not null)
+                metadata.Add(entry.Name, captured);
+            if (includeStructure && IsSheetContentType(contentType))
+                codeNames.Add(entry.Name, ReadSheetCodeName(stream, entry, cancellationToken));
         }
 
-        ValidateWorkbookIdentity(types!, root!, equivalentNames, extension);
-        return hashes;
+        ValidateWorkbookIdentity(types, root!, equivalentNames, extension);
+        return new PackageInventory(hashes, metadata, codeNames);
+    }
+
+    private static (Dictionary<string, string> Overrides, Dictionary<string, string> Defaults) ReadContentTypes(XElement types)
+    {
+        var overrides = new Dictionary<string, string>(StringComparer.Ordinal);
+        var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in types.Elements())
+        {
+            bool isOverride = item.Name == ContentTypesNamespace + "Override";
+            if (!isOverride && item.Name != ContentTypesNamespace + "Default")
+                throw new InvalidDataException("The package content types contain an unexpected element.");
+            string? key = (string?)item.Attribute(isOverride ? "PartName" : "Extension");
+            string? type = (string?)item.Attribute("ContentType");
+            if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(type) ||
+                !(isOverride ? overrides : defaults).TryAdd(key, type))
+                throw new InvalidDataException("The package content types are missing or ambiguous.");
+        }
+        return (overrides, defaults);
+    }
+
+    private static bool IsStructuralMetadata(string? type) => type is
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml" or
+        "application/vnd.ms-excel.sheet.macroEnabled.main+xml" or
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
+
+    private static bool IsSheetContentType(string? type) => type is
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml" or
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml" or
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.dialogsheet+xml" or
+        "application/vnd.ms-excel.macrosheet+xml" or
+        "application/vnd.ms-excel.intlmacrosheet+xml";
+
+    private static string? ReadSheetCodeName(FileStream file, PackageZipEntry entry, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var payload = new ZipPayloadStream(file, entry.DataOffset, entry.CompressedLength,
+                entry.Method == Deflated, cancellationToken);
+            using var inflated = entry.Method == Deflated ? new DeflateStream(payload, CompressionMode.Decompress, leaveOpen: true) : null;
+            using var reader = XmlReader.Create(inflated ?? (Stream)payload, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = 2 * MaxMetadataBytes,
+                IgnoreComments = true,
+                IgnoreProcessingInstructions = true,
+                IgnoreWhitespace = true
+            });
+            reader.MoveToContent();
+            string ns = reader.NamespaceURI;
+            if (reader.LocalName is not ("worksheet" or "chartsheet" or "dialogsheet" or "macrosheet") || ns is not
+                ("http://schemas.openxmlformats.org/spreadsheetml/2006/main" or "http://purl.oclc.org/ooxml/spreadsheetml/main"))
+                throw new InvalidDataException("A sheet part has an unexpected XML root.");
+            if (reader.IsEmptyElement)
+                return null;
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (reader.NodeType != XmlNodeType.Element)
+                    continue;
+                if (reader.NamespaceURI != ns)
+                    throw new InvalidDataException("The sheet has unsupported leading extension metadata.");
+                // sheetPr is the first optional child. Stop before reading sheet cells.
+                if (reader.Depth != 1 || reader.LocalName != "sheetPr" || reader.NamespaceURI != ns)
+                    return null;
+                string? codeName = reader.GetAttribute("codeName");
+                if (codeName?.Length > 512)
+                    throw new InvalidDataException("A sheet CodeName exceeds the structural name limit.");
+                return codeName;
+            }
+            return null;
+        }
+        catch (XmlException exception)
+        {
+            throw new InvalidDataException("The sheet structural metadata XML is invalid.", exception);
+        }
     }
 
     private static (int Count, long Start, long End) ReadZipDirectory(FileStream stream)

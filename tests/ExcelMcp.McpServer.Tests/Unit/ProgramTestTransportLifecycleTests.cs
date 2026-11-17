@@ -86,6 +86,37 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             Assert.Equal("changed", change.GetProperty("changeKind").GetString());
             Assert.NotEqual(change.GetProperty("beforeSha256").GetString(), change.GetProperty("afterSha256").GetString());
             Assert.False(change.GetProperty("allowed").GetBoolean());
+            Assert.False(payload.TryGetProperty("structure", out _));
+
+            var structural = Path.Join(directory.FullName, "structural.xlsx");
+            CreateComparisonPackage(structural,
+                """<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets/></workbook>""");
+            var structuralResponse = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?>
+            {
+                ["action"] = "compare-packages",
+                ["before_path"] = structural,
+                ["after_path"] = structural,
+                ["include_structure"] = true
+            }, cancellationToken: cancellation.Token);
+            Assert.False(structuralResponse.IsError, structuralResponse.StructuredContent?.GetRawText());
+            var structure = structuralResponse.StructuredContent!.Value.GetProperty("structure");
+            Assert.Equal("xl/workbook.xml", structure.GetProperty("before").GetProperty("workbookPart").GetString());
+            Assert.Empty(structure.GetProperty("after").GetProperty("sheets").EnumerateArray());
+            Assert.Single(structure.GetProperty("after").GetProperty("relationships").EnumerateArray());
+            Assert.Empty(structure.GetProperty("parentStyleMappings").EnumerateArray());
+
+            var malformedMetadata = Path.Join(directory.FullName, "malformed-metadata.xlsx");
+            CreateComparisonPackage(malformedMetadata,
+                """<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets></workbook>""");
+            var malformedResponse = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?>
+            {
+                ["action"] = "compare-packages",
+                ["before_path"] = structural,
+                ["after_path"] = malformedMetadata,
+                ["include_structure"] = true
+            }, cancellationToken: cancellation.Token);
+            Assert.True(malformedResponse.IsError);
+            Assert.Equal("InvalidInput", malformedResponse.StructuredContent!.Value.GetProperty("errorCategory").GetString());
 
             var list = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?> { ["action"] = "list" },
                 cancellationToken: cancellation.Token);

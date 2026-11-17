@@ -121,9 +121,13 @@ assumption that passing compilation proves runtime correctness.
   is appropriate only when part of the user's request.
 - Production code uses Excel COM to read or change workbook content. The
   explicit `session.compare-packages` action is an offline exception for
-  hashing parts of two caller-selected, saved XLSX/XLSM files. Keep it
-  read-only, bound its archive inputs and output, and return part identities
-  and hashes without returning their content. The optional package check for
+  hashing parts of two caller-selected, saved XLSX/XLSM files and optional
+  bounded structural metadata inspection. Keep it read-only, bound its archive
+  inputs and output, and return part identities, hashes and requested sheet,
+  relationship, name-scope and parent-style metadata without cell values,
+  defined-name formulas or external relationship targets. Structural matches
+  never widen the exact part allowlist or authorize package rewriting.
+  The optional package check for
   `workbook.save-copy-as` uses the same read-only comparator on a saved
   baseline and Excel's staged output before publication. Other workbook
   commands must not open workbook ZIPs or interpret their XML. The Power Query user settings
