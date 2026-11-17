@@ -36,5 +36,12 @@ internal static class ServiceResultOutcome
             errorCategory = "InvalidResponse";
             return true;
         }
+        catch (ArgumentException exception)
+        {
+            // JsonObject can reject duplicate response properties on first access.
+            errorMessage = exception.Message;
+            errorCategory = "InvalidResponse";
+            return true;
+        }
     }
 }

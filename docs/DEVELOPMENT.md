@@ -600,12 +600,7 @@ Tool telemetry contains only allowlisted operation metadata. Explicit exception
 telemetry is rebuilt from safe classifications and never contains the original
 message or stack. Sanitized failures are `UnhandledException` custom events.
 An ingestion-time workspace transform rejects raw exception rows, framework
-traces, metrics/counters, and unmarked `UnhandledException` events. `SensitiveDataRedactor` is retained for
-local diagnostic text and recognizes:
-- Windows file paths (`C:\Users\...` → `[REDACTED_PATH]`)
-- UNC paths (`\\server\share\...` → `[REDACTED_PATH]`)
-- Connection string secrets (`Password=...` → `[REDACTED_CREDENTIAL]`)
-- Email addresses → `[REDACTED_EMAIL]`
+traces, metrics/counters, and unmarked `UnhandledException` events.
 
 ### **Local Development with Telemetry**
 
@@ -872,7 +867,6 @@ Runtime:
 | `Shared/UsageRecord.cs` | Safe event and operation fields shared by both adapters |
 | `Shared/TelemetrySettings.cs` | Destination selection and loopback validation |
 | `Shared/TelemetryUserIdentity.cs` | Shared persisted random identity and one-time migration |
-| `Telemetry/SensitiveDataRedactor.cs` | Redacts sensitive local diagnostic text |
 | Entry-point `Program.cs` files | Telemetry destination and lifecycle configuration |
 | CLI and MCP Server project files | MSBuild targets that generate `TelemetryConfig.g.cs` |
 | `Directory.Build.props.user.template` | Template for local dev connection string |

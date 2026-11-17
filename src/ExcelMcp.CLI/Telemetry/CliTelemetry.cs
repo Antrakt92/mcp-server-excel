@@ -57,10 +57,12 @@ internal static class CliTelemetry
         public void Dispose() => restore();
     }
 
-    internal static async Task<ServiceResponse> TrackCommandAsync(
+    internal static Task<ServiceResponse> TrackCommandAsync(
         ServiceRequest request,
         Func<Task<ServiceResponse>> operation) =>
-        await TrackCommandAsync(request, operation, TrackCommandInvocation);
+        _settings?.Mode == TelemetryMode.Off && CurrentInvocationTelemetry.Value is null
+            ? operation()
+            : TrackCommandAsync(request, operation, TrackCommandInvocation);
 
     internal static async Task<ServiceResponse> TrackCommandAsync(
         ServiceRequest request,
@@ -89,12 +91,12 @@ internal static class CliTelemetry
             string? resultErrorCategory = null;
             var negativeResult = response?.Success == true &&
                 ServiceResultOutcome.TryReadNegative(response.Result, out _, out resultErrorCategory, request.Command);
-            var expectedNegative = IsExpectedNegative(request, response);
+            var expectedNegative = resultErrorCategory != "InvalidResponse" && IsExpectedNegative(request, response);
             var succeeded = response?.Success == true && (!negativeResult || expectedNegative);
             var trackedFailureCategory = response?.ErrorCategory
                 ?? (expectedNegative ? null : resultErrorCategory)
                 ?? failureCategory;
-            if (invocationTelemetry != null && response?.Success != true)
+            if (invocationTelemetry != null && (response?.Success != true || resultErrorCategory == "InvalidResponse"))
             {
                 invocationTelemetry.FailureCategory ??= trackedFailureCategory;
             }
@@ -200,7 +202,9 @@ internal static class CliTelemetry
 
     internal static Task<int> TrackCliInvocationAsync(string[] args, Func<Task<int>> operation)
     {
-        return TrackCliInvocationAsync(args, operation, TrackCommandInvocation);
+        return _settings?.Mode == TelemetryMode.Off
+            ? operation()
+            : TrackCliInvocationAsync(args, operation, TrackCommandInvocation);
     }
 
     internal static async Task<int> TrackCliInvocationAsync(
