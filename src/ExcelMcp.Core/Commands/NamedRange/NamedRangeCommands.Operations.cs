@@ -57,6 +57,9 @@ public partial class NamedRangeCommands
             Justification = "RefersToRange can reject formula/external names; reports that specific getter failure per-name as Unavailable with native HRESULT. Other metadata and preview failures propagate.")]
         NamedRangeListResult ListNames(ExcelContext ctx, CancellationToken ct)
         {
+            var budget = new RangeReadBudget("Read individual names with namedrange read.");
+            budget.AddScalar(result.FilePath);
+            var previews = new List<(int Index, NamedRangeInfo Info)>();
             Excel.Names? namesCollection = null;
             try
             {
@@ -80,6 +83,9 @@ public partial class NamedRangeCommands
                         }
 
                         string refersTo = ((object?)nameObj.RefersTo)?.ToString() ?? string.Empty;
+                        budget.ReserveRecord(6);
+                        budget.AddScalar(name);
+                        budget.AddScalar(refersTo);
 
                         var info = new NamedRangeInfo
                         {
@@ -102,7 +108,10 @@ public partial class NamedRangeCommands
                         if (refersToRange is not null)
                         {
                             if (RangeHelpers.BelongsToWorkbook(refersToRange, ctx.Book))
-                                PopulateListValuePreview(refersToRange, info);
+                            {
+                                if (PrepareListValuePreview(refersToRange, info))
+                                    previews.Add((i, info));
+                            }
                             else
                             {
                                 info.ValueType = "Unavailable";
@@ -110,6 +119,8 @@ public partial class NamedRangeCommands
                             }
                         }
 
+                        budget.AddScalar(info.ValueType);
+                        budget.AddScalar(info.ValueOmittedReason);
                         result.NamedRanges.Add(info);
                     }
                     finally
@@ -117,6 +128,14 @@ public partial class NamedRangeCommands
                         ComUtilities.Release(ref refersToRange);
                         ComUtilities.Release(ref nameObj);
                     }
+                }
+
+                // Charge every entry's metadata and omission status before preview values.
+                // Reacquire each range only while reading it.
+                foreach (var (index, info) in previews)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    PopulateListValuePreview(ctx.Book, namesCollection, index, info, budget, ct);
                 }
 
                 result.Success = true;
@@ -182,14 +201,14 @@ public partial class NamedRangeCommands
         }
     }
 
-    private static void PopulateListValuePreview(Excel.Range refersToRange, NamedRangeInfo info)
+    private static bool PrepareListValuePreview(Excel.Range refersToRange, NamedRangeInfo info)
     {
         var areaCount = GetAreaCount(refersToRange);
         if (areaCount > 1)
         {
             info.ValueType = "MultiAreaRange";
             info.ValueOmittedReason = "Named range resolves to multiple areas; list omits multi-area value previews.";
-            return;
+            return false;
         }
 
         var cellCount = GetCellCount(refersToRange);
@@ -200,21 +219,63 @@ public partial class NamedRangeCommands
             info.ValueType = "RangeTooLarge";
             info.ValueOmittedReason =
                 $"Named range contains {cellCount} cells, which exceeds the list preview limit of {MaxListValuePreviewCellCount}.";
-            return;
+            return false;
         }
 
-        object? rawValue = refersToRange.Value2;
+        info.ValueType = "RangeTooLarge";
+        info.ValueOmittedReason = "This preview would exceed the list response byte budget. Read the name separately.";
+        return true;
+    }
 
-        if (rawValue is object[,] array2D)
+    private static void PopulateListValuePreview(Excel.Workbook workbook, Excel.Names names, int index,
+        NamedRangeInfo info, RangeReadBudget budget, CancellationToken cancellationToken)
+    {
+        Excel.Name? name = null;
+        Excel.Range? range = null;
+        try
         {
-            info.Value = ConvertArrayToList(array2D);
-            info.ValueType = "Array";
+            name = names.Item(index);
+            if (!string.Equals(name.Name, info.Name, StringComparison.Ordinal) || !name.Visible ||
+                !string.Equals(((object?)name.RefersTo)?.ToString(), info.RefersTo, StringComparison.Ordinal))
+                throw new InvalidOperationException("Workbook names changed while reading the list. Retry to refresh the metadata.");
+
+            range = name.RefersToRange;
+            if (range is null || !RangeHelpers.BelongsToWorkbook(range, workbook) ||
+                GetAreaCount(range) != 1 || GetCellCount(range) != info.CellCount)
+                throw new InvalidOperationException("A named range changed while reading the list. Retry to refresh the metadata.");
+
+            if (budget.TryAddPreview(() => ReadPreview(range, info.CellCount, budget, cancellationToken),
+                    out var preview))
+            {
+                info.Value = preview.Value;
+                info.ValueType = preview.Type;
+                info.ValueOmittedReason = null;
+            }
         }
-        else
+        finally
         {
-            info.Value = ConvertValueForJson(rawValue);
-            info.ValueType = rawValue?.GetType().Name ?? "null";
+            ComUtilities.Release(ref range);
+            ComUtilities.Release(ref name);
         }
+    }
+
+    private static (object? Value, string Type) ReadPreview(Excel.Range range, long? cellCount,
+        RangeReadBudget budget, CancellationToken cancellationToken)
+    {
+        if (cellCount != 1)
+        {
+            var size = RangeHelpers.GetDimensions(range);
+            var rows = BoundedRangeValueReader.Read(range, size, budget, cancellationToken,
+                convertValue: ConvertValueForJson);
+            return (rows, "Array");
+        }
+
+        object? rawValue = range.Value2;
+        var value = ConvertValueForJson(rawValue);
+        var type = rawValue?.GetType().Name ?? "null";
+        budget.AddScalar(value);
+        budget.AddScalar(type);
+        return (value, type);
     }
 
     private static int GetAreaCount(Excel.Range range)
@@ -282,7 +343,8 @@ public partial class NamedRangeCommands
                     calculationChanged = true;
                 }
 
-                refersToRange.Value2 = ParseWriteValue(value);
+                var parsed = ParseWriteValue(value);
+                refersToRange.Value2 = parsed is string { Length: > 0 } text ? "'" + text : parsed;
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath }; // Dummy return for batch.Execute
             }

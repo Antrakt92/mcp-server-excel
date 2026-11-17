@@ -7,6 +7,7 @@ internal sealed class RangeReadBudget(
     internal const long MaximumResponseBytes = 4 * 1024 * 1024;
     // MCP carries structured content and JSON text, whose own escaping can add another copy.
     private const int TransportCopies = 3;
+    private ArgumentOutOfRangeException? _limitFailure;
     internal long EstimatedBytes { get; private set; } = 4096 * TransportCopies;
 
     internal void ReserveGrid(int rows, int columns, bool includeFormulas) =>
@@ -15,6 +16,25 @@ internal sealed class RangeReadBudget(
     internal void AddScalar(object? value) => Add(EstimateScalar(value) * TransportCopies);
 
     internal void AddError(string formula) => Add((4096 + EstimateScalar(formula)) * TransportCopies);
+
+    internal void ReserveRecord(int fields) => Add((32L + 48L * fields) * TransportCopies);
+
+    internal bool TryAddPreview<T>(Func<T> read, out T preview)
+    {
+        long previous = EstimatedBytes;
+        try
+        {
+            preview = read();
+            return true;
+        }
+        catch (ArgumentOutOfRangeException error) when (ReferenceEquals(error, _limitFailure))
+        {
+            EstimatedBytes = previous;
+            _limitFailure = null;
+            preview = default!;
+            return false;
+        }
+    }
 
     internal static long EstimateScalar(object? value) => value switch
     {
@@ -27,8 +47,11 @@ internal sealed class RangeReadBudget(
     private void Add(long bytes)
     {
         if (bytes > MaximumResponseBytes - EstimatedBytes)
-            throw new ArgumentOutOfRangeException(nameof(bytes),
+        {
+            _limitFailure = new ArgumentOutOfRangeException(nameof(bytes),
                 $"The requested data exceeds the conservative 4 MiB response byte budget. {limitGuidance} No partial values were returned.");
+            throw _limitFailure;
+        }
         EstimatedBytes += bytes;
     }
 }

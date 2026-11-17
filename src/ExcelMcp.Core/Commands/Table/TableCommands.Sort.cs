@@ -166,9 +166,6 @@ public partial class TableCommands
                     );
                 }
 
-                // Build description
-                var sortDesc = string.Join(", ", sortColumns.Select(sc => $"{sc.ColumnName} ({(sc.Ascending ? "asc" : "desc")})"));
-
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             finally

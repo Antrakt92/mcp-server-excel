@@ -89,21 +89,6 @@ public partial class RangeCommands
         }
     }
 
-    internal static object? ConvertErrorForRead(
-        object? cellValue,
-        string formula,
-        int row,
-        int column,
-        List<RangeCellError> cellErrors)
-    {
-        if (!ExcelErrorMapper.TryGet(cellValue, out int errorCode, out var error))
-        {
-            return cellValue;
-        }
-
-        return ConvertMappedErrorForRead(cellValue, formula, row, column, cellErrors, errorCode, error);
-    }
-
     private static string ConvertMappedErrorForRead(
         object? cellValue,
         string formula,

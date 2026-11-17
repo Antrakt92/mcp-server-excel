@@ -1,3 +1,4 @@
+using System.Text;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -89,15 +90,15 @@ public partial class TableCommands
     {
         if (!string.IsNullOrEmpty(columnName))
         {
-            // Column-specific reference
+            string column = EscapeStructuredReferenceColumn(columnName);
             return region switch
             {
-                TableRegion.All => $"{tableName}[[#All],[{columnName}]]",
-                TableRegion.Data => $"{tableName}[[{columnName}]]", // Default is data
-                TableRegion.Headers => $"{tableName}[[#Headers],[{columnName}]]",
-                TableRegion.Totals => $"{tableName}[[#Totals],[{columnName}]]",
-                TableRegion.ThisRow => $"{tableName}[[@],[{columnName}]]",
-                _ => $"{tableName}[[{columnName}]]"
+                TableRegion.All => $"{tableName}[[#All],[{column}]]",
+                TableRegion.Data => $"{tableName}[[{column}]]", // Default is data
+                TableRegion.Headers => $"{tableName}[[#Headers],[{column}]]",
+                TableRegion.Totals => $"{tableName}[[#Totals],[{column}]]",
+                TableRegion.ThisRow => $"{tableName}[@[{column}]]",
+                _ => $"{tableName}[[{column}]]"
             };
         }
         else
@@ -113,6 +114,24 @@ public partial class TableCommands
                 _ => $"{tableName}[#All]"
             };
         }
+    }
+
+    private static string EscapeStructuredReferenceColumn(string columnName)
+    {
+        const string escapeCharacters = "[]#'@";
+        int firstSpecial = columnName.AsSpan().IndexOfAny(escapeCharacters);
+        if (firstSpecial < 0)
+            return columnName;
+
+        var escaped = new StringBuilder(columnName.Length);
+        escaped.Append(columnName.AsSpan(0, firstSpecial));
+        foreach (char character in columnName.AsSpan(firstSpecial))
+        {
+            if (escapeCharacters.Contains(character))
+                escaped.Append('\'');
+            escaped.Append(character);
+        }
+        return escaped.ToString();
     }
 
     /// <summary>

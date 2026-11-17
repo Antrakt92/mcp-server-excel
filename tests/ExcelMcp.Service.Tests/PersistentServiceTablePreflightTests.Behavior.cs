@@ -40,6 +40,31 @@ public sealed partial class PersistentServiceTablePreflightTests
         AssertSalesData(RequireSuccess(_tableCommands.GetData(batch, "SalesTable")));
     }
 
+    [Fact]
+    public void Create_WithoutHeaders_KeepsTextFirstRowAsData()
+    {
+        var batch = _fixture.BatchToken;
+        RequireSuccess(_rangeCommands.SetValues(
+            batch,
+            "Sales",
+            "F1:G3",
+            [["First", "Second"], [1, 2], [3, 4]]));
+
+        RequireSuccess(_tableCommands.Create(batch, "Sales", "NoHeaderTable", "F1:G3", hasHeaders: false));
+
+        var table = RequireSuccess(_tableCommands.Read(batch, "NoHeaderTable")).Table!;
+        Assert.Equal("$F$1:$G$4", table.Range);
+        var data = RequireSuccess(_tableCommands.GetData(batch, "NoHeaderTable"));
+        Assert.Equal(["Column1", "Column2"], data.Headers);
+        Assert.Equal(3, data.RowCount);
+        Assert.Equal(3, data.Data.Count);
+        Assert.Equal(["First", "Second"], data.Data[0]);
+        Assert.Equal(1d, Convert.ToDouble(data.Data[1][0], CultureInfo.InvariantCulture));
+        Assert.Equal(2d, Convert.ToDouble(data.Data[1][1], CultureInfo.InvariantCulture));
+        Assert.Equal(3d, Convert.ToDouble(data.Data[2][0], CultureInfo.InvariantCulture));
+        Assert.Equal(4d, Convert.ToDouble(data.Data[2][1], CultureInfo.InvariantCulture));
+    }
+
     /// <summary>
     /// Tests creating a new table.
     /// LLM use case: "convert this range to a table"
@@ -314,6 +339,37 @@ public sealed partial class PersistentServiceTablePreflightTests
         Assert.Equal("SalesTable[[Amount]]", result.StructuredReference);
     }
 
+    [Fact]
+    public void GetStructuredReference_WithSpecialHeaderCharacters_ReturnsUsableFormulaReference()
+    {
+        const string header = "Amount [net] # @ O'Brien";
+        var batch = _fixture.BatchToken;
+        RequireSuccess(_tableCommands.RenameColumn(batch, "SalesTable", "Amount", header));
+        Assert.Equal(header, RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!.Columns![2]);
+
+        var result = RequireSuccess(_tableCommands.GetStructuredReference(
+            batch, "SalesTable", TableRegion.Data, header));
+
+        Assert.Equal("$C$2:$C$5", result.RangeAddress);
+        Assert.Equal("SalesTable[[Amount '[net'] '# '@ O''Brien]]", result.StructuredReference);
+        RequireSuccess(_rangeCommands.SetFormulas(batch, "Sales", "F1", [[$"=SUM({result.StructuredReference})"]]));
+        var values = RequireSuccess(_rangeCommands.GetValues(batch, "Sales", "F1"));
+        Assert.Equal(800d, Convert.ToDouble(Assert.Single(Assert.Single(values.Values)), CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void GetStructuredReference_ThisRowColumn_UsesTheFormulaRowOutsideTheTable()
+    {
+        var batch = _fixture.BatchToken;
+        var result = RequireSuccess(_tableCommands.GetStructuredReference(
+            batch, "SalesTable", TableRegion.ThisRow, "Amount"));
+
+        Assert.Equal("SalesTable[@[Amount]]", result.StructuredReference);
+        RequireSuccess(_rangeCommands.SetFormulas(batch, "Sales", "F3", [[$"={result.StructuredReference}"]]));
+        var values = RequireSuccess(_rangeCommands.GetValues(batch, "Sales", "F3"));
+        Assert.Equal(250d, Convert.ToDouble(Assert.Single(Assert.Single(values.Values)), CultureInfo.InvariantCulture));
+    }
+
     /// <summary>
     /// Tests clearing all filters from a table.
     /// LLM use case: "remove all filters from this table"
@@ -360,21 +416,44 @@ public sealed partial class PersistentServiceTablePreflightTests
     /// Tests setting a total function on a column.
     /// LLM use case: "set the total for this column to sum"
     /// </summary>
-    [Fact]
-    public void SetColumnTotal_WithSumFunction_SetsTotalFormula()
+    [Theory]
+    [InlineData("Sum", "=SUBTOTAL(109,[Amount])", 800)]
+    [InlineData("avg", "=SUBTOTAL(101,[Amount])", 200)]
+    [InlineData("Min", "=SUBTOTAL(105,[Amount])", 100)]
+    [InlineData("Max", "=SUBTOTAL(104,[Amount])", 300)]
+    [InlineData("Var", "=SUBTOTAL(110,[Amount])", 25000d / 3)]
+    public void SetColumnTotal_WithValidFunction_SetsTotalFormula(
+        string function, string expectedFormula, double expectedValue)
     {
-
         var batch = _fixture.BatchToken;
+        Assert.False(RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!.ShowTotals);
 
-        // Enable totals first
-        RequireSuccess(_tableCommands.ToggleTotals(batch, "SalesTable", true));
-
-        // Set sum for Amount column
-        RequireSuccess(_tableCommands.SetColumnTotal(batch, "SalesTable", "Amount", "Sum"));
+        RequireSuccess(_tableCommands.SetColumnTotal(batch, "SalesTable", "Amount", function));
+        Assert.True(RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!.ShowTotals);
         var formula = RequireSuccess(_rangeCommands.GetFormulas(batch, "Sales", "C6"));
-        Assert.Equal("=SUBTOTAL(109,[Amount])", Assert.Single(Assert.Single(formula.Formulas)));
+        Assert.Equal(expectedFormula, Assert.Single(Assert.Single(formula.Formulas)));
         var values = RequireSuccess(_rangeCommands.GetValues(batch, "Sales", "C6"));
-        Assert.Equal(800, Convert.ToDouble(Assert.Single(Assert.Single(values.Values)), CultureInfo.InvariantCulture));
+        Assert.Equal(expectedValue, Convert.ToDouble(Assert.Single(Assert.Single(values.Values)), CultureInfo.InvariantCulture), 8);
+        AssertSalesData(RequireSuccess(_tableCommands.GetData(batch, "SalesTable")));
+    }
+
+    [Theory]
+    [InlineData("Amount", "Custom", "Unknown total function")]
+    [InlineData("Missing column", "Sum", "not found")]
+    public async Task SetColumnTotal_WithInvalidInput_LeavesTotalsHidden(
+        string columnName, string function, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        Assert.False(RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!.ShowTotals);
+
+        var result = await _fixture.SendForFailureAsync("table.set-column-total",
+            new { tableName = "SalesTable", columnName, totalFunction = function });
+
+        Assert.False(result.Success);
+        Assert.Contains(expectedError, result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        var table = RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!;
+        Assert.False(table.ShowTotals);
+        Assert.Equal("$A$1:$D$5", table.Range);
         AssertSalesData(RequireSuccess(_tableCommands.GetData(batch, "SalesTable")));
     }
 

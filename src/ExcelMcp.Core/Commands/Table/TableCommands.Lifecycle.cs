@@ -167,7 +167,7 @@ public partial class TableCommands
 
                 listObjects = sheet.ListObjects;
 
-                var headerOption = hasHeaders ? Excel.XlYesNoGuess.xlYes : Excel.XlYesNoGuess.xlGuess;
+                var headerOption = hasHeaders ? Excel.XlYesNoGuess.xlYes : Excel.XlYesNoGuess.xlNo;
                 newTable = listObjects.Add(Excel.XlListObjectSourceType.xlSrcRange, rangeObj, null, headerOption);
                 newTable.Name = tableName;
 
