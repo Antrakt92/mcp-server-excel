@@ -75,9 +75,6 @@ internal static class OwnedProcessCleanup
             .ToArray();
     }
 
-    internal static Task<CleanupResult> CleanupAsync(string pipeName, CancellationToken cancellationToken) =>
-        CleanupAsync(pipeName, CaptureTrackedProcesses(pipeName), cancellationToken);
-
     internal static Task<CleanupResult> CleanupAsync(
         string pipeName, ProcessSnapshot preShutdownSnapshot, CancellationToken cancellationToken)
     {

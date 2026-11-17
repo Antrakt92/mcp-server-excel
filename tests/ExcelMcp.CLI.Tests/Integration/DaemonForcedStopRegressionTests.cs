@@ -19,6 +19,10 @@ namespace Sbroenne.ExcelMcp.CLI.Tests.Integration;
 [Collection("Sequential")]
 public sealed class DaemonForcedStopRegressionTests
 {
+    private static Task<OwnedProcessCleanup.CleanupResult> CaptureAndCleanupAsync(string pipeName) =>
+        OwnedProcessCleanup.CleanupAsync(pipeName, OwnedProcessCleanup.CaptureTrackedProcesses(pipeName),
+            CancellationToken.None);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -208,38 +212,57 @@ public sealed class DaemonForcedStopRegressionTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task ServiceStop_WithoutDaemonMutex_SendsShutdownAndPreservesResponse(bool succeeds)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task ServiceStop_WithoutDaemonMutex_SendsShutdownAndPreservesResponse(bool succeeds, bool malformedTracking)
     {
         var pipeName = $"excelmcp-mutexless-stop-{Guid.NewGuid():N}";
+        var trackingFile = DaemonProcessTracker.GetTrackingFilePath(pipeName);
         using var server = ServiceSecurity.CreateSecureServer(ServiceClient.GetControlPipeName(pipeName));
         var target = new MutexlessShutdownRpcTarget(succeeds);
         var connection = server.WaitForConnectionAsync();
-        var stop = RunServiceStopAsync(pipeName);
         JsonRpc? rpc = null;
         try
         {
+            if (malformedTracking)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(trackingFile)!);
+                await File.WriteAllTextAsync(trackingFile, """{"processId":""");
+            }
+            var stop = RunServiceStopAsync(pipeName);
             await Task.WhenAny(connection, stop).WaitAsync(TimeSpan.FromSeconds(10));
             if (connection.IsCompletedSuccessfully)
                 rpc = JsonRpc.Attach(server, target);
 
             var result = await stop.WaitAsync(TimeSpan.FromSeconds(20));
             Assert.True(target.ShutdownRequested, "The responsive host did not receive service.shutdown.");
-            Assert.Equal(succeeds ? 0 : 1, result.ExitCode);
+            bool expectedSuccess = succeeds && !malformedTracking;
+            Assert.Equal(expectedSuccess ? 0 : 1, result.ExitCode);
             using var response = JsonDocument.Parse(result.Stdout);
-            Assert.Equal(succeeds, response.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(expectedSuccess, response.RootElement.GetProperty("success").GetBoolean());
             if (!succeeds)
                 Assert.Equal("Timeout", response.RootElement.GetProperty("error").GetProperty("category").GetString());
+            else
+                Assert.Equal(MutexlessShutdownRpcTarget.Warning,
+                    response.RootElement.GetProperty("data").GetProperty("shutdownWarning").GetString());
+            if (malformedTracking)
+            {
+                Assert.Contains("malformed", response.RootElement.GetProperty("error").GetProperty("message").GetString(),
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.True(File.Exists(trackingFile));
+            }
         }
         finally
         {
             rpc?.Dispose();
+            DaemonProcessTracker.Clear(pipeName);
         }
     }
 
     private sealed class MutexlessShutdownRpcTarget(bool succeeds)
     {
+        internal const string Warning = "Excel worker 12 did not confirm release and remains available for recovery.";
         public bool ShutdownRequested { get; private set; }
 
         public Task<ServiceResponse> ProcessCommandAsync(ServiceRequest request)
@@ -249,6 +272,7 @@ public sealed class DaemonForcedStopRegressionTests
             return Task.FromResult(new ServiceResponse
             {
                 Success = succeeds,
+                PartialState = succeeds ? Warning : null,
                 ErrorCategory = succeeds ? null : "Timeout",
                 ErrorMessage = succeeds ? null : "Shutdown could not finish; the workbook remains open."
             });
@@ -1281,9 +1305,7 @@ public sealed class DaemonForcedStopRegressionTests
     {
         var pipeName = $"excelmcp-tracker-missing-{Guid.NewGuid():N}";
 
-        var result = await OwnedProcessCleanup.CleanupAsync(
-            pipeName,
-            CancellationToken.None);
+        var result = await CaptureAndCleanupAsync(pipeName);
 
         Assert.True(result.Success);
         Assert.False(result.DaemonMatched);
@@ -1300,9 +1322,7 @@ public sealed class DaemonForcedStopRegressionTests
             Directory.CreateDirectory(Path.GetDirectoryName(trackingFile)!);
             await File.WriteAllTextAsync(trackingFile, """{"processId":""");
 
-            var result = await OwnedProcessCleanup.CleanupAsync(
-                pipeName,
-                CancellationToken.None);
+            var result = await CaptureAndCleanupAsync(pipeName);
 
             Assert.False(result.Success);
             Assert.False(result.DaemonMatched);
@@ -1331,9 +1351,7 @@ public sealed class DaemonForcedStopRegressionTests
                 FileAccess.ReadWrite,
                 FileShare.None))
             {
-                var result = await OwnedProcessCleanup.CleanupAsync(
-                    pipeName,
-                    CancellationToken.None);
+                var result = await CaptureAndCleanupAsync(pipeName);
 
                 Assert.False(result.Success);
                 Assert.False(result.DaemonMatched);
@@ -1435,9 +1453,7 @@ public sealed class DaemonForcedStopRegressionTests
         {
             WriteTrackingRecord(legacyTrackingFile, daemon, excel);
 
-            var result = await OwnedProcessCleanup.CleanupAsync(
-                callerPipeName,
-                CancellationToken.None);
+            var result = await CaptureAndCleanupAsync(callerPipeName);
 
             Assert.True(result.Success);
             Assert.True(result.DaemonMatched);
@@ -1472,9 +1488,7 @@ public sealed class DaemonForcedStopRegressionTests
             WriteTrackingRecord(selectedTrackingFile, selectedDaemon, selectedExcel);
             WriteTrackingRecord(unrelatedTrackingFile, unrelatedDaemon, unrelatedExcel);
 
-            var result = await OwnedProcessCleanup.CleanupAsync(
-                selectedPipe.ToUpperInvariant(),
-                CancellationToken.None);
+            var result = await CaptureAndCleanupAsync(selectedPipe.ToUpperInvariant());
 
             Assert.True(result.Success);
             Assert.False(selectedDaemon.HasExited);

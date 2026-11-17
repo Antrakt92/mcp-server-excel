@@ -467,14 +467,15 @@ internal sealed class ExcelWorkerHost : IDisposable
                         System.Diagnostics.Trace.TraceError("Could not reveal Excel after its controller exited: {0}", ex);
                     }
                 }
-                // Empty workers have no workbook ownership to hand over.
                 if (_service.SessionCount == 0 && await _execution.WaitAsync(0, _stop.Token))
                 {
                     try
                     {
                         lock (_stateLock)
                         {
-                            if (ReadControllerLiveness() is not false)
+                            // An in-flight open or attach can publish a session before releasing execution.
+                            if (ReadControllerLiveness() is not false || _service.SessionCount != 0
+                                || _service.SessionManager.HasPendingExecution)
                                 continue;
                             _releasing = true;
                         }

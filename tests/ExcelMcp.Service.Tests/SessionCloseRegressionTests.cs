@@ -20,6 +20,60 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Speed", "Medium")]
 public sealed partial class SessionCloseRegressionTests
 {
+    [Fact(Timeout = 15000)]
+    public async Task WorkerMonitor_RetainsSessionPublishedDuringControllerExit()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-worker-controller-exit-");
+        var registry = new WorkerRegistry(directory.FullName);
+        var workerIdentity = WorkerProcess.Current;
+        // A different start time makes this controller identity stale while still
+        // letting the existing liveness hook control the interleaving.
+        var controller = workerIdentity with { StartedAtUtcFileTime = workerIdentity.StartedAtUtcFileTime - 1 };
+        var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", workerIdentity,
+            controller, "generation", WorkerRegistry.Build, null);
+        using var service = new ExcelMcpService();
+        using var host = new ExcelWorkerHost(registration, service, registry);
+        var batch = new FakeBatch { WorkbookPath = CreateFakeWorkbookPath() };
+        const string sessionId = "published-during-controller-exit";
+        var nextMonitorTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int livenessChecks = 0;
+        WorkerProcess.BeforeIdentityReadForTests = process =>
+        {
+            if (process.Id != controller.ProcessId)
+                return;
+            switch (Interlocked.Increment(ref livenessChecks))
+            {
+                case 2:
+                    RegisterSession(service, sessionId, batch, addKnownSessionId: true);
+                    break;
+                case 3:
+                    nextMonitorTick.TrySetResult();
+                    break;
+            }
+        };
+
+        var run = host.RunAsync();
+        var primary = await Record.ExceptionAsync(async () =>
+        {
+            var completed = await Task.WhenAny(nextMonitorTick.Task, run).WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Same(nextMonitorTick.Task, completed);
+            Assert.False(run.IsCompleted);
+            Assert.Same(batch, service.SessionManager.GetSession(sessionId));
+            Assert.Equal(0, batch.DisposeCalls);
+        });
+        WorkerProcess.BeforeIdentityReadForTests = null;
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            GetPrivateField<DaemonHost>(host, "_server").RequestShutdown();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            registry.Remove(registration.PipeName);
+            directory.Delete();
+        });
+        if (primary is not null && cleanup is not null) throw new AggregateException(primary, cleanup);
+        if (primary is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((primary ?? cleanup)!).Throw();
+    }
+
     [Theory(Timeout = 15000)]
     [InlineData(false)]
     [InlineData(true)]

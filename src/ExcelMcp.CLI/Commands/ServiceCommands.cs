@@ -59,6 +59,7 @@ internal sealed class ServiceStopCommand : AsyncCommand
         CancellationToken cancellationToken)
     {
         var preShutdownSnapshot = OwnedProcessCleanup.CaptureTrackedProcesses(pipeName);
+        string? shutdownWarning = null;
         try
         {
             using var client = new ServiceClient(pipeName, connectTimeout: CommandTimeout,
@@ -90,6 +91,7 @@ internal sealed class ServiceStopCommand : AsyncCommand
 
             if (response.Success)
             {
+                shutdownWarning = response.PartialState;
                 if (await WaitForDaemonExitAsync(pipeName, cancellationToken))
                 {
                     return await WriteCleanupResultAsync(
@@ -97,13 +99,14 @@ internal sealed class ServiceStopCommand : AsyncCommand
                         preShutdownSnapshot,
                         cancellationToken,
                         "Service stopped.",
-                        response.PartialState);
+                        shutdownWarning);
                 }
 
                 CliResultOutput.WriteJson(JsonSerializer.Serialize(
                     new
                     {
                         success = false,
+                        shutdownWarning,
                         errorCategory = "Timeout",
                         errorMessage = $"Service acknowledged shutdown but did not exit within {ShutdownWaitTimeout.TotalSeconds:0} seconds. " +
                             "The service and its workbooks have not been terminated."
@@ -120,6 +123,7 @@ internal sealed class ServiceStopCommand : AsyncCommand
                 new
                 {
                     success = false,
+                    shutdownWarning,
                     errorCategory = ex is TimeoutException ? "Timeout" : "Cancelled",
                     errorMessage = "The shutdown wait ended without confirmation. The service and its workbooks have not been terminated.",
                     cause = ex.Message
@@ -132,6 +136,7 @@ internal sealed class ServiceStopCommand : AsyncCommand
                 new
                 {
                     success = false,
+                    shutdownWarning,
                     errorMessage = "The shutdown response could not be confirmed. The service and its workbooks have not been terminated. " +
                         $"{ex.GetType().Name}: {ex.Message}"
                 },
@@ -173,6 +178,7 @@ internal sealed class ServiceStopCommand : AsyncCommand
                 new
                 {
                     success = false,
+                    shutdownWarning,
                     errorMessage = cleanupResult.ErrorMessage
                         ?? "Recorded Excel copies could not be checked. Ownership checks did not close Excel."
                 },
