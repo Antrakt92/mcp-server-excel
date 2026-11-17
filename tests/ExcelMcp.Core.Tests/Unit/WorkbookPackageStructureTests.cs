@@ -258,6 +258,7 @@ public sealed class WorkbookPackageStructureTests : IDisposable
     [InlineData("worksheets/%2e%2e/outside.xml")]
     [InlineData("worksheets/a%2fb.xml")]
     [InlineData("https://invalid.example/outside.xml")]
+    [InlineData("scheme:part.xml")]
     [InlineData("//invalid.example/outside.xml")]
     [InlineData("worksheets/sheet1.xml#fragment")]
     public void CompareStructure_RejectsAmbiguousOrEscapingInternalTargets(string target)
@@ -267,6 +268,23 @@ public sealed class WorkbookPackageStructureTests : IDisposable
         Assert.Throws<InvalidDataException>(() =>
             WorkbookPackageComparison.Compare(workbook, workbook, null, default, includeStructure: true));
         Assert.True(WorkbookPackageComparison.Compare(workbook, workbook, null, default).MatchesAllowlist);
+    }
+
+    [Theory]
+    [InlineData("assets/notes:1.xml")]
+    [InlineData("/xl/assets/notes:1.xml")]
+    public void CompareStructure_ResolvesLiteralColonInInternalPartName(string target)
+    {
+        const string part = "xl/assets/notes:1.xml";
+        string workbook = Workbook(additionalRelationships: Relationship("notes", "customXml", target),
+            extraParts: [(part, "<notes/>")]);
+
+        var snapshot = WorkbookPackageComparison.Compare(workbook, workbook, null, default, includeStructure: true).Structure!.Before;
+        var relationship = Assert.Single(snapshot.Relationships, item => item.Id == "notes");
+        Assert.False(relationship.External);
+        Assert.True(relationship.TargetExists);
+        Assert.Equal(part, relationship.TargetPart);
+        Assert.DoesNotContain(part, snapshot.UnreachableParts);
     }
 
     [Fact]
@@ -439,6 +457,69 @@ public sealed class WorkbookPackageStructureTests : IDisposable
 
     private sealed record SheetFixture(string Name, uint SheetId, string PartName, string? CodeName,
         string Kind = "worksheet");
+
+    [Fact]
+    public void CompareStructure_RejectsReportWhoseEscapedJsonExceedsOutputLimit()
+    {
+        // The XML stays below the metadata limit. JSON escapes each plus sign as six bytes.
+        string type = "urn:bounded:" + new string('+', 1024);
+        string relationships = string.Concat(Enumerable.Range(0, 400).Select(index =>
+            $"<Relationship Id=\"external{index}\" Type=\"{type}\" TargetMode=\"External\" Target=\"https://invalid.example\"/>"));
+        string workbook = Workbook(additionalRelationships: relationships);
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            WorkbookPackageComparison.Compare(workbook, workbook, null, default, includeStructure: true));
+        Assert.Contains("4 MiB output limit", error.Message, StringComparison.Ordinal);
+        Assert.True(WorkbookPackageComparison.Compare(workbook, workbook, null, default).MatchesAllowlist);
+    }
+
+    [Fact]
+    public void CompareStructure_ResolvesEquivalentPartNamesAndKeepsPhysicalSpelling()
+    {
+        string workbook = Workbook(extraParts:
+        [
+            ("[Content_Types].xml", """
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                  <Override PartName="/XL/WORKBOOK.XML" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+                  <Override PartName="/XL/WORKSHEETS/SHEET1.XML" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+                  <Default Extension="RELS" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                  <Default Extension="xml" ContentType="application/xml"/>
+                </Types>
+                """),
+            ("_rels/.rels", Relationships(Relationship("office", "officeDocument", "XL/WORKBOOK.XML"))),
+            ("xl/_rels/workbook.xml.rels", Relationships(Relationship("sheet1", "worksheet", "/XL/WorkSheets/Sheet1.xml"))),
+            ("XL/WORKSHEETS/_RELS/SHEET1.XML.RELS", Relationships(Relationship("notes", "comments", "../COMMENTS1.XML"))),
+            ("xl/Comments1.xml", "<comments/>")
+        ]);
+
+        var result = WorkbookPackageComparison.Compare(workbook, workbook, null, default, includeStructure: true);
+        var snapshot = result.Structure!.Before;
+        Assert.True(result.MatchesAllowlist);
+        Assert.Empty(result.Changes);
+        Assert.Equal("xl/workbook.xml", snapshot.WorkbookPart);
+        AssertSheet(Assert.Single(snapshot.Sheets), 0, "Data", 9, "sheet1", "xl/worksheets/sheet1.xml", "SheetData");
+        var notes = Assert.Single(snapshot.Relationships, relationship => relationship.Id == "notes");
+        Assert.Equal("xl/worksheets/sheet1.xml", notes.OwnerPart);
+        Assert.True(notes.OwnerExists);
+        Assert.Equal("xl/Comments1.xml", notes.TargetPart);
+        Assert.True(notes.TargetExists);
+        Assert.Empty(snapshot.UnreachableParts);
+    }
+
+    [Fact]
+    public void CompareStructure_DoesNotTreatNestedRelsFolderFilesAsRelationships()
+    {
+        const string opaquePart = "xl/_rels/custom/notes.xml.rels";
+        string workbook = Workbook(extraParts:
+        [
+            ("xl/custom/notes.xml", "<notes/>"),
+            (opaquePart, Relationships(Relationship("phantom", "comments", "fake.xml")))
+        ]);
+
+        var snapshot = WorkbookPackageComparison.Compare(workbook, workbook, null, default, includeStructure: true).Structure!.Before;
+        Assert.DoesNotContain(snapshot.Relationships, relationship => relationship.Id == "phantom");
+        Assert.Contains(opaquePart, snapshot.UnreachableParts);
+    }
 
     private string Workbook(SheetFixture[]? sheets = null, string? names = null, string? styles = null,
         string additionalRelationships = "", bool strict = false,

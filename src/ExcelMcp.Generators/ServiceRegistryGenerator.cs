@@ -1820,7 +1820,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
         sb.AppendLine("        bool includeNullValues = false)");
         sb.AppendLine("    {");
         sb.AppendLine("        if (string.IsNullOrWhiteSpace(argsJson)) return System.Array.Empty<string>();");
-        sb.AppendLine("        using var document = System.Text.Json.JsonDocument.Parse(argsJson);");
+        sb.AppendLine("        using var document = System.Text.Json.JsonDocument.Parse(argsJson, new System.Text.Json.JsonDocumentOptions { AllowDuplicateProperties = false });");
         sb.AppendLine("        if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)");
         sb.AppendLine("            throw new System.ArgumentException(\"Command arguments must be a JSON object.\", nameof(argsJson));");
         sb.AppendLine("        return document.RootElement.EnumerateObject()");

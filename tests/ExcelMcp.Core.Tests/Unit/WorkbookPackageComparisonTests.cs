@@ -143,6 +143,76 @@ public sealed class WorkbookPackageComparisonTests : IDisposable
             });
     }
 
+    [Theory]
+    [InlineData(22)]
+    [InlineData(27)]
+    public void Compare_IgnoresFooterSignatureInsideZipComment(ushort commentLength)
+    {
+        string before = Workbook(".xlsx", ("xl/marker.bin", "unchanged"));
+        string after = Workbook(".xlsx", ("xl/marker.bin", "unchanged"));
+        byte[] bytes = File.ReadAllBytes(after);
+        byte[] commented = new byte[bytes.Length + commentLength];
+        bytes.CopyTo(commented, 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(commented.AsSpan(bytes.Length - sizeof(ushort)), commentLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(commented.AsSpan(bytes.Length), 0x06054b50);
+        File.WriteAllBytes(after, commented);
+
+        var result = WorkbookPackageComparison.Compare(before, after, null, default);
+        Assert.True(result.Success);
+        Assert.True(result.MatchesAllowlist);
+        Assert.Equal(4, result.BeforePartCount);
+        Assert.Equal(4, result.AfterPartCount);
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Compare_IgnoresPlausibleFooterPointingToInvalidDirectoryInsideZipComment()
+    {
+        string before = Workbook(".xlsx", ("xl/marker.bin", "unchanged"));
+        string after = Workbook(".xlsx", ("xl/marker.bin", "unchanged"));
+        byte[] bytes = File.ReadAllBytes(after);
+        const int falseDirectoryLength = 46;
+        const int footerLength = 22;
+        byte[] commented = new byte[bytes.Length + falseDirectoryLength + footerLength];
+        bytes.CopyTo(commented, 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(commented.AsSpan(bytes.Length - sizeof(ushort)),
+            falseDirectoryLength + footerLength);
+        var falseFooter = commented.AsSpan(bytes.Length + falseDirectoryLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(falseFooter, 0x06054b50);
+        BinaryPrimitives.WriteUInt16LittleEndian(falseFooter[8..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(falseFooter[10..], 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(falseFooter[12..], falseDirectoryLength);
+        BinaryPrimitives.WriteUInt32LittleEndian(falseFooter[16..], (uint)bytes.Length);
+        File.WriteAllBytes(after, commented);
+
+        var result = WorkbookPackageComparison.Compare(before, after, null, default);
+        Assert.True(result.Success);
+        Assert.True(result.MatchesAllowlist);
+        Assert.Equal(result.BeforePartCount, result.AfterPartCount);
+        Assert.Empty(result.Changes);
+    }
+
+    [Fact]
+    public void Compare_RejectsTwoStructurallyValidZipDirectories()
+    {
+        string workbook = Workbook(".xlsx", ("xl/marker.bin", "unchanged"));
+        byte[] bytes = File.ReadAllBytes(workbook);
+        const int footerLength = 22;
+        int footerOffset = bytes.Length - footerLength;
+        int originalDirectoryStart = (int)BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(footerOffset + 16));
+        var secondDirectory = bytes.AsSpan(originalDirectoryStart);
+        byte[] ambiguous = new byte[bytes.Length + secondDirectory.Length];
+        bytes.CopyTo(ambiguous, 0);
+        secondDirectory.CopyTo(ambiguous.AsSpan(bytes.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(ambiguous.AsSpan(footerOffset + 20), (ushort)secondDirectory.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(ambiguous.AsSpan(ambiguous.Length - 6), (uint)bytes.Length);
+        File.WriteAllBytes(workbook, ambiguous);
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            WorkbookPackageComparison.Compare(workbook, workbook, null, default));
+        Assert.Contains("ambiguous ZIP directories", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Compare_PreservesDistinctLiteralAndEscapedReservedPartNames()
     {

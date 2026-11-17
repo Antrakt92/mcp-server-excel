@@ -572,7 +572,7 @@ public partial class SheetCommands
             Excel.Workbook? targetWb = null;
             Excel.Worksheet? sourceSheetObj = null;
             Excel.Sheets? targetSheets = null;
-            Excel.Worksheet? targetPositionSheet = null;
+            object? targetPositionSheet = null;
 
             try
             {
@@ -586,9 +586,6 @@ public partial class SheetCommands
                 {
                     throw new InvalidOperationException($"Source sheet '{sourceSheet}' not found in '{Path.GetFileName(sourceFile)}'");
                 }
-
-                // Handle positioning
-                targetSheets = targetWb.Worksheets;
 
                 if (!string.IsNullOrWhiteSpace(beforeSheet))
                 {
@@ -610,16 +607,10 @@ public partial class SheetCommands
                 }
                 else
                 {
-                    // Move to end of target workbook
-                    Excel.Worksheet? lastSheet = (Excel.Worksheet)targetSheets[targetSheets.Count];
-                    try
-                    {
-                        sourceSheetObj.Move(After: lastSheet);
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref lastSheet!);
-                    }
+                    // The final workbook tab can be a chart sheet.
+                    targetSheets = targetWb.Sheets;
+                    targetPositionSheet = targetSheets[targetSheets.Count];
+                    sourceSheetObj.Move(After: targetPositionSheet);
                 }
 
                 // Persist the destination before saving the deletion in the source.

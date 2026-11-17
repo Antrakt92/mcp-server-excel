@@ -111,6 +111,86 @@ public sealed partial class PersistentServiceNamedRangeTests
     }
 
     [Fact]
+    public void List_WideTextValues_OmitsOversizedPreviewAndPreservesOtherPreviews()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var longName = "A_" + CreateUniqueNamedRangeName();
+        var smallName = "Z_" + CreateUniqueNamedRangeName();
+        string longValue = new('"', 12_000);
+        var values = Enumerable.Range(0, 25)
+            .Select(_ => new List<object?> { longValue }).ToList();
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:A25", values));
+        RequireSuccess(_commands.SetValues(batch, sheetName, "B1", [["small preview"]]));
+        _fixture.RegisterNamedRangeForCleanup(longName);
+        _fixture.RegisterNamedRangeForCleanup(smallName);
+        AddName(_fixture, longName, $"{sheetName}!$A$1:$A$25");
+        AddName(_fixture, smallName, $"{sheetName}!$B$1");
+
+        var listed = _parameterCommands.List(batch);
+
+        Assert.True(listed.Success, listed.ErrorMessage);
+        var large = Assert.Single(listed.NamedRanges, namedRange => namedRange.Name == longName);
+        Assert.True(large.Value is null, "The oversized preview should be omitted.");
+        Assert.Contains("byte budget", large.ValueOmittedReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(25, large.CellCount);
+        Assert.Equal($"={sheetName}!$A$1:$A$25", large.RefersTo);
+        var small = Assert.Single(listed.NamedRanges, namedRange => namedRange.Name == smallName);
+        Assert.Equal("small preview", small.Value);
+        Assert.Equal("String", small.ValueType);
+        Assert.Equal(1, small.CellCount);
+        Assert.Equal(longValue,
+            Assert.Single(Assert.Single(RequireSuccess(_commands.GetValues(batch, sheetName, "A25")).Values)));
+    }
+
+    [Fact]
+    public void List_NearBudgetPreviews_DoNotCrowdOutLaterNameMetadata()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        string largeValue = new('x', 28_850);
+        const string smallValue = "still listed";
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:B1", [[largeValue, smallValue]]));
+
+        var largeNames = new HashSet<string>(StringComparer.Ordinal);
+        var smallNames = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < 8; i++)
+        {
+            var largeName = $"A_{i}_{CreateUniqueNamedRangeName()}";
+            var smallName = $"Z_{i}_{CreateUniqueNamedRangeName()}{new string('x', 192)}";
+            largeNames.Add(largeName);
+            smallNames.Add(smallName);
+            _fixture.RegisterNamedRangeForCleanup(largeName);
+            _fixture.RegisterNamedRangeForCleanup(smallName);
+            AddName(_fixture, largeName, $"{sheetName}!$A$1");
+            AddName(_fixture, smallName, $"{sheetName}!$B$1");
+        }
+
+        var listed = _parameterCommands.List(batch);
+
+        Assert.True(listed.Success, listed.ErrorMessage);
+        var largeEntries = listed.NamedRanges.Where(namedRange => largeNames.Contains(namedRange.Name)).ToList();
+        Assert.Equal(largeNames.Count, largeEntries.Count);
+        Assert.Contains(largeEntries, entry => Equals(largeValue, entry.Value));
+        Assert.Contains(largeEntries, entry => entry.Value is null);
+        Assert.All(largeEntries, entry =>
+        {
+            Assert.Equal($"={sheetName}!$A$1", entry.RefersTo);
+            Assert.Equal(1, entry.CellCount);
+            if (entry.Value is null)
+                Assert.Contains("byte budget", entry.ValueOmittedReason, StringComparison.OrdinalIgnoreCase);
+        });
+        var smallEntries = listed.NamedRanges.Where(namedRange => smallNames.Contains(namedRange.Name)).ToList();
+        Assert.Equal(smallNames.Count, smallEntries.Count);
+        Assert.All(smallEntries, entry =>
+        {
+            Assert.Equal($"={sheetName}!$B$1", entry.RefersTo);
+            Assert.Equal(1, entry.CellCount);
+            Assert.Equal(smallValue, entry.Value);
+        });
+    }
+
+    [Fact]
     public void List_MultipleLargeHiddenExternalDataNames_ReturnsOnlyVisibleUserNames()
     {
         var batch = _fixture.BatchToken;

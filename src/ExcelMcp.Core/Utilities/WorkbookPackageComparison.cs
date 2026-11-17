@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -88,8 +89,11 @@ public static class WorkbookPackageComparison
         var structure = includeStructure ? WorkbookPackageStructure.Compare(
             beforeInventory.Metadata, before.Keys, beforeInventory.CodeNames,
             afterInventory.Metadata, after.Keys, afterInventory.CodeNames, cancellationToken) : null;
-        if (structure is not null && JsonSerializer.SerializeToUtf8Bytes(structure).Length > 4 * 1024 * 1024)
-            throw new InvalidDataException("The package structure report exceeds the 4 MiB output limit.");
+        if (structure is not null)
+        {
+            using var output = new StructureOutputLimit(cancellationToken);
+            JsonSerializer.Serialize(output, structure);
+        }
         return new WorkbookPackageComparisonResult
         {
             Success = true,
@@ -99,6 +103,38 @@ public static class WorkbookPackageComparison
             Changes = changes,
             Structure = structure
         };
+    }
+
+    // Count the encoded report in chunks without retaining bytes beyond the output budget.
+    private sealed class StructureOutputLimit(CancellationToken cancellationToken) : Stream
+    {
+        private const int MaxBytes = 4 * 1024 * 1024;
+        private int _length;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _length;
+        public override long Position
+        {
+            get => _length;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (buffer.Length > MaxBytes - _length)
+                throw new InvalidDataException("The package structure report exceeds the 4 MiB output limit.");
+            _length += buffer.Length;
+        }
+
+        public override void Flush() => cancellationToken.ThrowIfCancellationRequested();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     internal static string NormalizePackagePath(string path)
@@ -167,8 +203,7 @@ public static class WorkbookPackageComparison
         FileStream stream, string extension, CancellationToken cancellationToken, bool includeStructure)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var directory = ReadZipDirectory(stream);
-        var entries = ReadZipEntries(stream, directory, cancellationToken);
+        var entries = ReadZipDirectory(stream, cancellationToken);
         var equivalentNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string name in entries.Keys)
         {
@@ -207,7 +242,7 @@ public static class WorkbookPackageComparison
             string? contentType = partTypes?.Overrides.GetValueOrDefault("/" + entry.Name) ??
                 partTypes?.Defaults.GetValueOrDefault(Path.GetExtension(entry.Name).TrimStart('.'));
             bool isMetadata = entry == relationships || includeStructure &&
-                (entry.Name.EndsWith(".rels", StringComparison.Ordinal) || IsStructuralMetadata(contentType));
+                (WorkbookPackageStructure.GetRelationshipOwner(entry.Name) is not null || IsStructuralMetadata(contentType));
             byte[]? captured = null;
             if (isMetadata)
             {
@@ -231,7 +266,7 @@ public static class WorkbookPackageComparison
 
     private static (Dictionary<string, string> Overrides, Dictionary<string, string> Defaults) ReadContentTypes(XElement types)
     {
-        var overrides = new Dictionary<string, string>(StringComparer.Ordinal);
+        var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in types.Elements())
         {
@@ -241,7 +276,7 @@ public static class WorkbookPackageComparison
             string? key = (string?)item.Attribute(isOverride ? "PartName" : "Extension");
             string? type = (string?)item.Attribute("ContentType");
             if (string.IsNullOrEmpty(key) || string.IsNullOrEmpty(type) ||
-                !(isOverride ? overrides : defaults).TryAdd(key, type))
+                !(isOverride ? overrides : defaults).TryAdd(key, type.ToLowerInvariant()))
                 throw new InvalidDataException("The package content types are missing or ambiguous.");
         }
         return (overrides, defaults);
@@ -249,7 +284,7 @@ public static class WorkbookPackageComparison
 
     private static bool IsStructuralMetadata(string? type) => type is
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml" or
-        "application/vnd.ms-excel.sheet.macroEnabled.main+xml" or
+        "application/vnd.ms-excel.sheet.macroenabled.main+xml" or
         "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
 
     private static bool IsSheetContentType(string? type) => type is
@@ -305,10 +340,11 @@ public static class WorkbookPackageComparison
         }
     }
 
-    private static (int Count, long Start, long End) ReadZipDirectory(FileStream stream)
+    private static Dictionary<string, PackageZipEntry> ReadZipDirectory(FileStream stream, CancellationToken cancellationToken)
     {
         const int footerLength = 22;
         const uint footerSignature = 0x06054b50;
+        const int maxDirectoryCandidates = 16;
         if (stream.Length < footerLength || stream.Length > MaxArchiveBytes)
             throw new InvalidDataException("The package is empty, invalid, or exceeds the ZIP size limit.");
 
@@ -323,23 +359,49 @@ public static class WorkbookPackageComparison
         long tailOffset = stream.Length - tail.Length;
         stream.Position = tailOffset;
         stream.ReadExactly(tail);
+        Dictionary<string, PackageZipEntry>? verifiedEntries = null;
+        ExceptionDispatchInfo? invalidDirectory = null;
+        int candidates = 0;
         for (int index = tail.Length - footerLength; index >= 0; index--)
         {
             var footer = tail.AsSpan(index, footerLength);
             if (BinaryPrimitives.ReadUInt32LittleEndian(footer) != footerSignature)
                 continue;
+            int commentLength = BinaryPrimitives.ReadUInt16LittleEndian(footer[20..]);
+            // A signature inside the ZIP comment does not describe an end record.
+            if (commentLength != tail.Length - index - footerLength)
+                continue;
             int count = BinaryPrimitives.ReadUInt16LittleEndian(footer[10..]);
             long length = BinaryPrimitives.ReadUInt32LittleEndian(footer[12..]);
             long start = BinaryPrimitives.ReadUInt32LittleEndian(footer[16..]);
-            int commentLength = BinaryPrimitives.ReadUInt16LittleEndian(footer[20..]);
             if (BinaryPrimitives.ReadUInt32LittleEndian(footer[4..]) != 0 ||
                 BinaryPrimitives.ReadUInt16LittleEndian(footer[8..]) != count ||
                 count is < 1 or > MaxPartCount || length < 46L * count || length > MaxDirectoryBytes || start < 30 ||
-                start + length != tailOffset + index || commentLength != tail.Length - index - footerLength)
-                throw new InvalidDataException("The package ZIP directory is unsupported, invalid, or exceeds the part-count limit.");
-            return (count, start, start + length);
+                start + length != tailOffset + index)
+                continue;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (++candidates > maxDirectoryCandidates)
+                throw new InvalidDataException("The package ZIP has too many possible directory records.");
+
+            Dictionary<string, PackageZipEntry> entries;
+            try
+            {
+                entries = ReadZipEntries(stream, (count, start, start + length), cancellationToken);
+            }
+            catch (InvalidDataException error)
+            {
+                // A footer-shaped comment still has to reference coherent central and local headers.
+                invalidDirectory ??= ExceptionDispatchInfo.Capture(error);
+                continue;
+            }
+            if (verifiedEntries is not null)
+                throw new InvalidDataException("The package has ambiguous ZIP directories.");
+            verifiedEntries = entries;
         }
-        throw new InvalidDataException("The package does not have a valid ZIP directory.");
+        if (verifiedEntries is not null)
+            return verifiedEntries;
+        invalidDirectory?.Throw();
+        throw new InvalidDataException("The package ZIP directory is unsupported, invalid, or exceeds the part-count limit.");
     }
 
     private sealed record PackageZipEntry(string Name, ushort Flags, ushort Method, uint Crc32,

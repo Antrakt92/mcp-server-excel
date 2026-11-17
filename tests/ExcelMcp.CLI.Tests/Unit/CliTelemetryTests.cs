@@ -423,6 +423,26 @@ public sealed class CliTelemetryTests
         Assert.Equal([("powerquery.refresh-all", false, "Expression", false)], tracked);
     }
 
+    [Theory]
+    [InlineData("session.list", """{"success":true,"success":false}""")]
+    [InlineData("session.test", """{"success":false,"canOpen":true,"canOpen":false}""")]
+    public async Task TrackCommandAsync_MalformedResponseDoesNotReplaceTheResult(string command, string result)
+    {
+        var response = new ServiceResponse
+        {
+            Success = true,
+            Result = result
+        };
+        string? classification = null;
+
+        var actual = await CliTelemetry.TrackCommandAsync(
+            new ServiceRequest { Command = command }, () => Task.FromResult(response),
+            (_, _, _, category, _) => classification = category);
+
+        Assert.Same(response, actual);
+        Assert.Equal("InvalidResponse", classification);
+    }
+
     [Fact]
     public async Task TrackCommandAsync_FileTestCanOpenFalse_RemainsExpectedNegative()
     {

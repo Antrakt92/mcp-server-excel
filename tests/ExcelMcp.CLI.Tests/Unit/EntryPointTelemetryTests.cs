@@ -188,6 +188,32 @@ public sealed class EntryPointTelemetryTests : IDisposable
     }
 
     [Fact]
+    public async Task RunEntryPointAsync_DuplicateReplyKeys_RecordsProductFault()
+    {
+        var logs = new List<LogRecord>();
+        var activities = new List<Activity>();
+        var identity = TelemetryUserIdentityStore.CreateProcessOnly();
+        var settings = new TelemetrySettings(TelemetryMode.Local, null, new Uri("http://localhost:4317"), "grpc");
+        using var pipeline = new UsagePipeline(settings, "ExcelMcp.Test", identity, "test",
+            t => t.AddInMemoryExporter(activities), l => l.AddInMemoryExporter(logs));
+        var reporter = new UsageTelemetry("ExcelMcp.Test", () => identity, (_, _) => pipeline);
+        using var scope = CliTelemetry.UseReporterForTesting(reporter);
+        reporter.Start(settings);
+        await reporter.Initialization;
+        var runtime = CreateRuntime(_ => 0, new DuplicateReplyClient());
+
+        var exitCode = await Program.RunEntryPointAsync(
+            ["--quiet", "sheet", "list", "--session", "entry-point-test"], runtime);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.True(pipeline.ForceFlush(1000));
+        var request = Assert.Single(activities);
+        Assert.Equal("sheet/list", request.DisplayName);
+        Assert.Equal(ActivityStatusCode.Error, request.Status);
+        Assert.Equal("internal-product-fault", request.GetTagItem("FailureClass"));
+    }
+
+    [Fact]
     public async Task RunEntryPointAsync_BlockedReportingSetup_DoesNotWaitForDaemonStartup()
     {
         using var entered = new ManualResetEventSlim();
@@ -211,15 +237,34 @@ public sealed class EntryPointTelemetryTests : IDisposable
         Assert.False(reporter.IsReady);
     }
 
-    private static CliCommandRuntime CreateRuntime(Func<string?, int> serviceDaemonRunner) =>
+    private static CliCommandRuntime CreateRuntime(
+        Func<string?, int> serviceDaemonRunner, ICliRequestClientFactory? clientFactory = null) =>
         new(
-            new FailingClientFactory(),
+            clientFactory ?? new FailingClientFactory(),
             new StringReader(string.Empty),
             new StringWriter(),
             new StringWriter(),
             isOutputRedirected: true,
             latestVersionProvider: () => Task.FromResult<string?>(null),
             serviceDaemonRunner: serviceDaemonRunner);
+
+    private sealed class DuplicateReplyClient : ICliRequestClientFactory, ICliRequestClient
+    {
+        public Task<ICliRequestClient> ConnectAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<ICliRequestClient>(this);
+
+        public Task<ServiceResponse> SendAsync(ServiceRequest request, CancellationToken cancellationToken)
+        {
+            Assert.Equal("sheet.list", request.Command);
+            return Task.FromResult(new ServiceResponse
+            {
+                Success = true,
+                Result = """{"success":true,"success":true,"sheets":[]}"""
+            });
+        }
+
+        public void Dispose() { }
+    }
 
     private sealed class FailingClientFactory : ICliRequestClientFactory
     {

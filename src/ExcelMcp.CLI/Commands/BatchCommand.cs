@@ -338,6 +338,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = false,
+        AllowDuplicateProperties = false,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };

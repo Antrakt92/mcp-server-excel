@@ -27,6 +27,14 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 public sealed class GeneratedActionContractTests
 {
     [Theory]
+    [InlineData("""{"save":false,"save":true}""")]
+    [InlineData("""{"options":{"overwrite":false,"overwrite":true}}""")]
+    public void RawArguments_RejectDuplicateProperties(string json)
+    {
+        Assert.Throws<JsonException>(() => ServiceRegistry.GetJsonPropertyNames(json));
+    }
+
+    [Theory]
     [InlineData("protect-project", VbaAction.ProtectProject)]
     [InlineData("unlock-project", VbaAction.UnlockProject)]
     [InlineData("verify-password", VbaAction.VerifyPassword)]

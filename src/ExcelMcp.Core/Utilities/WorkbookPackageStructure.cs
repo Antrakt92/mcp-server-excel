@@ -49,7 +49,8 @@ internal static class WorkbookPackageStructure
                 throw new InvalidDataException("The package structure metadata exceeds its size limit.");
         }
 
-        var parts = partNames.ToHashSet(StringComparer.Ordinal);
+        // OPC references compare part names without ASCII case. Report the exact ZIP entry spelling.
+        var parts = partNames.ToDictionary(name => name, StringComparer.OrdinalIgnoreCase);
         var relationships = ReadRelationships(metadata, parts, cancellationToken);
         var roots = relationships.Where(item => item.OwnerPart.Length == 0 && !item.External &&
             IsRelationship(item.Type, "officeDocument")).ToArray();
@@ -65,8 +66,8 @@ internal static class WorkbookPackageStructure
         var names = ReadDefinedNames(workbook, sheets, cancellationToken);
         var styles = ReadParentStyles(metadata, workbookRelationships.Values, cancellationToken);
         var reachable = ReachableParts(relationships, cancellationToken);
-        var unreachable = parts.Where(name => name != WorkbookPackageComparison.ContentTypesEntry &&
-                !IsRelationshipsPart(name) && !reachable.Contains(name))
+        var unreachable = partNames.Where(name => name != WorkbookPackageComparison.ContentTypesEntry &&
+                GetRelationshipOwner(name) is null && !reachable.Contains(name))
             .Order(StringComparer.Ordinal).ToArray();
         RequireRecordCount(unreachable.Length);
 
@@ -82,13 +83,17 @@ internal static class WorkbookPackageStructure
     }
 
     private static List<WorkbookPackageRelationship> ReadRelationships(
-        IReadOnlyDictionary<string, byte[]> metadata, HashSet<string> parts, CancellationToken cancellationToken)
+        IReadOnlyDictionary<string, byte[]> metadata, Dictionary<string, string> parts, CancellationToken cancellationToken)
     {
         var result = new List<WorkbookPackageRelationship>();
-        foreach (string part in metadata.Keys.Where(IsRelationshipsPart).Order(StringComparer.Ordinal))
+        foreach (string part in metadata.Keys.Order(StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string owner = RelationshipOwner(part);
+            string? ownerPath = GetRelationshipOwner(part);
+            if (ownerPath is null)
+                continue;
+            string? existingOwner = parts.GetValueOrDefault(ownerPath);
+            string owner = existingOwner ?? ownerPath;
             var root = ReadXml(metadata, part, "Relationships", cancellationToken);
             if (root.Name.Namespace != PackageRelationships)
                 throw new InvalidDataException("The package relationship metadata has an unsupported namespace.");
@@ -108,15 +113,16 @@ internal static class WorkbookPackageStructure
                 bool external = mode == "External";
                 string target = RequiredText(relationship, "Target");
                 string? resolved = external ? null : ResolveTarget(owner, target);
+                string? existingTarget = resolved is null ? null : parts.GetValueOrDefault(resolved);
                 result.Add(new WorkbookPackageRelationship
                 {
                     OwnerPart = owner,
-                    OwnerExists = owner.Length == 0 || parts.Contains(owner),
+                    OwnerExists = owner.Length == 0 || existingOwner is not null,
                     Id = id,
                     Type = type,
                     External = external,
-                    TargetPart = resolved,
-                    TargetExists = external ? null : parts.Contains(resolved!)
+                    TargetPart = existingTarget ?? resolved,
+                    TargetExists = external ? null : existingTarget is not null
                 });
                 RequireRecordCount(result.Count);
             }
@@ -475,25 +481,31 @@ internal static class WorkbookPackageStructure
         }
     }
 
-    private static bool IsRelationshipsPart(string part) => part == "_rels/.rels" ||
-        part.EndsWith(".rels", StringComparison.Ordinal) &&
-        (part.StartsWith("_rels/", StringComparison.Ordinal) || part.Contains("/_rels/", StringComparison.Ordinal));
-
-    private static string RelationshipOwner(string part)
+    internal static string? GetRelationshipOwner(string part)
     {
-        if (part == "_rels/.rels")
+        if (part.Equals("_rels/.rels", StringComparison.OrdinalIgnoreCase))
             return "";
-        int separator = part.LastIndexOf("/_rels/", StringComparison.Ordinal);
-        string owner = separator < 0 ? part[6..^5] : part[..separator] + "/" + part[(separator + 7)..^5];
-        if (owner.Length is 0 or > 512 || owner.EndsWith('/') || IsRelationshipsPart(owner))
+        if (!part.EndsWith(".rels", StringComparison.OrdinalIgnoreCase))
+            return null;
+        int fileStart = part.LastIndexOf('/') + 1;
+        if (fileStart == 0)
+            return null;
+        int directoryStart = part.AsSpan(0, fileStart - 1).LastIndexOf('/') + 1;
+        if (!part.AsSpan(directoryStart, fileStart - directoryStart - 1).Equals("_rels", StringComparison.OrdinalIgnoreCase))
+            return null;
+        string owner = part[..directoryStart] + part[fileStart..^5];
+        if (owner.Length == 0 || owner.EndsWith('/') || GetRelationshipOwner(owner) is not null)
             throw new InvalidDataException("The package relationships part has an invalid source owner.");
         return owner;
     }
 
     private static string ResolveTarget(string owner, string target)
     {
+        // RFC 3986 forbids ':' in the first segment of a relative reference, where it would introduce a scheme.
+        int separator = target.IndexOf('/');
+        var firstSegment = separator < 0 ? target.AsSpan() : target.AsSpan(0, separator);
         if (target.Length > 512 || target.Contains('\\') || target.Contains('?') || target.Contains('#') ||
-            target.Contains(':') || target.StartsWith("//", StringComparison.Ordinal) || target.Any(char.IsControl))
+            firstSegment.Contains(':') || target.StartsWith("//", StringComparison.Ordinal) || target.Any(char.IsControl))
             throw new InvalidDataException("A package relationship contains an unsupported internal target.");
         string baseDirectory = owner.Contains('/') ? owner[..(owner.LastIndexOf('/') + 1)] : "";
         string combined = target.StartsWith('/') ? target[1..] : baseDirectory + target;
@@ -514,7 +526,7 @@ internal static class WorkbookPackageStructure
             for (int index = 0; index < segment.Length; index++)
             {
                 char value = segment[index];
-                if (char.IsAsciiLetterOrDigit(value) || "-._~!$&'()*+,;=@".Contains(value))
+                if (char.IsAsciiLetterOrDigit(value) || "-._~!$&'()*+,;=:@".Contains(value))
                     continue;
                 if (value != '%' || index + 2 >= segment.Length ||
                     !byte.TryParse(segment.AsSpan(index + 1, 2), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out byte decoded) ||
@@ -525,7 +537,9 @@ internal static class WorkbookPackageStructure
             segments.Add(segment);
         }
         string resolved = string.Join('/', segments);
-        if (resolved.Length is 0 or > 512 || resolved == WorkbookPackageComparison.ContentTypesEntry || IsRelationshipsPart(resolved))
+        if (resolved.Length is 0 or > 512 ||
+            resolved.Equals(WorkbookPackageComparison.ContentTypesEntry, StringComparison.OrdinalIgnoreCase) ||
+            GetRelationshipOwner(resolved) is not null)
             throw new InvalidDataException("A package relationship contains an invalid target part.");
         return resolved;
     }

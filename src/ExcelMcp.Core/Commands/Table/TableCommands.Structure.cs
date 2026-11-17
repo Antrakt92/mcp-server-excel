@@ -68,6 +68,22 @@ public partial class TableCommands
     public OperationResult SetColumnTotal(IExcelBatch batch, string tableName, string columnName, string totalFunction)
     {
         ValidateRequiredTableName(tableName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(totalFunction);
+        var calculation = totalFunction.ToLowerInvariant() switch
+        {
+            "sum" => Excel.XlTotalsCalculation.xlTotalsCalculationSum,
+            "average" or "avg" => Excel.XlTotalsCalculation.xlTotalsCalculationAverage,
+            "count" => Excel.XlTotalsCalculation.xlTotalsCalculationCount,
+            "countnums" => Excel.XlTotalsCalculation.xlTotalsCalculationCountNums,
+            "max" => Excel.XlTotalsCalculation.xlTotalsCalculationMax,
+            "min" => Excel.XlTotalsCalculation.xlTotalsCalculationMin,
+            "stddev" => Excel.XlTotalsCalculation.xlTotalsCalculationStdDev,
+            "var" => Excel.XlTotalsCalculation.xlTotalsCalculationVar,
+            "none" => Excel.XlTotalsCalculation.xlTotalsCalculationNone,
+            _ => throw new ArgumentException(
+                $"Unknown total function '{totalFunction}'. Valid: sum, average, count, countnums, max, min, stddev, var, none",
+                nameof(totalFunction))
+        };
 
         return batch.Execute((ctx, ct) =>
         {
@@ -78,16 +94,9 @@ public partial class TableCommands
             {
                 table = FindTable(ctx.Book, tableName);
 
-                // Ensure totals row is shown
-                if (!table.ShowTotals)
-                {
-                    table.ShowTotals = true;
-                }
-
-                // Find the column
                 listColumns = table.ListColumns;
-                column = null;
-                for (int i = 1; i <= listColumns.Count; i++)
+                int columnCount = listColumns.Count;
+                for (int i = 1; i <= columnCount; i++)
                 {
                     Excel.ListColumn? col = null;
                     try
@@ -111,25 +120,11 @@ public partial class TableCommands
                     throw new InvalidOperationException($"Column '{columnName}' not found in table '{tableName}'");
                 }
 
-                // Map function name to Excel constant
-                // xlTotalsCalculationSum = 1, xlTotalsCalculationAverage = 2, xlTotalsCalculationCount = 3,
-                // xlTotalsCalculationCountNums = 4, xlTotalsCalculationMax = 5, xlTotalsCalculationMin = 6,
-                // xlTotalsCalculationStdDev = 7, xlTotalsCalculationVar = 9, xlTotalsCalculationNone = 0
-                int xlFunction = totalFunction.ToLowerInvariant() switch
+                if (!table.ShowTotals)
                 {
-                    "sum" => 1,
-                    "average" or "avg" => 2,
-                    "count" => 3,
-                    "countnums" => 4,
-                    "max" => 5,
-                    "min" => 6,
-                    "stddev" => 7,
-                    "var" => 9,
-                    "none" => 0,
-                    _ => throw new ArgumentException($"Unknown total function '{totalFunction}'. Valid: sum, average, count, countnums, max, min, stddev, var, none")
-                };
-
-                column.TotalsCalculation = (Excel.XlTotalsCalculation)xlFunction;
+                    table.ShowTotals = true;
+                }
+                column.TotalsCalculation = calculation;
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }

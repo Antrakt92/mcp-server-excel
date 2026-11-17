@@ -7,6 +7,72 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class PersistentServiceSheetTests
 {
+    [Fact]
+    public void MoveToFile_NoPositionSpecified_MovesAfterTrailingChartTab()
+    {
+        var (sourceFile, targetFile) = CreateMarkedWorkbookPair(
+            nameof(MoveToFile_NoPositionSpecified_MovesAfterTrailingChartTab), "TransferSheet");
+        using (var setup = ExcelSession.BeginBatch(targetFile))
+        {
+            setup.Execute((context, _) =>
+            {
+                Excel.Worksheet? anchor = null;
+                Excel.Sheets? charts = null;
+                Excel.Chart? chart = null;
+                try
+                {
+                    anchor = ComUtilities.FindSheet(context.Book, "Sheet1");
+                    Assert.NotNull(anchor);
+                    charts = context.Book.Charts;
+                    chart = (Excel.Chart)charts.Add(Before: anchor);
+                    chart.Name = "ChartTab";
+                    chart.Move(After: anchor);
+                    Assert.Equal(2, chart.Index);
+                }
+                finally
+                {
+                    ComUtilities.Release(ref chart);
+                    ComUtilities.Release(ref charts);
+                    ComUtilities.Release(ref anchor);
+                }
+            });
+            setup.Save();
+        }
+
+        using (var service = new ExcelMcpService())
+        {
+            using var moved = ReadCrossFileServiceResult(service, "sheet.move-to-file", null,
+                new { sourceFile, sourceSheet = "TransferSheet", targetFile });
+        }
+
+        using var reopened = ExcelSession.BeginBatch(sourceFile, targetFile);
+        reopened.Execute((_, _) =>
+        {
+            var source = reopened.GetWorkbook(sourceFile);
+            var target = reopened.GetWorkbook(targetFile);
+            AssertWorkbookState(source, ["Sheet1"], null);
+            AssertWorkbookState(target, ["Sheet1", "TransferSheet"], "TransferSheet");
+            Excel.Sheets? tabs = null;
+            object? chart = null;
+            object? moved = null;
+            try
+            {
+                tabs = target.Sheets;
+                Assert.Equal(3, tabs.Count);
+                chart = tabs[2];
+                moved = tabs[3];
+                Assert.Equal("TransferSheet", (moved as Excel.Worksheet)?.Name);
+                Assert.Equal("ChartTab", (chart as Excel.Chart)?.Name);
+            }
+            finally
+            {
+                ComUtilities.Release(ref moved);
+                ComUtilities.Release(ref chart);
+                ComUtilities.Release(ref tabs);
+            }
+        });
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

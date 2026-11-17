@@ -27,6 +27,10 @@ internal static class ToolArgumentFilter
                     .FirstOrDefault(value => string.Equals(value, action.GetString(), StringComparison.OrdinalIgnoreCase))
                     ?? throw new ArgumentException("Unknown action. Use an action from this tool's schema.");
 
+                if (tool.ProtocolTool.Name == "batch" && arguments.TryGetValue("commands", out var commands)
+                    && commands.ValueKind == JsonValueKind.Array)
+                    ValidateUniqueProperties(commands, batchEntries: true);
+
                 foreach (var (name, value) in arguments)
                 {
                     if (!properties.TryGetProperty(name, out var schema))
@@ -71,6 +75,25 @@ internal static class ToolArgumentFilter
 
             return next(request, cancellationToken);
         };
+
+    private static void ValidateUniqueProperties(JsonElement value, bool batchEntries = false, bool batchEntry = false)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+                ValidateUniqueProperties(item, batchEntry: batchEntries);
+        }
+        else if (value.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(batchEntry ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                    throw new ArgumentException("A batch command contains a duplicate property.");
+                ValidateUniqueProperties(property.Value);
+            }
+        }
+    }
 
     private static bool IsAdvertisedDefault(JsonElement value, JsonElement schema) =>
         value.ValueKind == JsonValueKind.Null ||

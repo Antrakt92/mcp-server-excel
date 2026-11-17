@@ -9,6 +9,24 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 /// </summary>
 public sealed partial class PersistentServiceNamedRangeTests
 {
+    [Theory]
+    [InlineData("=1+1")]
+    [InlineData("'kept apostrophe")]
+    public void Write_LiteralTextDoesNotBecomeFormulaOrLoseCharacters(string value)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var name = CreateUniqueNamedRangeName();
+        _fixture.RegisterNamedRangeForCleanup(name);
+        AddName(_fixture, name, $"{sheetName}!$A$1");
+
+        RequireSuccess(_parameterCommands.Write(batch, name, value));
+
+        var read = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1"));
+        Assert.Equal(value, Assert.Single(Assert.Single(read.Values)));
+        Assert.Empty(Assert.Single(Assert.Single(read.Formulas)));
+    }
+
     [Fact]
     public void Create_InvalidFormula_DoesNotLeaveTemporaryName()
     {
