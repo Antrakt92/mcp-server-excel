@@ -87,6 +87,22 @@ public sealed class TelemetryUserIdentityTests
     }
 
     [Fact]
+    public void GetOrCreate_ReadsIdentityWhileAnotherHandleHasDeleteAccess()
+    {
+        using var directory = new TemporaryDirectory();
+        var created = TelemetryUserIdentityStore.GetOrCreate(directory.Path);
+        // Delete-on-close requests the same Windows delete access as a publishing rename.
+        using var publishingHandle = new FileStream(GetIdentityPath(directory.Path),
+            FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+            bufferSize: 4096, FileOptions.DeleteOnClose);
+
+        var reused = TelemetryUserIdentityStore.GetOrCreate(directory.Path);
+
+        Assert.Equal(created.UserId, reused.UserId);
+        Assert.Null(reused.LegacyUserId);
+    }
+
+    [Fact]
     public void CreateMigrationEvent_UsesNewIdentityAndCarriesLegacyIdentityOnce()
     {
         using var directory = new TemporaryDirectory();

@@ -104,7 +104,10 @@ internal static class TelemetryUserIdentityStore
 
     private static TelemetryUserIdentity? TryRead(string identityPath)
     {
-        var storedValue = File.ReadAllText(identityPath);
+        // A concurrent publisher can still hold a delete handle after the new name becomes visible.
+        using var reader = new StreamReader(File.Open(
+            identityPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete));
+        var storedValue = reader.ReadToEnd();
         if (Guid.TryParseExact(storedValue, "N", out var storedId))
         {
             return new TelemetryUserIdentity(storedId.ToString("N"), null);
