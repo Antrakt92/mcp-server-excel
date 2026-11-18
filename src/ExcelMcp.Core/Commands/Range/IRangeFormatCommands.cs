@@ -141,10 +141,10 @@ public interface IRangeFormatCommands
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address to validate (e.g., 'A1:D10')</param>
-    /// <param name="validationType">Data validation type: 'list', 'whole', 'decimal', 'date', 'time', 'textLength', 'custom'</param>
+    /// <param name="validationType">Data validation type: 'any' (input message only), 'list', 'whole', 'decimal', 'date', 'time', 'textLength', 'custom'</param>
     /// <param name="validationOperator">Validation comparison operator: 'between', 'notBetween', 'equal', 'notEqual', 'greaterThan', 'lessThan', 'greaterThanOrEqual', 'lessThanOrEqual'</param>
-    /// <param name="formula1">First validation formula or value, up to 255 characters. Required for list and custom validation. Use a worksheet range or defined name for longer dropdown lists, and a defined name to refer to a table column.</param>
-    /// <param name="formula2">Second validation formula/value - required only for 'between' and 'notBetween' operators</param>
+    /// <param name="formula1">First validation formula or value, up to 255 characters. Required for 'list' and 'custom'. Comparison rules need at least one formula. Use a worksheet range or defined name for longer dropdown lists, and a defined name to refer to a table column.</param>
+    /// <param name="formula2">Second validation formula or value for 'between' and 'notBetween' comparisons. Ignored for other operators and for list and custom validation.</param>
     /// <param name="showInputMessage">Whether to show input message when cell is selected (default: false)</param>
     /// <param name="inputTitle">Title for the input message popup</param>
     /// <param name="inputMessage">Text for the input message popup</param>
