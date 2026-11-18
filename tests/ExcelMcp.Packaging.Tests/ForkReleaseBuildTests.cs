@@ -108,6 +108,69 @@ public sealed class ForkReleaseBuildTests
         finally { DeleteDirectoryIfExists(sandbox); }
     }
 
+    [Fact(Timeout = 30000)]
+    public async Task UpstreamVersion_FollowsCommittedRegistryMetadataAcrossSourceChanges()
+    {
+        var sandbox = CreateSandbox("fork-upstream-version");
+        try
+        {
+            var runner = Path.Combine(sandbox, "upstream-version.ps1");
+            var builder = Builder.Replace("'", "''", StringComparison.Ordinal);
+            var helpers = Path.Combine(RepoRoot, "scripts", "PackageHelpers.ps1")
+                .Replace("'", "''", StringComparison.Ordinal);
+            File.WriteAllText(runner, $$"""
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                . '{{helpers}}'
+                $root = Join-Path $PSScriptRoot 'repo'
+                $manifestDirectory = Join-Path $root 'src/ExcelMcp.McpServer/.mcp'
+                [IO.Directory]::CreateDirectory($manifestDirectory) | Out-Null
+                $manifest = Join-Path $manifestDirectory 'server.json'
+                $tokens = $null; $errors = $null
+                $ast = [Management.Automation.Language.Parser]::ParseFile('{{builder}}', [ref]$tokens, [ref]$errors)
+                if ($errors.Count) { throw 'Builder parse failed.' }
+                foreach ($name in @('Read-ForkGit', 'Get-ForkUpstreamVersion')) {
+                    $node = $ast.Find({ param($candidate)
+                        $candidate -is [Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -eq $name
+                    }, $true)
+                    . ([scriptblock]::Create($node.Extent.Text))
+                }
+                $null = Read-ForkGit @('init', '--quiet')
+                $null = Read-ForkGit @('config', 'core.hooksPath', (Join-Path $PSScriptRoot 'no-hooks'))
+                $null = Read-ForkGit @('config', 'user.name', 'Fork Release Fixture')
+                $null = Read-ForkGit @('config', 'user.email', 'fork-fixture@example.invalid')
+                $null = Read-ForkGit @('config', 'commit.gpgsign', 'false')
+                function Set-Version([string]$Version) {
+                    Write-PackageJson $manifest ([ordered]@{
+                        name = 'io.github.sbroenne/mcp-server-excel'
+                        version = $Version
+                    })
+                }
+                Set-Version '9.8.7'
+                $null = Read-ForkGit @('add', '.')
+                $null = Read-ForkGit @('commit', '--quiet', '-m', 'upstream base')
+                $base = Read-ForkGit @('rev-parse', 'HEAD')
+                Set-Version '9.8.8'
+                Write-Output "DIRTY: $(Get-ForkUpstreamVersion $base)"
+                $null = Read-ForkGit @('commit', '--quiet', '-am', 'sync upstream')
+                $synced = Read-ForkGit @('rev-parse', 'HEAD')
+                Write-Output "SYNCED: $(Get-ForkUpstreamVersion $synced)"
+                Write-Output "REPRODUCED: $(Get-ForkUpstreamVersion $base)"
+                """);
+            var result = await RunPowerShellFileAsync(runner, [], timeoutMs: 20000);
+            Assert.True(result.ExitCode == 0, result.CombinedOutput);
+            Assert.Contains("DIRTY: 9.8.7", result.CombinedOutput, StringComparison.Ordinal);
+            Assert.Contains("SYNCED: 9.8.8", result.CombinedOutput, StringComparison.Ordinal);
+            Assert.Contains("REPRODUCED: 9.8.7", result.CombinedOutput, StringComparison.Ordinal);
+        }
+        finally
+        {
+            foreach (var file in Directory.EnumerateFiles(sandbox, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            DeleteDirectoryIfExists(sandbox);
+        }
+    }
+
     [Theory(Timeout = 45000)]
     [InlineData("conflicting-lightweight", true)]
     [InlineData("conflicting-annotated", true)]
