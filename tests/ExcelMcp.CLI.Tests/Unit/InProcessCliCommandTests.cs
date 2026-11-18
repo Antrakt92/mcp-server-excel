@@ -110,6 +110,74 @@ public sealed class InProcessCliCommandTests
         }
     }
 
+    [Theory]
+    [InlineData("workbook", "save-as", "xlsx")]
+    [InlineData("workbook", "save-copy-as", "xlsx")]
+    [InlineData("workbook", "export-fixed-format", "pdf")]
+    [InlineData("chart", "export-image", "png")]
+    public async Task OutputFile_RejectsArtifactDestinationBeforeConnecting(string category, string action, string extension)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-output-");
+        try
+        {
+            var target = Path.Combine(directory.FullName, $"Artifact.{extension}");
+            var outputPath = Path.Combine(directory.FullName, ".", $"artifact.{extension}");
+            await File.WriteAllTextAsync(target, "original artifact");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+            using var output = new StringWriter();
+            string[] arguments = ["--quiet", category, action, "--session", "target", "--target-path", target,
+                "--output", outputPath];
+            if (category == "chart")
+                arguments = [.. arguments, "--chart-name", "Revenue"];
+
+            var exit = await Program.RunAsync(arguments, CreateRuntime(factory, output, new StringWriter()));
+
+            Assert.Equal(1, exit);
+            Assert.Equal(0, factory.ConnectionCount);
+            Assert.Empty(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var error = result.RootElement.GetProperty("error");
+            Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+            Assert.Contains("--target-path", error.GetProperty("message").GetString());
+            Assert.Equal("original artifact", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task OutputFile_StillWritesToDistinctPathAndDispatchesAbsoluteTarget()
+    {
+        var callerDirectory = Environment.CurrentDirectory;
+        var directory = Directory.CreateDirectory(Path.Combine(callerDirectory, $"excelcli-output-{Guid.NewGuid():N}"));
+        try
+        {
+            var target = Path.Combine(directory.FullName, "artifact.pdf");
+            var outputPath = Path.Combine(directory.FullName, "result.json");
+            await File.WriteAllTextAsync(target, "original artifact");
+            await File.WriteAllTextAsync(outputPath, "previous response");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true,"pages":6}""" });
+            var exit = await Program.RunAsync(
+                ["--quiet", "workbook", "export-fixed-format", "--session", "target", "--target-path",
+                    Path.GetRelativePath(callerDirectory, target), "--output", outputPath],
+                CreateRuntime(factory, new StringWriter(), new StringWriter()));
+
+            Assert.Equal(0, exit);
+            var request = Assert.Single(factory.Requests);
+            using var requestArgs = JsonDocument.Parse(request.Args!);
+            Assert.Equal(target, requestArgs.RootElement.GetProperty("targetPath").GetString());
+            using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath));
+            Assert.Equal(6, saved.RootElement.GetProperty("data").GetProperty("pages").GetInt32());
+            Assert.Equal("original artifact", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public async Task OutputFile_WriteFailureRetainsCompletedOperation()
     {

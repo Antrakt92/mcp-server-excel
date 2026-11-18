@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Text.Json;
+using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.CLI.Telemetry;
 using Sbroenne.ExcelMcp.Service;
@@ -66,17 +68,24 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
             return CliErrorOutput.WriteError($"Invalid action '{action}'. Valid actions: {validList}");
         }
 
-        // Route and execute
+        // Check for --output file path (generated on all CliSettings).
+        var outputPath = settings.GetType().GetProperty("OutputPath")?.GetValue(settings) as string;
+
         string command;
-        object? args;
+        string? requestArgs;
         try
         {
-            (command, args) = Route(settings, action);
+            (command, var args) = Route(settings, action);
+            requestArgs = SerializeRequestArguments(command, args, outputPath);
         }
         catch (ArgumentException ex)
         {
             // Parameter validation failed (e.g., required param missing)
             // Return clean JSON error with exit code 1 instead of unhandled crash
+            return CliErrorOutput.WriteException(ex, "InvalidInput");
+        }
+        catch (PathTooLongException ex)
+        {
             return CliErrorOutput.WriteException(ex, "InvalidInput");
         }
 
@@ -86,14 +95,11 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         {
             Command = command,
             SessionId = sessionId,
-            Args = args != null ? JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions) : null
+            Args = requestArgs
         };
         var response = await CliTelemetry.TrackCommandAsync(
             request,
             () => client.SendAsync(request, cancellationToken));
-
-        // Check for --output file path (generated on all CliSettings)
-        var outputPath = settings.GetType().GetProperty("OutputPath")?.GetValue(settings) as string;
 
         // Output result
         if (response.Success)
@@ -114,6 +120,48 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         else
         {
             return CliResultOutput.Write(response, command);
+        }
+    }
+
+    private static string? SerializeRequestArguments(string command, object? args, string? outputPath)
+    {
+        if (args is null)
+            return null;
+        if (string.IsNullOrEmpty(outputPath) || command is not
+            ("workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image"))
+            return JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions);
+
+        var request = JsonSerializer.SerializeToNode(args, ServiceProtocol.JsonOptions)!.AsObject();
+        var targetPath = request["targetPath"]!.GetValue<string>();
+        var callerDirectory = Environment.CurrentDirectory;
+        var target = Path.GetFullPath(targetPath, callerDirectory);
+        var output = Path.GetFullPath(outputPath, callerDirectory);
+        if (string.Equals(output, target, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(output, target))
+            throw new ArgumentException("--output writes the command response and must use a different file from --target-path.");
+
+        // The daemon's working directory can differ from the caller's.
+        if (!Path.IsPathFullyQualified(targetPath))
+            request["targetPath"] = target;
+        return request.ToJsonString(ServiceProtocol.JsonOptions);
+    }
+
+    private static bool ReferToSameFile(string outputPath, string targetPath)
+    {
+        try
+        {
+            var output = WorkbookFileIdentity.Read(outputPath);
+            var target = WorkbookFileIdentity.Read(targetPath);
+            return string.Equals(output.Path, target.Path, StringComparison.OrdinalIgnoreCase)
+                || output.FileKey is not null && string.Equals(output.FileKey, target.FileKey, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Win32Exception)
+        {
+            // The application will report inaccessible paths when it attempts the write.
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
         }
     }
 
