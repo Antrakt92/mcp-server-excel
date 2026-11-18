@@ -177,12 +177,6 @@ public static class ExcelToolsBase
             ClassifyFailureCause(category));
     }
 
-    internal static ToolInvocationResult ClassifyToolResponse(string toolName, string actionName, string response)
-    {
-        using var document = JsonDocument.Parse(response);
-        return ClassifyToolResponse(toolName, actionName, document.RootElement);
-    }
-
     internal static ToolInvocationResult ClassifyToolOutcome(string toolName, string actionName, ResultJson outcome)
     {
         if (outcome.Success)
