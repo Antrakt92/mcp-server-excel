@@ -197,7 +197,7 @@ public sealed class InProcessCliCommandTests
             using var output = new StringWriter();
 
             var exit = await Program.RunAsync(
-                ["--quiet", "sheet", action, "--session", "target", "--source-file", source, "--source-sheet", "Data", "--target-file", target, "--output", outputPath],
+                ["--quiet", "sheet", action, "--source-file", source, "--source-sheet", "Data", "--target-file", target, "--output", outputPath],
                 CreateRuntime(factory, output, new StringWriter()));
 
             Assert.Equal(1, exit);
@@ -214,6 +214,45 @@ public sealed class InProcessCliCommandTests
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData("copy-to-file")]
+    [InlineData("move-to-file")]
+    public async Task SessionlessSheetTransfer_DispatchesWithoutSession(string action)
+    {
+        var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+        using var output = new StringWriter();
+
+        var exit = await Program.RunAsync(
+            ["--quiet", "sheet", action, "--source-file", @"C:\audit\source.xlsx", "--source-sheet", "Data",
+                "--target-file", @"C:\audit\target.xlsx"],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(0, exit);
+        var request = Assert.Single(factory.Requests);
+        Assert.Equal($"sheet.{action}", request.Command);
+        Assert.Null(request.SessionId);
+
+        output.GetStringBuilder().Clear();
+        Assert.Equal(0, await Program.RunAsync(["sheet", action, "--help"],
+            CreateRuntime(factory, output, new StringWriter())));
+        Assert.DoesNotContain("--session", output.ToString());
+    }
+
+    [Fact]
+    public async Task SessionBoundSheetAction_StillRequiresSessionBeforeConnecting()
+    {
+        var factory = new RecordingClientFactory();
+        using var output = new StringWriter();
+
+        var exit = await Program.RunAsync(["--quiet", "sheet", "list"],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(1, exit);
+        Assert.Equal(0, factory.ConnectionCount);
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.Contains("Session ID is required", result.RootElement.GetProperty("error").GetProperty("message").GetString());
     }
 
     [Fact]
@@ -1155,7 +1194,10 @@ public sealed class InProcessCliCommandTests
             Assert.DoesNotContain("args.outputPath", batchHelp, StringComparison.Ordinal);
             Assert.DoesNotContain("--output", batchHelp, StringComparison.Ordinal);
             var category = _CliCategoryMetadata.Categories.Single(item => item.CliCommandName == command);
-            if (category.RequiresSession)
+            var sessionlessTransfer = command == "sheet" && action is "copy-to-file" or "move-to-file";
+            if (sessionlessTransfer)
+                Assert.DoesNotContain("--session", batchHelp, StringComparison.Ordinal);
+            else if (category.RequiresSession)
             {
                 if (_CliCategoryMetadata.RequiresBatchStdin(command + "." + action))
                 {

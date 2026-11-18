@@ -31,6 +31,9 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     /// </summary>
     protected abstract IReadOnlyList<string> ValidActions { get; }
 
+    /// <summary>Gets the service registry category for the generated command.</summary>
+    protected abstract string CommandCategory { get; }
+
     /// <summary>
     /// Routes the action to a service command and args.
     /// </summary>
@@ -48,13 +51,6 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     /// </summary>
     public sealed override async Task<int> ExecuteAsync(CommandContext context, TSettings settings, CancellationToken cancellationToken)
     {
-        // Session validation
-        var sessionId = GetSessionId(settings);
-        if (RequiresSession && string.IsNullOrWhiteSpace(sessionId))
-        {
-            return CliErrorOutput.WriteError("Session ID is required. Use --session <id>");
-        }
-
         // Action validation
         var rawAction = GetAction(settings);
         if (string.IsNullOrWhiteSpace(rawAction))
@@ -67,6 +63,14 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         {
             var validList = string.Join(", ", ValidActions);
             return CliErrorOutput.WriteError($"Invalid action '{action}'. Valid actions: {validList}");
+        }
+
+        var sessionId = GetSessionId(settings);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            if (RequiresSession && !ExcelMcpService.IsSessionlessCommand(CommandCategory + "." + action))
+                return CliErrorOutput.WriteError("Session ID is required. Use --session <id>");
+            sessionId = null;
         }
 
         // Check for --output file path (generated on all CliSettings).

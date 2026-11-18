@@ -115,6 +115,7 @@ public class CliSettingsGenerator : IIncrementalGenerator
 
         sb.AppendLine($"    protected override string? GetAction(ServiceRegistry.{registryName}.CliSettings settings) => settings.Action;");
         sb.AppendLine($"    protected override IReadOnlyList<string> ValidActions => ServiceRegistry.{registryName}.ValidActions;");
+        sb.AppendLine($"    protected override string CommandCategory => ServiceRegistry.{registryName}.Category;");
         sb.AppendLine($"    protected override (string command, object? args) Route(ServiceRegistry.{registryName}.CliSettings settings, string action) => ServiceRegistry.{registryName}.RouteFromSettings(action, settings);");
         sb.AppendLine("}");
         return sb.ToString();
