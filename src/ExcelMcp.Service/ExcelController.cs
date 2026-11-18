@@ -54,6 +54,7 @@ internal sealed class ExcelController : IDisposable
     internal event Action<ExcelProcessIdentity>? ExcelProcessReleased;
     internal Action<string, string>? BeforeRecordPathPublicationHookForTests { get; set; }
     internal Func<ExcelWorkerClient, Task>? BeforeWorkerSnapshotReadForTests { get; set; }
+    internal Action<ExcelWorkerClient>? AfterExitedWorkerSnapshotRemovalForTests { get; set; }
 
     internal ExcelController(
         Func<ServiceRequest, Func<Task<ServiceResponse>>, Task<ServiceResponse>>? trackRequest = null,
@@ -1044,21 +1045,23 @@ internal sealed class ExcelController : IDisposable
                     return;
                 }
             }
-            _workers.TryRemove(registration.PipeName, out _);
-            _publishedSnapshots.TryRemove(registration.PipeName, out _);
-            _newWorkers.TryRemove(registration.PipeName, out _);
-            _abandonedWorkers.TryRemove(registration.PipeName, out _);
             var sessions = _sessions.Where(entry => entry.Value == worker).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
             foreach (var session in sessions)
-            {
                 _closedSessions.TryAdd(session, SessionEnd.WorkerExited);
-                _sessions.TryRemove(session, out _);
-            }
             foreach (var path in _paths.Where(entry => entry.Value.Token == registration.PipeName
                 || entry.Value.SessionId is { } session && sessions.Contains(session)))
                 _paths.TryRemove(path);
             foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
                 _selections.TryRemove(selection);
+
+            // Once the session disappears from status, requests must see its lost outcome and released claims.
+            foreach (var session in sessions)
+                _sessions.TryRemove(session, out _);
+            _workers.TryRemove(registration.PipeName, out _);
+            _newWorkers.TryRemove(registration.PipeName, out _);
+            _abandonedWorkers.TryRemove(registration.PipeName, out _);
+            _publishedSnapshots.TryRemove(registration.PipeName, out _);
+            AfterExitedWorkerSnapshotRemovalForTests?.Invoke(worker);
         }
         ClearUtilityWorker(worker);
     }

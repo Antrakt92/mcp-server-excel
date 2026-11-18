@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using Sbroenne.ExcelMcp.McpServer.ServiceBridge;
 using Sbroenne.ExcelMcp.McpServer.Tools;
 using Sbroenne.ExcelMcp.McpServer.Telemetry;
@@ -64,6 +65,7 @@ public sealed class BatchToolExecutionTests
         Assert.Equal(2, backend.Requests.Count);
         Assert.True(result.IsError);
         var output = result.StructuredContent!.Value;
+        Assert.Equal(output.GetRawText(), Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
         Assert.False(output.GetProperty("success").GetBoolean());
         Assert.Equal(3, output.GetProperty("totalCount").GetInt32());
         Assert.Equal(2, output.GetProperty("executedCount").GetInt32());

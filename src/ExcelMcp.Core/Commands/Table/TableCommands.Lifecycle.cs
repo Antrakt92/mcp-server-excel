@@ -1,5 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Workbook;
 using Sbroenne.ExcelMcp.Core.Models;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -134,6 +135,8 @@ public partial class TableCommands
         {
             Excel.Worksheet? sheet = null;
             Excel.Range? rangeObj = null;
+            Excel.TableStyles? tableStyles = null;
+            Excel.TableStyle? style = null;
             Excel.ListObjects? listObjects = null;
             Excel.ListObject? newTable = null;
             try
@@ -165,17 +168,22 @@ public partial class TableCommands
                         $"Table '{tableName}' cannot be created because preflight found blocking issues. {reasons}");
                 }
 
-                listObjects = sheet.ListObjects;
+                string? styleName = null;
+                if (!string.IsNullOrWhiteSpace(tableStyle))
+                {
+                    tableStyles = ctx.Book.TableStyles;
+                    style = WorkbookCommands.FindTableStyle(tableStyles, tableStyle, ct);
+                    styleName = style.Name;
+                }
 
+                listObjects = sheet.ListObjects;
+                ct.ThrowIfCancellationRequested();
                 var headerOption = hasHeaders ? Excel.XlYesNoGuess.xlYes : Excel.XlYesNoGuess.xlNo;
                 newTable = listObjects.Add(Excel.XlListObjectSourceType.xlSrcRange, rangeObj, null, headerOption);
                 newTable.Name = tableName;
 
-                // Apply table style if specified
-                if (!string.IsNullOrWhiteSpace(tableStyle))
-                {
-                    newTable.TableStyle = tableStyle;
-                }
+                if (styleName is not null)
+                    newTable.TableStyle = styleName;
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
@@ -183,6 +191,8 @@ public partial class TableCommands
             {
                 ComUtilities.Release(ref newTable);
                 ComUtilities.Release(ref listObjects);
+                ComUtilities.Release(ref style);
+                ComUtilities.Release(ref tableStyles);
                 ComUtilities.Release(ref rangeObj);
                 ComUtilities.Release(ref sheet);
             }

@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -152,7 +151,7 @@ public static partial class ExcelBatchTool
                     ? path.GetString() : null;
                 var item = operation is { Tool: "file" or "file_read" } fileOperation
                     ? ExcelFileTool.ConvertSessionResult(outcome, fileOperation.Action, filePath)
-                    : JsonNode.Parse(outcome.ToToolJson())!.AsObject();
+                    : outcome.ToToolObject();
                 item["index"] = index;
                 item["command"] = entry.Command;
                 item.WriteTo(writer, ExcelToolsBase.JsonOptions);
@@ -215,7 +214,7 @@ public static partial class ExcelBatchTool
                 cancellationToken).WaitAsync(cancellationToken);
             var outcome = validationFailure ?? await ExcelToolsBase.ForwardResultToServiceAsync(
                 bridge, command, sessionId, entry.Args, cancellationToken, entry.OperationId);
-            invocation = ExcelToolsBase.ClassifyToolResponse(tool, action, outcome.ToToolJson());
+            invocation = ExcelToolsBase.ClassifyToolOutcome(tool, action, outcome);
             return outcome;
         }
         catch (Exception exception)

@@ -1,6 +1,7 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
+using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Sbroenne.ExcelMcp.Core.Commands;
@@ -19,6 +20,7 @@ public partial class SheetCommands
             Excel.HPageBreaks? horizontal = null;
             Excel.VPageBreaks? vertical = null;
             Excel.Range? cells = null;
+            Excel.PageSetup? pageSetup = null;
             try
             {
                 sheet = FindRequiredSheet(ctx.Book, sheetName);
@@ -27,8 +29,28 @@ public partial class SheetCommands
                 horizontal = sheet.HPageBreaks;
                 vertical = sheet.VPageBreaks;
                 cells = sheet.Cells;
+                pageSetup = sheet.PageSetup;
+                object previousZoom = pageSetup.Zoom;
                 ct.ThrowIfCancellationRequested();
-                sheet.ResetAllPageBreaks();
+                Exception? resetFailure = null;
+                try
+                {
+                    sheet.ResetAllPageBreaks();
+                }
+                catch (Exception ex)
+                {
+                    resetFailure = ex;
+                    throw;
+                }
+                finally
+                {
+                    OperationCleanup.Run(() =>
+                    {
+                        // Excel can switch to 100% when resetting manual page breaks.
+                        if (!Equals((object)pageSetup.Zoom, previousZoom))
+                            pageSetup.Zoom = previousZoom;
+                    }, resetFailure);
+                }
                 foreach (int row in pageBreakOptions.Rows)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -65,6 +87,7 @@ public partial class SheetCommands
             }
             finally
             {
+                ComUtilities.Release(ref pageSetup);
                 ComUtilities.Release(ref cells);
                 ComUtilities.Release(ref vertical);
                 ComUtilities.Release(ref horizontal);

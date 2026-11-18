@@ -10,10 +10,15 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Table;
 /// </summary>
 public partial class TableCommands
 {
+    private const int MaxTableColumnNameLength = 255;
+
     /// <inheritdoc />
     public OperationResult AddColumn(IExcelBatch batch, string tableName, string columnName, int? position = null)
     {
         ValidateRequiredTableName(tableName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(columnName);
+        if (columnName.Length > MaxTableColumnNameLength)
+            throw new ArgumentOutOfRangeException(nameof(columnName), $"Table column names cannot exceed {MaxTableColumnNameLength} characters.");
 
         return batch.Execute((ctx, ct) =>
         {
@@ -26,13 +31,15 @@ public partial class TableCommands
 
                 // Check if column already exists
                 listColumns = table.ListColumns;
-                for (int i = 1; i <= listColumns.Count; i++)
+                int columnCount = listColumns.Count;
+                for (int i = 1; i <= columnCount; i++)
                 {
+                    ct.ThrowIfCancellationRequested();
                     Excel.ListColumn? column = null;
                     try
                     {
                         column = listColumns[i];
-                        if (column.Name == columnName)
+                        if (string.Equals(column.Name, columnName, StringComparison.OrdinalIgnoreCase))
                         {
                             throw new InvalidOperationException($"Column '{columnName}' already exists in table '{tableName}'");
                         }
@@ -44,6 +51,7 @@ public partial class TableCommands
                 }
 
                 // Add column at specified position or at the end
+                ct.ThrowIfCancellationRequested();
                 if (position.HasValue)
                 {
                     newColumn = listColumns.Add(Position: position.Value);

@@ -51,6 +51,13 @@ public sealed class OwnedContextVisibilityProtocolTests(RecordingProgramTranspor
             arguments["hidden"] = hidden.Value;
             expected["hidden"] = hidden.Value;
         }
+        else
+        {
+            arguments["offset"] = 1;
+            arguments["limit"] = 2;
+            expected["offset"] = 1;
+            expected["limit"] = 2;
+        }
         var toolName = action == "get-visibility" ? "range_format_read" : "range_format";
         var call = await fixture.CallToolAsync(toolName, arguments,
             RecordingToolTest.Success("""{"success":true}"""), $"rangeformat.{action}",

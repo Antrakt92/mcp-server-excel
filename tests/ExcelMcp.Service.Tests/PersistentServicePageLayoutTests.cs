@@ -80,8 +80,11 @@ public sealed class PersistentServicePageLayoutTests(PersistentServiceWorkbookFi
         {
             sheetName,
             orientation = "portrait",
-            pageSetupOptions = new { printArea = "A1:H40" }
+            pageSetupOptions = new { printArea = "A1:H40", zoomPercent = 65 }
         });
+        var pageSetupBefore = _fixture.Send("worksheetstyle.get-page-setup", new { sheetName });
+        using var pageSetup = JsonDocument.Parse(pageSetupBefore.Result!);
+        Assert.Equal(65, pageSetup.RootElement.GetProperty("zoomPercent").GetInt32());
         _fixture.Send("worksheetstyle.set-page-breaks", new
         {
             sheetName,
@@ -95,6 +98,7 @@ public sealed class PersistentServicePageLayoutTests(PersistentServiceWorkbookFi
         var columns = result.RootElement.GetProperty("vertical").EnumerateArray()
             .Where(item => item.GetProperty("isManual").GetBoolean()).Select(item => item.GetProperty("position").GetInt32()).ToArray();
         Assert.Equal([4], columns);
+        Assert.Equal(pageSetupBefore.Result, _fixture.Send("worksheetstyle.get-page-setup", new { sheetName }).Result);
         _fixture.Send("worksheetstyle.set-page-breaks", new
         {
             sheetName,
@@ -106,6 +110,33 @@ public sealed class PersistentServicePageLayoutTests(PersistentServiceWorkbookFi
             item => item.GetProperty("isManual").GetBoolean());
         Assert.DoesNotContain(empty.RootElement.GetProperty("vertical").EnumerateArray(),
             item => item.GetProperty("isManual").GetBoolean());
+        Assert.Equal(pageSetupBefore.Result, _fixture.Send("worksheetstyle.get-page-setup", new { sheetName }).Result);
+    }
+
+    [Fact]
+    public void PageBreaks_ClearPreservesFitToPages()
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        _fixture.Send("worksheetstyle.set-page-setup", new
+        {
+            sheetName,
+            fitToPagesWide = 2,
+            fitToPagesTall = 1,
+            pageSetupOptions = new { printArea = "A1:H40" }
+        });
+        var before = _fixture.Send("worksheetstyle.get-page-setup", new { sheetName });
+        using var pageSetup = JsonDocument.Parse(before.Result!);
+        Assert.Equal(JsonValueKind.Null, pageSetup.RootElement.GetProperty("zoomPercent").ValueKind);
+        Assert.Equal(2, pageSetup.RootElement.GetProperty("fitToPagesWide").GetInt32());
+        Assert.Equal(1, pageSetup.RootElement.GetProperty("fitToPagesTall").GetInt32());
+
+        _fixture.Send("worksheetstyle.set-page-breaks", new
+        {
+            sheetName,
+            pageBreakOptions = new { rows = Array.Empty<int>(), columns = Array.Empty<int>() }
+        });
+
+        Assert.Equal(before.Result, _fixture.Send("worksheetstyle.get-page-setup", new { sheetName }).Result);
     }
 
     [Fact]

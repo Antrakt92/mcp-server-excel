@@ -62,7 +62,7 @@ public interface ITableColumnCommands
     /// Adds a new column to a table
     /// </summary>
     /// <param name="tableName">Name of the Excel table</param>
-    /// <param name="columnName">Name for the new column</param>
+    /// <param name="columnName">Nonblank name for the new column, up to 255 characters. Must be unique regardless of case.</param>
     /// <param name="position">1-based column position (optional, defaults to end of table)</param>
     /// <exception cref="InvalidOperationException">Table not found or position invalid</exception>
     [ServiceAction("add-column")]

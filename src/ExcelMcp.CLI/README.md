@@ -65,7 +65,7 @@ dotnet tool install --global Sbroenne.ExcelMcp.CLI
 
 📚 **CLI usage guide:** See the session workflow, troubleshooting, advanced usage, and CI/CD examples below.
 
-> 🔁 **Session Workflow:** Always start with `excelcli session open <file>` (captures the session id), pass `--session <id>` to other commands, then `excelcli session close --session <id> --save` when finished. Add `--show` when Excel must stay visible for IRM/AIP sign-in or other authentication prompts.
+> For commands that work on an open workbook, start with `excelcli session open <file>`, pass the returned ID as `--session <id>`, and close the session when finished. Use `excelcli session close --session <id> --save` to save changes on close. Add `--show` when Excel needs to display a sign-in prompt. The `sheet copy-to-file` and `sheet move-to-file` commands use `--source-file` and `--target-file` without opening a session first.
 
 For a known sequence, use `excelcli batch` to avoid launching the CLI for every
 step. Start with `excelcli batch --help` for runnable PowerShell examples and

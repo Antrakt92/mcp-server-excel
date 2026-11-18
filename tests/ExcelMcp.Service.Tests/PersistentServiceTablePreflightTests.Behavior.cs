@@ -99,6 +99,35 @@ public sealed partial class PersistentServiceTablePreflightTests
         AssertSalesData(RequireSuccess(_tableCommands.GetData(batch, "SalesTable")));
     }
 
+    [Fact]
+    public async Task Create_MissingTableStylePreservesSourceRange()
+    {
+        var batch = _fixture.BatchToken;
+        const string sheetName = "Sales";
+        const string rangeAddress = "F1:G3";
+        const string tableName = "NewTable";
+        const string tableStyle = "UnknownTableStyleForCreation";
+        RequireSuccess(_rangeCommands.SetValues(
+            batch, sheetName, "F1:G2", [[1, "First"], [2, "Second"]]));
+        var valuesBefore = _fixture.Send("range.get-values", new { sheetName, rangeAddress });
+        var tablesBefore = RequireSuccess(_tableCommands.List(batch)).Tables;
+
+        var rejected = await _fixture.SendForFailureAsync("table.create", new
+        {
+            sheetName,
+            tableName,
+            rangeAddress = "F1:G2",
+            hasHeaders = false,
+            tableStyle
+        });
+
+        Assert.Equal("NotFound", rejected.ErrorCategory);
+        Assert.Contains(tableStyle, rejected.ErrorMessage);
+        Assert.Equal(valuesBefore.Result, _fixture.Send("range.get-values", new { sheetName, rangeAddress }).Result);
+        var tablesAfter = RequireSuccess(_tableCommands.List(batch)).Tables;
+        Assert.Equal(tablesBefore.Select(table => table.Name), tablesAfter.Select(table => table.Name));
+    }
+
     /// <summary>
     /// Tests deleting a table.
     /// LLM use case: "delete this table"
@@ -191,6 +220,47 @@ public sealed partial class PersistentServiceTablePreflightTests
         var data = RequireSuccess(_tableCommands.GetData(batch, "SalesTable"));
         AssertSalesRows(data.Data.Select(row => row.Take(4).ToList()).ToList());
         Assert.All(data.Data, row => Assert.Null(row[4]));
+    }
+
+    [Theory]
+    [InlineData("Product", 0, "already exists")]
+    [InlineData("product", 0, "already exists")]
+    [InlineData(null, 256, "cannot exceed 255 characters")]
+    public async Task AddColumn_InvalidHeaderPreservesTableAndAdjacentCells(
+        string? name, int length, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        const string sheetName = "Sales";
+        const string tableName = "SalesTable";
+        const string rangeAddress = "A1:F5";
+        RequireSuccess(_rangeCommands.SetValues(batch, sheetName, "F1:F2", [["Neighbor"], ["Sentinel"]]));
+        var workbookRange = new { sheetName, rangeAddress };
+        var table = new { tableName };
+        string? cellsBefore = _fixture.Send("range.get-values", workbookRange).Result;
+        string? tableBefore = _fixture.Send("table.read", table).Result;
+
+        var rejected = await _fixture.SendForFailureAsync("tablecolumn.add-column", new
+        {
+            tableName,
+            columnName = name ?? new string('H', length),
+            position = 1
+        });
+
+        Assert.Contains(expectedError, rejected.ErrorMessage);
+        Assert.Equal(cellsBefore, _fixture.Send("range.get-values", workbookRange).Result);
+        Assert.Equal(tableBefore, _fixture.Send("table.read", table).Result);
+    }
+
+    [Fact]
+    public void AddColumn_AcceptsMaximumHeaderLength()
+    {
+        var batch = _fixture.BatchToken;
+        string columnName = new('H', 255);
+
+        RequireSuccess(_tableCommands.AddColumn(batch, "SalesTable", columnName));
+
+        var table = RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!;
+        Assert.Equal(["Region", "Product", "Amount", "Date", columnName], table.Columns);
     }
 
     /// <summary>

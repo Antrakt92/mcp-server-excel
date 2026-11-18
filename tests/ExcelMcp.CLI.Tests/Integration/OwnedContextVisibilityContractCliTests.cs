@@ -44,7 +44,7 @@ public sealed class OwnedContextVisibilityContractCliTests
         var result = await InProcessCliHelper.RunAsync(
         [
             "rangeformat", "get-visibility", "--session", "session-1", "--sheet-name", "Sheet1",
-            "--range-address", "A1:C3", "--axis", axis
+            "--range-address", "A1:C3", "--axis", axis, "--offset", "1", "--limit", "2"
         ], request =>
         {
             captured = request;
@@ -56,6 +56,8 @@ public sealed class OwnedContextVisibilityContractCliTests
         using var args = JsonDocument.Parse(captured.Args!);
         Assert.Equal(axis, args.RootElement.GetProperty("axis").GetString(), ignoreCase: true);
         Assert.Equal("A1:C3", args.RootElement.GetProperty("rangeAddress").GetString());
+        Assert.Equal(1, args.RootElement.GetProperty("offset").GetInt32());
+        Assert.Equal(2, args.RootElement.GetProperty("limit").GetInt32());
     }
 
     [Theory]

@@ -927,15 +927,34 @@ public sealed partial class ExcelControllerTests
         using var process = System.Diagnostics.Process.GetProcessById(worker.Registration.Worker.ProcessId);
         _ = process.Handle;
         Assert.Equal(worker.Registration.Worker, WorkerProcess.From(process));
-        Assert.True((await worker.ReleaseAsync(CancellationToken.None)).Success);
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-        while (controller.Sessions.Count != 0)
-            await Task.Delay(50, timeout.Token);
-        var closed = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = session });
-        Assert.False(closed.Success);
-        Assert.Equal("ServiceUnavailable", closed.ErrorCategory);
-        using var partial = JsonDocument.Parse(closed.PartialState!);
-        Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+        var snapshotRemoved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        controller.AfterExitedWorkerSnapshotRemovalForTests = retired =>
+        {
+            if (retired == worker)
+            {
+                snapshotRemoved.TrySetResult();
+                finishRetirement.Task.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        try
+        {
+            Assert.True((await worker.ReleaseAsync(CancellationToken.None)).Success);
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await snapshotRemoved.Task.WaitAsync(timeout.Token);
+            Assert.Empty(controller.Sessions);
+            var closed = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = session });
+            Assert.False(closed.Success);
+            Assert.Equal("ServiceUnavailable", closed.ErrorCategory);
+            Assert.NotNull(closed.PartialState);
+            using var partial = JsonDocument.Parse(closed.PartialState);
+            Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+        }
+        finally
+        {
+            finishRetirement.TrySetResult();
+            controller.AfterExitedWorkerSnapshotRemovalForTests = null;
+        }
         var reopened = await controller.ProcessAsync(new ServiceRequest
         {
             Command = "session.open",

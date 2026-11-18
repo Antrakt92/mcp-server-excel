@@ -33,6 +33,41 @@ public sealed partial class PersistentServiceRangeValidationTests
     }
 
     [Theory]
+    [InlineData("list", null, "ignored")]
+    [InlineData("custom", "", "ignored")]
+    [InlineData("whole", null, "")]
+    [InlineData("decimal", null, null)]
+    [InlineData("time", "", null)]
+    public void ValidateRange_MissingRequiredFormula_PreservesExistingRule(
+        string type, string? formula1, string? formula2)
+    {
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.ValidateRange(
+            batch, sheet, "A1", "whole", "between", "1", "10",
+            true, "Original title", "Original message",
+            true, "warning", "Original error", "Original error message",
+            false, null));
+        var before = RequireSuccess(_commands.GetValidation(batch, sheet, "A1"));
+        Assert.True(before.HasValidation);
+
+        var failure = Record.Exception(() => _fixture.Send("rangeformat.validate-range", new
+        {
+            sheetName = sheet,
+            rangeAddress = "A1",
+            validationType = type,
+            formula1,
+            formula2
+        }));
+        var after = RequireSuccess(_commands.GetValidation(batch, sheet, "A1"));
+
+        Assert.Equal(JsonSerializer.Serialize(before), JsonSerializer.Serialize(after));
+        var invalidInput = Assert.IsType<ArgumentException>(failure);
+        Assert.Contains("[InvalidInput/", invalidInput.Message, StringComparison.Ordinal);
+        Assert.Contains("formula1", invalidInput.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("unsupported", "between", "stop")]
     [InlineData("whole", "unsupported", "stop")]
     [InlineData("whole", "between", "unsupported")]

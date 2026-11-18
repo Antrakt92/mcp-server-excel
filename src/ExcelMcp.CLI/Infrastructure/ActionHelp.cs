@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.Generated;
+using Sbroenne.ExcelMcp.Service;
 
 namespace Sbroenne.ExcelMcp.CLI.Infrastructure;
 
@@ -27,6 +28,10 @@ internal static class ActionHelp
 
         var category = _CliCategoryMetadata.Categories.Single(
             item => string.Equals(item.CliCommandName, arguments[0], StringComparison.OrdinalIgnoreCase));
+        var actionName = actions.Keys.Single(action =>
+            string.Equals(action, arguments[1], StringComparison.OrdinalIgnoreCase));
+        var batchCommand = $"{category.CliCommandName}.{actionName}";
+        var requiresSession = category.RequiresSession && !ExcelMcpService.IsSessionlessCommand(batchCommand);
         var registryTypeName = category.RegistryTypeName.Split('.').Last();
         var registryType = typeof(ServiceRegistry).GetNestedType(registryTypeName, BindingFlags.Public)
             ?? throw new InvalidOperationException($"Generated service registry type '{registryTypeName}' was not found.");
@@ -34,7 +39,7 @@ internal static class ActionHelp
             ?? throw new InvalidOperationException($"Generated CLI settings for '{arguments[0]}' were not found.");
 
         var parameterNames = new List<string>(actionParameters);
-        if (category.RequiresSession)
+        if (requiresSession)
             parameterNames.Insert(0, "SessionId");
         parameterNames.Add("OutputPath");
 
@@ -72,9 +77,6 @@ internal static class ActionHelp
                 batchMappings.Add((option, parameterName));
         }
         output.AppendLine(CultureInfo.InvariantCulture, $"  {"-h|--help",-42} Show this action-specific help.");
-        var actionName = actions.Keys.Single(action =>
-            string.Equals(action, arguments[1], StringComparison.OrdinalIgnoreCase));
-        var batchCommand = $"{category.CliCommandName}.{actionName}";
         output.AppendLine();
         output.AppendLine("Batch input (fill in required args from the options above):");
         output.AppendLine(JsonSerializer.Serialize(new
@@ -87,7 +89,7 @@ internal static class ActionHelp
             output.AppendLine(CultureInfo.InvariantCulture, $"  {option,-42} args.{parameter}");
         if (batchMappings.Count == 0)
             output.AppendLine("  This action takes no args.");
-        if (category.RequiresSession)
+        if (requiresSession)
             output.AppendLine("Select the workbook with batch --session <id> or an entry's top-level sessionId, not inside args.");
         output.AppendLine("Use JSON arrays/objects directly, not strings containing JSON. See excelcli batch --help for execution examples.");
         if (batchCommand == "range.set-values")

@@ -110,6 +110,198 @@ public sealed class InProcessCliCommandTests
         }
     }
 
+    [Theory]
+    [InlineData("workbook", "save-as", "xlsx")]
+    [InlineData("workbook", "save-copy-as", "xlsx")]
+    [InlineData("workbook", "export-fixed-format", "pdf")]
+    [InlineData("chart", "export-image", "png")]
+    public async Task OutputFile_RejectsArtifactDestinationBeforeConnecting(string category, string action, string extension)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-output-");
+        try
+        {
+            var target = Path.Combine(directory.FullName, $"Artifact.{extension}");
+            var outputPath = Path.Combine(directory.FullName, ".", $"artifact.{extension}");
+            await File.WriteAllTextAsync(target, "original artifact");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+            using var output = new StringWriter();
+            string[] arguments = ["--quiet", category, action, "--session", "target", "--target-path", target,
+                "--output", outputPath];
+            if (category == "chart")
+                arguments = [.. arguments, "--chart-name", "Revenue"];
+
+            var exit = await Program.RunAsync(arguments, CreateRuntime(factory, output, new StringWriter()));
+
+            Assert.Equal(1, exit);
+            Assert.Equal(0, factory.ConnectionCount);
+            Assert.Empty(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var error = result.RootElement.GetProperty("error");
+            Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+            Assert.Contains("--target-path", error.GetProperty("message").GetString());
+            Assert.Equal("original artifact", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task OutputFile_StillWritesToDistinctPathAndDispatchesAbsoluteTarget()
+    {
+        var callerDirectory = Environment.CurrentDirectory;
+        var directory = Directory.CreateDirectory(Path.Combine(callerDirectory, $"excelcli-output-{Guid.NewGuid():N}"));
+        try
+        {
+            var target = Path.Combine(directory.FullName, "artifact.pdf");
+            var outputPath = Path.Combine(directory.FullName, "result.json");
+            await File.WriteAllTextAsync(target, "original artifact");
+            await File.WriteAllTextAsync(outputPath, "previous response");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true,"pages":6}""" });
+            var exit = await Program.RunAsync(
+                ["--quiet", "workbook", "export-fixed-format", "--session", "target", "--target-path",
+                    Path.GetRelativePath(callerDirectory, target), "--output", outputPath],
+                CreateRuntime(factory, new StringWriter(), new StringWriter()));
+
+            Assert.Equal(0, exit);
+            var request = Assert.Single(factory.Requests);
+            using var requestArgs = JsonDocument.Parse(request.Args!);
+            Assert.Equal(target, requestArgs.RootElement.GetProperty("targetPath").GetString());
+            using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath));
+            Assert.Equal(6, saved.RootElement.GetProperty("data").GetProperty("pages").GetInt32());
+            Assert.Equal("original artifact", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [Trait("RunType", "OnDemand")] // Requires Windows permission to create symbolic links.
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OutputFile_AliasResolvedDuringDispatchPreservesPublishedArtifact(bool createAliasBeforeDispatch)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-late-alias-");
+        try
+        {
+            var artifact = Path.Combine(directory.FullName, "artifact.pdf");
+            var outputPath = Path.Combine(directory.FullName, "result.json");
+            if (createAliasBeforeDispatch)
+                File.CreateSymbolicLink(outputPath, artifact);
+            var factory = new RecordingClientFactory
+            {
+                Responder = async _ =>
+                {
+                    await File.WriteAllTextAsync(artifact, "published artifact");
+                    if (!createAliasBeforeDispatch)
+                        File.CreateSymbolicLink(outputPath, artifact);
+                    return new ServiceResponse { Success = true, Result = """{"success":true,"pages":6}""" };
+                }
+            };
+            using var output = new StringWriter();
+
+            var exit = await Program.RunAsync(
+                ["--quiet", "workbook", "export-fixed-format", "--session", "target", "--target-path", artifact, "--output", outputPath],
+                CreateRuntime(factory, output, new StringWriter()));
+
+            var artifactBytes = await File.ReadAllTextAsync(artifact);
+            Assert.Equal("published artifact", artifactBytes);
+            Assert.Equal(1, exit);
+            Assert.Single(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var root = result.RootElement;
+            Assert.Equal("OutputWriteFailed", root.GetProperty("error").GetProperty("category").GetString());
+            Assert.Contains("--target-path", root.GetProperty("error").GetProperty("message").GetString());
+            Assert.Equal(6, root.GetProperty("data").GetProperty("pages").GetInt32());
+            Assert.True(root.GetProperty("partialState").GetProperty("operationCompleted").GetBoolean());
+            Assert.False(root.GetProperty("partialState").GetProperty("outputWriteCompleted").GetBoolean());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("copy-to-file", true)]
+    [InlineData("copy-to-file", false)]
+    [InlineData("move-to-file", true)]
+    [InlineData("move-to-file", false)]
+    public async Task OutputFile_RejectsBothWorkbooksOfSheetTransferBeforeConnecting(string action, bool sourceCollision)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-transfer-");
+        try
+        {
+            var source = Path.Combine(directory.FullName, "Source.xlsx");
+            var target = Path.Combine(directory.FullName, "Target.xlsx");
+            var outputPath = Path.Combine(directory.FullName, ".", sourceCollision ? "source.xlsx" : "target.xlsx");
+            await File.WriteAllTextAsync(source, "source workbook");
+            await File.WriteAllTextAsync(target, "target workbook");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+            using var output = new StringWriter();
+
+            var exit = await Program.RunAsync(
+                ["--quiet", "sheet", action, "--source-file", source, "--source-sheet", "Data", "--target-file", target, "--output", outputPath],
+                CreateRuntime(factory, output, new StringWriter()));
+
+            Assert.Equal(1, exit);
+            Assert.Equal(0, factory.ConnectionCount);
+            Assert.Empty(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var error = result.RootElement.GetProperty("error");
+            Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+            Assert.Contains(sourceCollision ? "--source-file" : "--target-file", error.GetProperty("message").GetString());
+            Assert.Equal("source workbook", await File.ReadAllTextAsync(source));
+            Assert.Equal("target workbook", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("copy-to-file")]
+    [InlineData("move-to-file")]
+    public async Task SessionlessSheetTransfer_DispatchesWithoutSession(string action)
+    {
+        var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+        using var output = new StringWriter();
+
+        var exit = await Program.RunAsync(
+            ["--quiet", "sheet", action, "--source-file", @"C:\audit\source.xlsx", "--source-sheet", "Data",
+                "--target-file", @"C:\audit\target.xlsx"],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(0, exit);
+        var request = Assert.Single(factory.Requests);
+        Assert.Equal($"sheet.{action}", request.Command);
+        Assert.Null(request.SessionId);
+
+        output.GetStringBuilder().Clear();
+        Assert.Equal(0, await Program.RunAsync(["sheet", action, "--help"],
+            CreateRuntime(factory, output, new StringWriter())));
+        Assert.DoesNotContain("--session", output.ToString());
+    }
+
+    [Fact]
+    public async Task SessionBoundSheetAction_StillRequiresSessionBeforeConnecting()
+    {
+        var factory = new RecordingClientFactory();
+        using var output = new StringWriter();
+
+        var exit = await Program.RunAsync(["--quiet", "sheet", "list"],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(1, exit);
+        Assert.Equal(0, factory.ConnectionCount);
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.Contains("Session ID is required", result.RootElement.GetProperty("error").GetProperty("message").GetString());
+    }
+
     [Fact]
     public async Task OutputFile_WriteFailureRetainsCompletedOperation()
     {
@@ -1049,7 +1241,10 @@ public sealed class InProcessCliCommandTests
             Assert.DoesNotContain("args.outputPath", batchHelp, StringComparison.Ordinal);
             Assert.DoesNotContain("--output", batchHelp, StringComparison.Ordinal);
             var category = _CliCategoryMetadata.Categories.Single(item => item.CliCommandName == command);
-            if (category.RequiresSession)
+            var sessionlessTransfer = command == "sheet" && action is "copy-to-file" or "move-to-file";
+            if (sessionlessTransfer)
+                Assert.DoesNotContain("--session", batchHelp, StringComparison.Ordinal);
+            else if (category.RequiresSession)
             {
                 if (_CliCategoryMetadata.RequiresBatchStdin(command + "." + action))
                 {

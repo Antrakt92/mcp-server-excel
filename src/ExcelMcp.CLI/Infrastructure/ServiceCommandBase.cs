@@ -1,4 +1,7 @@
+using System.ComponentModel;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.CLI.Telemetry;
 using Sbroenne.ExcelMcp.Service;
@@ -28,6 +31,9 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     /// </summary>
     protected abstract IReadOnlyList<string> ValidActions { get; }
 
+    /// <summary>Gets the service registry category for the generated command.</summary>
+    protected abstract string CommandCategory { get; }
+
     /// <summary>
     /// Routes the action to a service command and args.
     /// </summary>
@@ -45,13 +51,6 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     /// </summary>
     public sealed override async Task<int> ExecuteAsync(CommandContext context, TSettings settings, CancellationToken cancellationToken)
     {
-        // Session validation
-        var sessionId = GetSessionId(settings);
-        if (RequiresSession && string.IsNullOrWhiteSpace(sessionId))
-        {
-            return CliErrorOutput.WriteError("Session ID is required. Use --session <id>");
-        }
-
         // Action validation
         var rawAction = GetAction(settings);
         if (string.IsNullOrWhiteSpace(rawAction))
@@ -66,17 +65,33 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
             return CliErrorOutput.WriteError($"Invalid action '{action}'. Valid actions: {validList}");
         }
 
-        // Route and execute
+        var sessionId = GetSessionId(settings);
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            if (RequiresSession && !ExcelMcpService.IsSessionlessCommand(CommandCategory + "." + action))
+                return CliErrorOutput.WriteError("Session ID is required. Use --session <id>");
+            sessionId = null;
+        }
+
+        // Check for --output file path (generated on all CliSettings).
+        var outputPath = settings.GetType().GetProperty("OutputPath")?.GetValue(settings) as string;
+
         string command;
-        object? args;
+        string? requestArgs;
+        OutputPathGuard? outputGuard;
         try
         {
-            (command, args) = Route(settings, action);
+            (command, var args) = Route(settings, action);
+            (requestArgs, outputGuard) = PrepareRequestArguments(command, args, outputPath);
         }
         catch (ArgumentException ex)
         {
             // Parameter validation failed (e.g., required param missing)
             // Return clean JSON error with exit code 1 instead of unhandled crash
+            return CliErrorOutput.WriteException(ex, "InvalidInput");
+        }
+        catch (PathTooLongException ex)
+        {
             return CliErrorOutput.WriteException(ex, "InvalidInput");
         }
 
@@ -86,14 +101,11 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         {
             Command = command,
             SessionId = sessionId,
-            Args = args != null ? JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions) : null
+            Args = requestArgs
         };
         var response = await CliTelemetry.TrackCommandAsync(
             request,
             () => client.SendAsync(request, cancellationToken));
-
-        // Check for --output file path (generated on all CliSettings)
-        var outputPath = settings.GetType().GetProperty("OutputPath")?.GetValue(settings) as string;
 
         // Output result
         if (response.Success)
@@ -106,7 +118,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
 
             if (!string.IsNullOrEmpty(outputPath))
             {
-                return WriteOutputToFile(outcome, originalData, command, durationMs, outputPath);
+                return WriteOutputToFile(outcome, originalData, command, durationMs, outputPath, outputGuard);
             }
 
             return CliResultOutput.Write(outcome, command);
@@ -117,6 +129,70 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         }
     }
 
+    private static (string? Args, OutputPathGuard? Guard) PrepareRequestArguments(string command, object? args, string? outputPath)
+    {
+        if (args is null)
+            return (null, null);
+        var writesArtifact = command is "workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image";
+        var transfersSheet = command is "sheet.copy-to-file" or "sheet.move-to-file";
+        if (string.IsNullOrEmpty(outputPath) || (!writesArtifact && !transfersSheet))
+            return (JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), null);
+
+        var request = JsonSerializer.SerializeToNode(args, ServiceProtocol.JsonOptions)!.AsObject();
+        var callerDirectory = Environment.CurrentDirectory;
+        var guard = new OutputPathGuard(Path.GetFullPath(outputPath, callerDirectory), transfersSheet
+            ? [(NormalizeArtifactPath(request, "sourceFile", callerDirectory), "--source-file"),
+                (NormalizeArtifactPath(request, "targetFile", callerDirectory), "--target-file")]
+            : [(NormalizeArtifactPath(request, "targetPath", callerDirectory), "--target-path")]);
+        guard.Validate();
+        return (request.ToJsonString(ServiceProtocol.JsonOptions), guard);
+    }
+
+    private static string NormalizeArtifactPath(JsonObject request, string parameter, string callerDirectory)
+    {
+        var path = request[parameter]!.GetValue<string>();
+        var absolute = Path.GetFullPath(path, callerDirectory);
+
+        // The daemon's working directory can differ from the caller's.
+        if (!Path.IsPathFullyQualified(path))
+            request[parameter] = absolute;
+        return absolute;
+    }
+
+    private sealed class OutputPathGuard(string outputPath, (string Path, string Option)[] artifactPaths)
+    {
+        public string OutputPath { get; } = outputPath;
+
+        public void Validate()
+        {
+            foreach (var (path, option) in artifactPaths)
+            {
+                if (string.Equals(OutputPath, path, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(OutputPath, path))
+                    throw new ArgumentException($"--output writes the command response and must use a different file from {option}.");
+            }
+        }
+    }
+
+    private static bool ReferToSameFile(string outputPath, string targetPath)
+    {
+        try
+        {
+            var output = WorkbookFileIdentity.Read(outputPath);
+            var target = WorkbookFileIdentity.Read(targetPath);
+            return string.Equals(output.Path, target.Path, StringComparison.OrdinalIgnoreCase)
+                || output.FileKey is not null && string.Equals(output.FileKey, target.FileKey, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Win32Exception)
+        {
+            // The application will report inaccessible paths when it attempts the write.
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Writes the result to a file. For image results containing base64 data,
     /// decodes and writes the binary image. Otherwise writes the JSON text.
@@ -124,16 +200,19 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "CLI output-file boundary reports the original write/encoding failure as success=false JSON and returns exit code 1.")]
     private static int WriteOutputToFile(ResultJson outcome, System.Text.Json.Nodes.JsonObject? originalData,
-        string command, long durationMs, string outputPath)
+        string command, long durationMs, string outputPath, OutputPathGuard? outputGuard)
     {
         try
         {
+            // A dangling link may have gained a target when the operation published an artifact.
+            outputGuard?.Validate();
+            var destination = outputGuard?.OutputPath ?? outputPath;
             Dictionary<string, object?> metadata;
             var base64Data = originalData?["imageBase64"]?.GetValue<string>();
             if (base64Data != null)
             {
                 var imageBytes = Convert.FromBase64String(base64Data);
-                File.WriteAllBytes(outputPath, imageBytes);
+                File.WriteAllBytes(destination, imageBytes);
                 // Write metadata (without the large base64 payload) to stdout
                 using var doc = JsonDocument.Parse(originalData!.ToJsonString());
                 metadata = new Dictionary<string, object?>
@@ -151,7 +230,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
             }
             else
             {
-                File.WriteAllText(outputPath, outcome.ToCliJson(command, durationMs));
+                File.WriteAllText(destination, outcome.ToCliJson(command, durationMs));
                 metadata = new Dictionary<string, object?>
                 {
                     ["success"] = true,

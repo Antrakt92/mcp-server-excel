@@ -623,6 +623,78 @@ public sealed partial class ServiceWorkbookLifecycleTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task DelayedReadinessFailure_IsReportedOnlyForItsOperation(bool runNewOperation)
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var session = await CreateSessionAsync(service, Path.Join(directory, "readiness-failure.xlsx"));
+            sessions[session] = 0;
+            var batch = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(session));
+            using var release = new ManualResetEventSlim();
+            using var inspectionStarted = new ManualResetEventSlim();
+            const string probeFailure = "fixture readiness probe failed";
+            batch.BeforeRefreshStateReadHookForTests = () =>
+            {
+                inspectionStarted.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+                throw new InvalidOperationException(probeFailure);
+            };
+
+            try
+            {
+                var first = await service.ProcessAsync(new ServiceRequest { Command = "session.list" });
+                RequireSuccess(first);
+                using var listing = JsonDocument.Parse(first.Result!);
+                var pending = Assert.Single(listing.RootElement.GetProperty("sessions").EnumerateArray());
+                Assert.Equal("unknown", pending.GetProperty("excelState").GetString());
+                Assert.False(pending.GetProperty("canClose").GetBoolean());
+                Assert.True(inspectionStarted.Wait(TimeSpan.FromSeconds(10)));
+                batch.BeforeRefreshStateReadHookForTests = null;
+                release.Set();
+
+                if (runNewOperation)
+                {
+                    var originalOperation = batch.OperationStatus.StartedAtUtc;
+                    Assert.True(batch.Execute((context, _) => context.Book.Saved));
+                    Assert.NotEqual(originalOperation, batch.OperationStatus.StartedAtUtc);
+                }
+
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (true)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    var result = await service.ProcessAsync(new ServiceRequest { Command = "session.list" });
+                    if (!runNewOperation && !result.Success)
+                    {
+                        Assert.Contains(probeFailure, result.ErrorMessage, StringComparison.Ordinal);
+                        break;
+                    }
+                    RequireSuccess(result);
+                    using var state = JsonDocument.Parse(result.Result!);
+                    var entry = Assert.Single(state.RootElement.GetProperty("sessions").EnumerateArray());
+                    if (entry.GetProperty("canClose").GetBoolean())
+                    {
+                        Assert.True(runNewOperation, "The current probe failure was lost.");
+                        Assert.Equal("ready", entry.GetProperty("excelState").GetString());
+                        break;
+                    }
+                    await Task.Delay(20, deadline.Token);
+                }
+            }
+            finally
+            {
+                batch.BeforeRefreshStateReadHookForTests = null;
+                release.Set();
+            }
+
+            await CloseSessionAsync(service, session, save: false);
+            sessions.TryRemove(session, out _);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task SlowReadinessInspection_AllowsSaveAndCloseWithPersistedEdits(bool saveAs)
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>
