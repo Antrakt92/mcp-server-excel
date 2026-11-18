@@ -20,8 +20,27 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-    # Group minor and patch updates together
+    # The first matching group wins. Major updates stay in individual PRs.
     groups:
+      test-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "coverlet.collector"
+          - "MartinCostello.Logging.XUnit"
+          - "Microsoft.NET.Test.Sdk"
+          - "xunit"
+          - "xunit.*"
+        update-types:
+          - "minor"
+          - "patch"
+      build-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "Microsoft.CodeAnalysis.*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Keep the test-only InMemory exporter with the rest of OpenTelemetry.
       production-dependencies:
         applies-to: version-updates
         patterns:
@@ -33,8 +52,6 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-    # Only create PRs for security updates and major version updates immediately
-    # Minor/patch updates are grouped
 
   # GitHub Actions - check weekly
   - package-ecosystem: "github-actions"
