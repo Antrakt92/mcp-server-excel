@@ -289,6 +289,66 @@ public sealed class PersistentServiceOwnedContextVisibilityTests(
     }
 
     [Fact]
+    public async Task Visibility_FullColumnRequiresLimitAndReadsLastRows()
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        const string command = "rangeformat.get-visibility";
+        var unbounded = await _fixture.SendForFailureAsync(command, new
+        {
+            sheetName,
+            rangeAddress = "A:A",
+            axis = "rows"
+        });
+        Assert.Equal("InvalidInput", unbounded.ErrorCategory);
+        Assert.Contains("1048576", unbounded.ErrorMessage, StringComparison.Ordinal);
+
+        using var last = JsonDocument.Parse(_fixture.Send(command, new
+        {
+            sheetName,
+            rangeAddress = "A:A",
+            axis = "rows",
+            offset = 1_048_574,
+            limit = 2
+        }).Result!);
+        Assert.Equal(1_048_576, last.RootElement.GetProperty("totalDimensions").GetInt32());
+        Assert.False(last.RootElement.TryGetProperty("nextOffset", out _));
+        Assert.Equal([1_048_575, 1_048_576], last.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("index").GetInt32()));
+    }
+
+    [Fact]
+    public void Visibility_PagesOverlappingAndDisjointDimensionsInIndexOrder()
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        const string command = "rangeformat.get-visibility";
+        const string rangeAddress = "E10,C4:C7,A2:A5";
+        using var first = JsonDocument.Parse(_fixture.Send(command, new
+        {
+            sheetName,
+            rangeAddress,
+            axis = "rows",
+            offset = 3,
+            limit = 3
+        }).Result!);
+        int next = first.RootElement.GetProperty("nextOffset").GetInt32();
+        Assert.Equal(6, next);
+        Assert.Equal(7, first.RootElement.GetProperty("totalDimensions").GetInt32());
+        Assert.Equal([5, 6, 7], first.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetProperty("index").GetInt32()));
+
+        using var last = JsonDocument.Parse(_fixture.Send(command, new
+        {
+            sheetName,
+            rangeAddress,
+            axis = "rows",
+            offset = next,
+            limit = 3
+        }).Result!);
+        Assert.Equal(10, Assert.Single(last.RootElement.GetProperty("items").EnumerateArray()).GetProperty("index").GetInt32());
+        Assert.False(last.RootElement.TryGetProperty("nextOffset", out _));
+    }
+
+    [Fact]
     public async Task Visibility_ProtectionFailureLeavesDimensionsUnchanged()
     {
         var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);

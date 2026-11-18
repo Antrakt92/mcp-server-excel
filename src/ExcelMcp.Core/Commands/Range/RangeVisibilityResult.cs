@@ -15,7 +15,7 @@ public enum VisibilityAxis
     Columns
 }
 
-/// <summary>Complete visibility state for unique rows or columns intersecting the requested scope.</summary>
+/// <summary>Visibility state for a page of unique rows or columns intersecting the requested scope.</summary>
 public sealed class RangeVisibilityResult : OperationResult
 {
     /// <summary>Resolved worksheet.</summary>
@@ -28,7 +28,12 @@ public sealed class RangeVisibilityResult : OperationResult
     public bool SheetFilterMode { get; set; }
     /// <summary>Row/column state is native; the cause of hiding cannot be established reliably.</summary>
     public string CauseCoverage { get; } = "Native Hidden has no cause flag; filter/outline context is not proof of the cause.";
-    /// <summary>Every distinct intersecting row/column, sorted by index.</summary>
+    /// <summary>Total distinct dimensions in the scope.</summary>
+    public int TotalDimensions { get; set; }
+    /// <summary>Offset to request the next page, absent when there are no more items.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? NextOffset { get; set; }
+    /// <summary>Dimensions on this page, sorted by index.</summary>
     public List<DimensionVisibility> Items { get; set; } = [];
 }
 

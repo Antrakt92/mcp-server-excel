@@ -38,18 +38,23 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 public interface IRangeFormatCommands
 {
     /// <summary>
-    /// Reads every unique whole row or column intersecting the exact requested scope.
+    /// Reads unique whole rows or columns intersecting the exact requested scope in index order.
+    /// Scopes above 10,000 dimensions require an explicit page limit. Continue with nextOffset
+    /// and the same scope, axis and limit. Pages do not form a snapshot.
     /// Includes Hidden, native current size, outline level, and worksheet AutoFilter context.
     /// Hidden cause is undetermined: COM has no reliable flag separating manual hiding,
     /// filtering, zero size, or collapsed groups. Does not change selection or activation.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name; empty for named ranges</param>
-    /// <param name="rangeAddress">Exact scope; whole intersecting dimensions are returned without a cap</param>
+    /// <param name="rangeAddress">Exact scope selecting the dimensions to inspect</param>
     /// <param name="axis">rows or columns</param>
+    /// <param name="offset">Zero-based offset among distinct dimensions, default 0. A positive offset requires limit.</param>
+    /// <param name="limit">Maximum dimensions in the page, from 1 to 10,000. Required for scopes above 10,000.</param>
     [ServiceAction("get-visibility")]
     RangeVisibilityResult GetVisibility(IExcelBatch batch, [AllowEmptyString] string sheetName,
-        [RequiredParameter] string rangeAddress, [RequiredParameter][FromString] VisibilityAxis axis);
+        [RequiredParameter] string rangeAddress, [RequiredParameter][FromString] VisibilityAxis axis,
+        int? offset = null, int? limit = null);
 
     /// <summary>
     /// Sets native Hidden for every whole row or column intersecting the exact scope,

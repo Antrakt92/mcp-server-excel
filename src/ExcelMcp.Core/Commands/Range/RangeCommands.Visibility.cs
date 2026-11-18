@@ -8,11 +8,20 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 public partial class RangeCommands
 {
+    private const int MaxVisibilityPageSize = 10_000;
+
     /// <inheritdoc />
     public RangeVisibilityResult GetVisibility(
-        IExcelBatch batch, string sheetName, string rangeAddress, VisibilityAxis axis)
+        IExcelBatch batch, string sheetName, string rangeAddress, VisibilityAxis axis,
+        int? offset = null, int? limit = null)
     {
         ValidateVisibilityInputs(rangeAddress, axis);
+        int start = offset.GetValueOrDefault();
+        ArgumentOutOfRangeException.ThrowIfNegative(start, nameof(offset));
+        if (limit is < 1 or > MaxVisibilityPageSize)
+            throw new ArgumentOutOfRangeException(nameof(limit), $"Limit must be between 1 and {MaxVisibilityPageSize}.");
+        if (start != 0 && limit is null)
+            throw new ArgumentException("A positive offset requires a page limit.", nameof(offset));
         return batch.Execute((context, ct) =>
         {
             Excel.Range? scope = null;
@@ -27,6 +36,13 @@ public partial class RangeCommands
                 scope = RangeHelpers.ResolveRange(context.Book, sheetName, rangeAddress, out string? error);
                 if (scope is null)
                     throw new InvalidOperationException(error ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
+                var intervals = GetVisibilityIntervals(scope, axis, ct);
+                int total = intervals.Sum(interval => interval.Last - interval.First + 1);
+                if (limit is null && total > MaxVisibilityPageSize)
+                    throw new ArgumentException(
+                        $"The scope contains {total} dimensions. Use a limit of at most {MaxVisibilityPageSize} and continue with nextOffset.",
+                        nameof(limit));
+                int pageSize = Math.Min(limit ?? MaxVisibilityPageSize, Math.Max(0, total - start));
                 sheet = scope.Worksheet;
                 var result = new RangeVisibilityResult
                 {
@@ -35,7 +51,9 @@ public partial class RangeCommands
                     SheetName = sheet.Name,
                     RangeAddress = scope.Address,
                     Axis = axis,
-                    SheetFilterMode = sheet.FilterMode
+                    SheetFilterMode = sheet.FilterMode,
+                    TotalDimensions = total,
+                    NextOffset = start < total && pageSize < total - start ? start + pageSize : null
                 };
                 int firstFilterDataRow = 0;
                 int lastFilterDataRow = -1;
@@ -51,7 +69,7 @@ public partial class RangeCommands
                     }
                 }
                 dimensions = axis == VisibilityAxis.Rows ? sheet.Rows : sheet.Columns;
-                foreach (int index in GetVisibilityIndices(scope, axis, ct))
+                foreach (int index in EnumerateVisibilityPage(intervals, start, pageSize))
                 {
                     ct.ThrowIfCancellationRequested();
                     Excel.Range? dimension = null;
@@ -130,14 +148,16 @@ public partial class RangeCommands
             throw new ArgumentOutOfRangeException(nameof(axis));
     }
 
-    private static SortedSet<int> GetVisibilityIndices(Excel.Range scope, VisibilityAxis axis, CancellationToken ct)
+    private static List<(int First, int Last)> GetVisibilityIntervals(
+        Excel.Range scope, VisibilityAxis axis, CancellationToken ct)
     {
-        SortedSet<int> indices = [];
+        List<(int First, int Last)> intervals = [];
         Excel.Areas? areas = null;
         try
         {
             areas = scope.Areas;
-            for (int index = 1; index <= areas.Count; index++)
+            int areaCount = areas.Count;
+            for (int index = 1; index <= areaCount; index++)
             {
                 ct.ThrowIfCancellationRequested();
                 Excel.Range? area = null;
@@ -147,12 +167,7 @@ public partial class RangeCommands
                     area = areas[index];
                     dimensions = axis == VisibilityAxis.Rows ? area.Rows : area.Columns;
                     int first = axis == VisibilityAxis.Rows ? area.Row : area.Column;
-                    int count = dimensions.Count;
-                    for (int offset = 0; offset < count; offset++)
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        indices.Add(first + offset);
-                    }
+                    intervals.Add((first, first + dimensions.Count - 1));
                 }
                 finally
                 {
@@ -160,11 +175,49 @@ public partial class RangeCommands
                     ComUtilities.Release(ref area);
                 }
             }
-            return indices;
         }
         finally
         {
             ComUtilities.Release(ref areas);
+        }
+
+        intervals.Sort(static (left, right) => left.First.CompareTo(right.First));
+        List<(int First, int Last)> merged = [];
+        foreach (var interval in intervals)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (merged.Count > 0 && interval.First <= merged[^1].Last + 1)
+            {
+                var previous = merged[^1];
+                merged[^1] = (previous.First, Math.Max(previous.Last, interval.Last));
+            }
+            else
+            {
+                merged.Add(interval);
+            }
+        }
+        return merged;
+    }
+
+    private static IEnumerable<int> EnumerateVisibilityPage(
+        List<(int First, int Last)> intervals, int offset, int count)
+    {
+        foreach (var (first, last) in intervals)
+        {
+            if (count == 0)
+                yield break;
+            int length = last - first + 1;
+            if (offset >= length)
+            {
+                offset -= length;
+                continue;
+            }
+            int pageLength = Math.Min(count, length - offset);
+            int pageStart = first + offset;
+            for (int index = pageStart; index < pageStart + pageLength; index++)
+                yield return index;
+            count -= pageLength;
+            offset = 0;
         }
     }
 }
