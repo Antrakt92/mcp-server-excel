@@ -274,8 +274,10 @@ public sealed class FileToolRecordingContractTests(
         Assert.Equal(openedPath, result.RootElement.GetProperty("filePath").GetString());
     }
 
-    [Fact]
-    public async Task Test_DispatchesTimeoutToReadOnlyValidationOpen()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_DispatchesTimeoutAndPreservesValidationExitStatus(bool excelProcessExited)
     {
         var path = Path.Join(
             Path.GetTempPath(),
@@ -289,7 +291,8 @@ public sealed class FileToolRecordingContractTests(
                 filePath = path,
                 exists = true,
                 isValid = true,
-                canOpen = true
+                canOpen = true,
+                excelProcessExited
             }, ServiceProtocol.JsonOptions)
         };
         var expectedArgs = JsonSerializer.Serialize(new
@@ -314,6 +317,7 @@ public sealed class FileToolRecordingContractTests(
         Assert.Null(call.Request.SessionId);
         using var result = JsonDocument.Parse(call.JsonResult);
         Assert.True(result.RootElement.GetProperty("canOpen").GetBoolean());
+        Assert.Equal(excelProcessExited, result.RootElement.GetProperty("excelProcessExited").GetBoolean());
     }
 
     [Theory]

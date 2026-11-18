@@ -63,6 +63,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     private bool _teardownConfirmed;
     private bool _staCleanupPending;
     private bool _ownedProcessLeftOpen;
+
     private bool _quitEmptyOwnedApplication;
     private bool _leaveOwnedApplicationOpen;
     private bool? _originalDisplayAlerts;
@@ -1206,6 +1207,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     public int? ExcelProcessId => _excelProcessId;
 
     internal ExcelProcessIdentity? ProcessIdentity => _excelProcessIdentity;
+    internal bool OwnedProcessLeftOpen => _ownedProcessLeftOpen;
 
     // Observation is diagnostic only; the ownership guard still controls teardown.
     internal ExcelNativeProcessObservation? ProcessObservation =>

@@ -88,6 +88,7 @@ public sealed partial class ServiceFileCommandsTests
         Assert.True(info.IsValid);
         Assert.True(info.Success);
         Assert.True(info.CanOpen);
+        Assert.True(info.ExcelProcessExited);
         Assert.False(info.IsIrmProtected);
         Assert.False(info.WillOpenReadOnly);
         Assert.False(info.RequiresVisibleSession);
@@ -112,6 +113,7 @@ public sealed partial class ServiceFileCommandsTests
         Assert.False(info.IsValid);
         Assert.False(info.Success);
         Assert.False(info.CanOpen);
+        Assert.Null(info.ExcelProcessExited);
         Assert.NotNull(info.Message);
         Assert.Contains("not found", info.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(File.Exists(testFile));

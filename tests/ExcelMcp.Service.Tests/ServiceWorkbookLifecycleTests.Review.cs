@@ -1637,6 +1637,69 @@ public sealed partial class ServiceWorkbookLifecycleTests
     }
 
     [Fact]
+    public async Task Test_ReadOnlyValidation_ReportsExcelPreservedForAnotherWorkbook()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var path = Path.Join(directory, "validation-with-neighbor.xlsx");
+            var initial = await CreateSessionAsync(service, path);
+            sessions[initial] = 0;
+            await CloseSessionAsync(service, initial, save: false);
+            sessions.TryRemove(initial, out _);
+            var originalBytes = File.ReadAllBytes(path);
+
+            ExcelProcessIdentity? identity = null;
+            string? neighborName = null;
+            ExcelBatch.AfterWorkbookOpenHookForTests = (application, _) =>
+            {
+                var validation = Assert.Single(service.SessionManager.ActiveSessionIds);
+                identity = service.SessionManager.GetSessionProcessIdentity(validation);
+                neighborName = AddReviewWorkbook((Excel.Application)application, "keep this unsaved");
+            };
+            ServiceResponse response;
+            try
+            {
+                response = await service.ProcessAsync(new ServiceRequest
+                {
+                    Command = "session.test",
+                    Args = JsonSerializer.Serialize(new { filePath = path }, ServiceProtocol.JsonOptions)
+                });
+            }
+            finally
+            {
+                ExcelBatch.AfterWorkbookOpenHookForTests = null;
+            }
+
+            var process = Assert.IsType<ExcelProcessIdentity>(identity);
+            var inventory = await service.SessionManager.DiscoverOpenWorkbooksAsync(process);
+            var neighbor = Assert.Single(inventory.Workbooks);
+            Assert.Equal(neighborName, neighbor.Name);
+            var attached = GetSessionId(await service.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.attach",
+                Args = JsonSerializer.Serialize(new { neighbor.WorkbookId }, ServiceProtocol.JsonOptions)
+            }));
+            sessions[attached] = 0;
+            try
+            {
+                Assert.False(neighbor.Saved);
+                Assert.Equal("keep this unsaved", await ReadMarkerAsync(service, attached));
+            }
+            finally
+            {
+                await CloseSessionAsync(service, attached, save: false);
+                sessions.TryRemove(attached, out _);
+            }
+
+            RequireSuccess(response);
+            using var result = JsonDocument.Parse(response.Result!);
+            Assert.True(result.RootElement.GetProperty("canOpen").GetBoolean());
+            Assert.False(result.RootElement.GetProperty("excelProcessExited").GetBoolean());
+            Assert.Equal(originalBytes, File.ReadAllBytes(path));
+        });
+    }
+
+    [Fact]
     public async Task Close_QuitRejectedThenWorkbookOpened_PreservesLateUnsavedWorkbook()
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>

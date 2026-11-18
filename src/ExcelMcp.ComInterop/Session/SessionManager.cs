@@ -1165,6 +1165,9 @@ public sealed class SessionManager : IDisposable
     /// The workbook is opened read-only and closed without saving.
     /// </summary>
     public void ValidateWorkbookOpen(string filePath, TimeSpan? operationTimeout = null)
+        => _ = ValidateWorkbookOpenAndReportExit(filePath, operationTimeout);
+
+    internal bool ValidateWorkbookOpenAndReportExit(string filePath, TimeSpan? operationTimeout)
     {
         ThrowIfClosedToNewSessions();
 
@@ -1192,6 +1195,7 @@ public sealed class SessionManager : IDisposable
             }
             batch.WaitForStartup();
             batch.Close();
+            return !batch.OwnedProcessLeftOpen;
         }
         catch (ExcelStartupPendingException ex)
         {

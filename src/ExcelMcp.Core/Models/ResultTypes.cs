@@ -978,6 +978,13 @@ public class FileValidationInfo
     public bool CanOpen { get; set; }
 
     /// <summary>
+    /// Whether the validation Excel process exited after the workbook closed.
+    /// False means Excel was left open to preserve other workbooks.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ExcelProcessExited { get; set; }
+
+    /// <summary>
     /// Whether the file is IRM/AIP-protected (OLE2 compound document format).
     /// IRM-protected files require show=true for visible authentication.
     /// Excel determines the signed-in user's editing permissions; protection alone
