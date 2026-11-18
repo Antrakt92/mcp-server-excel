@@ -11,6 +11,7 @@ public partial class WorkbookCommands
     internal static Action<string>? BeforeNativeSaveAsHookForTests { get; set; }
     internal static Action<string>? BeforeOutputCommitHookForTests { get; set; }
     internal static Action<string>? BeforeCheckedStageOpenForTests { get; set; }
+    internal static Action<string>? OpenExportedFileHookForTests { get; set; }
 
     /// <inheritdoc />
     public OperationResult SaveAs(
@@ -272,13 +273,24 @@ public partial class WorkbookCommands
 
                 BeforeOutputCommitHookForTests?.Invoke(writePath);
                 PublishStagedOutput(writePath, normalizedPath, overwrite);
+                OperationWarning? warning = null;
                 if (openAfterPublish)
                 {
-                    using var process = System.Diagnostics.Process.Start(
-                        new System.Diagnostics.ProcessStartInfo(normalizedPath)
+                    try
+                    {
+                        if (OpenExportedFileHookForTests is { } openFile)
+                            openFile(normalizedPath);
+                        else
                         {
-                            UseShellExecute = true
-                        });
+                            using var process = System.Diagnostics.Process.Start(
+                                new System.Diagnostics.ProcessStartInfo(normalizedPath) { UseShellExecute = true });
+                        }
+                    }
+                    catch (System.ComponentModel.Win32Exception ex)
+                    {
+                        warning = new OperationWarning(
+                            "ViewerLaunchFailed", $"The exported file could not be opened in its viewer: {ex.Message}", normalizedPath);
+                    }
                 }
 
                 return new OperationResult
@@ -286,7 +298,8 @@ public partial class WorkbookCommands
                     Success = true,
                     Action = "export-fixed-format",
                     FilePath = normalizedPath,
-                    Message = $"Workbook exported to '{normalizedPath}'"
+                    Message = $"Workbook exported to '{normalizedPath}'",
+                    Warning = warning
                 };
             }
             catch (Exception ex)

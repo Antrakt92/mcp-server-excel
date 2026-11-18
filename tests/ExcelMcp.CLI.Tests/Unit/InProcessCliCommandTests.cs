@@ -1992,15 +1992,19 @@ public sealed class InProcessCliCommandTests
             telemetry);
     }
 
-    [Fact]
-    public async Task SessionTest_MalformedSuccessResponse_TracksInvalidResponse()
+    [Theory]
+    [InlineData("{")]
+    [InlineData("{}")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
+    [InlineData(null)]
+    public async Task SessionTest_MalformedSuccessResponse_TracksInvalidResponse(string? result)
     {
         var telemetry = new List<(string Command, bool Succeeded, string? ErrorCategory)>();
         var runtime = CreateRuntime(
             new RecordingClientFactory(new ServiceResponse
             {
                 Success = true,
-                Result = "{"
+                Result = result
             }),
             new StringWriter(),
             new StringWriter(),

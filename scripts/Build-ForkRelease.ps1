@@ -41,6 +41,20 @@ function Read-ForkGit {
     param([string[]]$GitArguments)
     (Invoke-PackageCommand $root 'git' $GitArguments -TimeoutSeconds 30).Trim()
 }
+function Get-ForkUpstreamVersion {
+    param([string]$Commit)
+
+    # The upstream release workflow updates this checked-in manifest with its other version metadata.
+    $manifest = Read-ForkGit -GitArguments @('show', "${Commit}:src/ExcelMcp.McpServer/.mcp/server.json") |
+        ConvertFrom-Json -AsHashtable
+    if ($manifest -isnot [Collections.IDictionary] -or
+        $manifest['name'] -cne 'io.github.sbroenne/mcp-server-excel' -or
+        $manifest['version'] -isnot [string]) {
+        throw 'Expected the upstream MCP Registry manifest with a version.'
+    }
+
+    Get-PackageVersion $manifest['version']
+}
 $commit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')
 $tag = "v$Version"
 $existingTag = Read-ForkGit -GitArguments @('tag', '--list', $tag)
@@ -62,7 +76,7 @@ $expectedSdk = (Read-PackageJson (Join-Path $root 'global.json')).sdk.version
 if ($sdk -cne $expectedSdk) { throw "Use the pinned SDK $expectedSdk; selected SDK is $sdk." }
 if ($root.IndexOfAny([char[]]@(',', ';')) -ge 0) { throw 'The source path contains characters that cannot be mapped safely by this release builder.' }
 $repository = 'https://github.com/Antrakt92/mcp-server-excel'
-$upstreamVersion = '2.6.12'
+$upstreamVersion = Get-ForkUpstreamVersion $commit
 
 function Assert-ForkSourceUnchanged {
     $currentCommit = Read-ForkGit -GitArguments @('rev-parse', 'HEAD')

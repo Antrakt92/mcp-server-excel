@@ -448,33 +448,22 @@ internal sealed class SessionTestCommand : AsyncCommand<SessionTestCommand.Setti
             return CliErrorOutput.WriteServiceError(response);
         }
 
-        if (string.IsNullOrWhiteSpace(response.Result))
-        {
-            CliTelemetry.RecordFinalFailure("InvalidResponse");
-            return CliErrorOutput.WriteError("Service returned an invalid file test response.");
-        }
-
-        FileValidationInfo? result;
+        ResultJson result;
         try
         {
-            result = ServiceProtocol.Deserialize<FileValidationInfo>(response.Result);
+            result = CliResultOutput.Read(response, request.Command);
         }
         catch (JsonException)
         {
             CliTelemetry.RecordFinalFailure("InvalidResponse");
             throw;
         }
-        if (result == null)
-        {
-            CliTelemetry.RecordFinalFailure("InvalidResponse");
-            return CliErrorOutput.WriteError("Service returned an invalid file test response.");
-        }
-
-        if (!result.CanOpen)
+        if (result.Data is JsonObject data && data["canOpen"] is JsonValue canOpen &&
+            canOpen.TryGetValue<bool>(out var openable) && !openable)
         {
             CliTelemetry.RecordExpectedNegative();
         }
-        return CliResultOutput.Write(response, request.Command);
+        return CliResultOutput.Write(result, request.Command);
     }
 
     internal sealed class Settings : CommandSettings

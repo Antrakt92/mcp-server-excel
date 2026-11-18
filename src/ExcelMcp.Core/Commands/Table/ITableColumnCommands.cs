@@ -93,7 +93,7 @@ public interface ITableColumnCommands
     /// Gets structured reference information for a table region or column
     /// </summary>
     /// <param name="tableName">Name of the Excel table</param>
-    /// <param name="region">Table region: 'Data', 'Headers', 'Totals', or 'All'</param>
+    /// <param name="region">Table region: 'Data', 'Headers', 'Totals', 'All', or 'ThisRow'. The requested region must exist in Excel.</param>
     /// <param name="columnName">Optional column name for column-specific reference</param>
     [ServiceAction("get-structured-reference")]
     TableStructuredReferenceResult GetStructuredReference(IExcelBatch batch, string tableName, [FromString] TableRegion region, string? columnName = null);

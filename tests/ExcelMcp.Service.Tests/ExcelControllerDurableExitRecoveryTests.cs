@@ -84,7 +84,8 @@ public sealed partial class ExcelControllerTests
             };
             // Model a durable newer record not delivered over RPC before the worker exits.
             var path = Path.Combine(directory, registration.PipeName + ".json");
-            File.WriteAllText(path, JsonSerializer.Serialize(recorded, ServiceProtocol.JsonOptions));
+            string recordJson = JsonSerializer.Serialize(recorded, ServiceProtocol.JsonOptions);
+            File.WriteAllText(path, recordJson);
             Assert.Equal(scenario == "confirmed-forged-excel", recorded.ReleaseConfirmed);
             var ownershipEvents = new List<string>();
             controller.ExcelProcessObserved += _ => ownershipEvents.Add("observed");
@@ -100,6 +101,16 @@ public sealed partial class ExcelControllerTests
                 Assert.Empty(ownershipEvents);
                 typeof(ExcelController).GetMethod("RetireExitedWorker", NativeObservationHidden)!
                     .Invoke(controller, [registration, false]);
+                if (scenario == "pipe")
+                {
+                    Assert.True(workers.TryGetValue(registration.PipeName, out var retained));
+                    Assert.Same(worker, retained);
+                    Assert.Equal(registration, worker.Registration);
+                    Assert.Contains("ownership is unconfirmed", worker.StatusError, StringComparison.Ordinal);
+                    Assert.Equal(recordJson, File.ReadAllText(path));
+                    Assert.Empty(ownershipEvents);
+                    return;
+                }
                 Assert.False(workers.ContainsKey(registration.PipeName));
                 registry.Remove(registration.PipeName);
 

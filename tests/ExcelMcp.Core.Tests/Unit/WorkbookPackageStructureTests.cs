@@ -151,6 +151,23 @@ public sealed class WorkbookPackageStructureTests : IDisposable
     }
 
     [Fact]
+    public void CompareStructure_SameNameWithDifferentDefinitionsMatchesOnlyTheExactDefinition()
+    {
+        const string matching = "<xf applyAlignment=\"1\"/>";
+        const string changed = "<xf applyFont=\"1\"/>";
+        const string other = "<xf applyBorder=\"1\"/>";
+        const string names = "<cellStyle name=\"Repeated\" xfId=\"0\"/><cellStyle name=\"Repeated\" xfId=\"1\"/>";
+        string before = Workbook(styles: Styles(matching + changed, names));
+        string after = Workbook(styles: Styles(other + matching, names));
+
+        var structure = WorkbookPackageComparison.Compare(before, after, null, default, includeStructure: true).Structure!;
+
+        Assert.Collection(structure.ParentStyleMappings,
+            mapping => AssertMapping(mapping, "Repeated", 0, 1, "matched", [1]),
+            mapping => AssertMapping(mapping, "Repeated", 1, null, "definition-changed", []));
+    }
+
+    [Fact]
     public void CompareStructure_ReferencedFontContentChangesInvalidateOtherwiseIdenticalParentStyle()
     {
         const string parents = "<xf fontId=\"0\"/>";

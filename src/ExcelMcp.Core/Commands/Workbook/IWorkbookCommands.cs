@@ -250,7 +250,7 @@ public interface IWorkbookCommands
     /// <param name="ignorePrintAreas">Export without restricting output to configured print areas</param>
     /// <param name="fromPage">First page to export, 1-based; omit to start at the beginning</param>
     /// <param name="toPage">Last page to export, inclusive; omit to export through the end</param>
-    /// <param name="openAfterPublish">Open the exported file in its associated viewer</param>
+    /// <param name="openAfterPublish">Open the exported file in its associated viewer. A viewer launch failure is reported as a warning after a successful export.</param>
     /// <param name="overwrite">Whether an existing output file may be replaced</param>
     [ServiceAction("export-fixed-format")]
     OperationResult ExportFixedFormat(

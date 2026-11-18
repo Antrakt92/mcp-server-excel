@@ -878,7 +878,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             {
                 var enumType = parameterInfo.EnumTypeName ?? parameterInfo.TypeName.TrimEnd('?');
                 sb.AppendLine(
-                    $"                {p.Name}: !string.IsNullOrEmpty(settings.{StringHelper.ToPascalCase(p.Name)}) ? ({enumType}?)ServiceRegistry.ParseEnumValue<{enumType}>(settings.{StringHelper.ToPascalCase(p.Name)}, default, \"{p.Name}\"{BuildEnumAliasArguments(parameterInfo)}) : null{comma}");
+                    $"                {p.Name}: settings.{StringHelper.ToPascalCase(p.Name)} is not null ? ({enumType}?)ServiceRegistry.ParseEnumValue<{enumType}>(settings.{StringHelper.ToPascalCase(p.Name)}, default, \"{p.Name}\"{BuildEnumAliasArguments(parameterInfo)}) : null{comma}");
             }
             else if (IsNestedCollectionType(p.TypeName))
             {
@@ -1182,7 +1182,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
 
         if (parameter.TypeName.EndsWith("?"))
         {
-            sb.AppendLine($"{indent}if (!string.IsNullOrEmpty({valueExpression}))");
+            sb.AppendLine($"{indent}if ({valueExpression} is not null)");
             sb.AppendLine($"{indent}    _ = {parseCall};");
         }
         else
@@ -1779,7 +1779,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
         sb.AppendLine("        string parameterName,");
         sb.AppendLine("        params (string Alias, T Value)[] aliases) where T : struct, System.Enum");
         sb.AppendLine("    {");
-        sb.AppendLine("        if (string.IsNullOrEmpty(value)) return defaultValue;");
+        sb.AppendLine("        if (value is null) return defaultValue;");
         sb.AppendLine("        var cleaned = value.Replace(\"-\", \"\").Replace(\"_\", \"\");");
         sb.AppendLine("        foreach (var enumName in System.Enum.GetNames<T>())");
         sb.AppendLine("        {");
@@ -2009,7 +2009,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
 
             if (isNullableEnum)
             {
-                sb.AppendLine($"                    var {p.Name} = !string.IsNullOrEmpty(args.{pascalProp}) ? ({enumType}?)ParseEnumValue<{enumType}>(args.{pascalProp}, default, \"{propName}\"{BuildEnumAliasArguments(p)}) : null;");
+                sb.AppendLine($"                    var {p.Name} = args.{pascalProp} is not null ? ({enumType}?)ParseEnumValue<{enumType}>(args.{pascalProp}, default, \"{propName}\"{BuildEnumAliasArguments(p)}) : null;");
             }
             else
             {

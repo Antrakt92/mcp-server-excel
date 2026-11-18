@@ -511,7 +511,7 @@ public class McpToolGenerator : IIncrementalGenerator
                     var localVarName = $"_{ep.Name}Parsed";
                     var aliasArguments = BuildEnumAliasArguments(pInfo);
                     var preProcessingCode =
-                        $"var {localVarName} = !string.IsNullOrEmpty({snakeName}) ? ({pInfo.EnumTypeName}?)ServiceRegistry.ParseEnumValue<{pInfo.EnumTypeName}>({snakeName}, default, \"{ep.Name}\"{aliasArguments}) : null;";
+                        $"var {localVarName} = {snakeName} is not null ? ({pInfo.EnumTypeName}?)ServiceRegistry.ParseEnumValue<{pInfo.EnumTypeName}>({snakeName}, default, \"{ep.Name}\"{aliasArguments}) : null;";
 
                     result.Add(new McpParameter(
                         name: snakeName,

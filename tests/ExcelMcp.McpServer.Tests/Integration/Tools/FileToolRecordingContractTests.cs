@@ -274,8 +274,10 @@ public sealed class FileToolRecordingContractTests(
         Assert.Equal(openedPath, result.RootElement.GetProperty("filePath").GetString());
     }
 
-    [Fact]
-    public async Task Test_DispatchesTimeoutToReadOnlyValidationOpen()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_DispatchesTimeoutAndPreservesValidationExitStatus(bool excelProcessExited)
     {
         var path = Path.Join(
             Path.GetTempPath(),
@@ -289,7 +291,8 @@ public sealed class FileToolRecordingContractTests(
                 filePath = path,
                 exists = true,
                 isValid = true,
-                canOpen = true
+                canOpen = true,
+                excelProcessExited
             }, ServiceProtocol.JsonOptions)
         };
         var expectedArgs = JsonSerializer.Serialize(new
@@ -314,6 +317,34 @@ public sealed class FileToolRecordingContractTests(
         Assert.Null(call.Request.SessionId);
         using var result = JsonDocument.Parse(call.JsonResult);
         Assert.True(result.RootElement.GetProperty("canOpen").GetBoolean());
+        Assert.Equal(excelProcessExited, result.RootElement.GetProperty("excelProcessExited").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("{}")]
+    [InlineData("""{"canOpen":"false"}""")]
+    [InlineData("{")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
+    public async Task Test_MalformedReply_ReturnsProtocolError(string? payload)
+    {
+        var path = Path.Join(Path.GetTempPath(), $"file-test-recording-{Guid.NewGuid():N}.xlsx");
+        var (result, requests) = await _fixture.CallSequenceAsync(
+            "file_read",
+            new Dictionary<string, object?>
+            {
+                ["action"] = "test",
+                ["file_path"] = path,
+                ["timeout_seconds"] = 45
+            },
+            new ServiceResponse { Success = true, Result = payload });
+
+        RecordingToolTest.AssertRequest(Assert.Single(requests), "session.test", null,
+            JsonSerializer.Serialize(new { filePath = path, timeoutSeconds = 45 }, ServiceProtocol.JsonOptions));
+        Assert.True(result.IsError);
+        var response = Assert.IsType<JsonElement>(result.StructuredContent);
+        Assert.False(response.GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", response.GetProperty("errorCategory").GetString());
     }
 
     [Theory]

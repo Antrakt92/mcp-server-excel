@@ -48,6 +48,30 @@ public sealed class ResultJsonTests
     }
 
     [Fact]
+    public void FixedFormatExport_KeepsPublishedPathWhenViewerLaunchWarns()
+    {
+        const string command = "workbook.export-fixed-format";
+        const string destination = @"C:\exports\Report.pdf";
+        var output = new OperationResult
+        {
+            Success = true,
+            Action = "export-fixed-format",
+            FilePath = destination,
+            Warning = new OperationWarning("ViewerLaunchFailed", "Could not open the viewer.", destination)
+        };
+        var result = ResultJson.Read(JsonSerializer.Serialize(output, JsonSerializerOptions.Web), command);
+        using var cli = JsonDocument.Parse(result.ToCliJson(command, 1));
+        using var mcp = JsonDocument.Parse(result.ToToolJson());
+        foreach (var document in new[] { cli, mcp })
+        {
+            Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+            var warning = Assert.Single(document.RootElement.GetProperty("warnings").EnumerateArray());
+            Assert.Equal("ViewerLaunchFailed", warning.GetProperty("code").GetString());
+            Assert.Equal(destination, warning.GetProperty("outputPath").GetString());
+        }
+    }
+
+    [Fact]
     public void DictionaryResult_KeepsZeroAndNullEntries()
     {
         var result = ResultJson.Read(
@@ -166,6 +190,39 @@ public sealed class ResultJsonTests
         Assert.True(result.Data["isValid"]!.GetValue<bool>());
         Assert.True(result.Data["willOpenReadOnly"]!.GetValue<bool>());
         Assert.Equal("Read-only access", result.Data["message"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("""{"canOpen":null}""")]
+    [InlineData("""{"canOpen":"false"}""")]
+    [InlineData("""{"canOpen":1}""")]
+    [InlineData("[]")]
+    [InlineData("{")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
+    public void FileTest_SuccessfulTransportWithoutBooleanOpenability_IsInvalidResponse(string? json)
+    {
+        var result = ResultJson.Read(json, "session.test");
+
+        Assert.False(result.Success);
+        Assert.Equal("InvalidResponse", result.Error!["category"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void FileTest_ServiceFailureRetainsRecoveryStateWithMalformedResult()
+    {
+        var result = ResultJson.Read("{", "session.test", delivered: false, message: "Still closing",
+            category: "Timeout", sessionId: "retained", partialState: """{"outcome":"unknown"}""");
+
+        Assert.False(result.Success);
+        Assert.True(result.CompletionUnconfirmed);
+        Assert.Equal("Timeout", result.Error!["category"]!.GetValue<string>());
+        Assert.Equal("retained", result.Error["sessionId"]!.GetValue<string>());
+        Assert.Equal("Still closing", result.Error["message"]!.GetValue<string>());
+        Assert.Equal("unknown", result.PartialState!["outcome"]!.GetValue<string>());
     }
 
     [Fact]

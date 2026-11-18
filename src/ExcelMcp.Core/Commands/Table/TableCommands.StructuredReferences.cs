@@ -146,49 +146,44 @@ public partial class TableCommands
             TableRegion.Headers => table.HeaderRowRange,
             TableRegion.Totals => table.TotalsRowRange,
             TableRegion.ThisRow => table.Range, // Full range for ThisRow context
-            _ => table.Range
+            _ => throw new ArgumentOutOfRangeException(nameof(region), region, "Unknown table region.")
         };
-
-        // If column specified, get intersection with column
-        if (!string.IsNullOrEmpty(columnName))
+        if (regionRange is null)
         {
-            Excel.ListColumns? columns = null;
-            Excel.ListColumn? column = null;
-            Excel.Range? columnRange = null;
-            Excel.Range? intersection = null;
-            try
+            string reason = region switch
             {
-                columns = table.ListColumns;
-                column = columns[columnName];
-                columnRange = column.Range;
-
-                // Intersect with region range
-                Excel.Application? app = null;
-                try
-                {
-                    app = table.Application;
-                    intersection = app.Intersect(regionRange, columnRange);
-                    Excel.Range result = intersection;
-                    intersection = null;
-                    return result;
-                }
-                finally
-                {
-                    ComUtilities.Release(ref app);
-                }
-            }
-            finally
-            {
-                ComUtilities.Release(ref intersection);
-                ComUtilities.Release(ref columnRange);
-                ComUtilities.Release(ref regionRange);
-                ComUtilities.Release(ref column);
-                ComUtilities.Release(ref columns);
-            }
+                TableRegion.Data => "has no data rows",
+                TableRegion.Headers => "has no header row",
+                TableRegion.Totals => "does not show a totals row",
+                _ => $"has no {region} range"
+            };
+            throw new InvalidOperationException($"Table '{table.Name}' {reason}.");
         }
 
-        Excel.Range transferredRange = regionRange!;
-        regionRange = null;
-        return transferredRange;
+        if (string.IsNullOrEmpty(columnName))
+            return regionRange;
+
+        Excel.ListColumns? columns = null;
+        Excel.ListColumn? column = null;
+        Excel.Range? columnRange = null;
+        Excel.Application? app = null;
+        try
+        {
+            columns = table.ListColumns;
+            column = columns[columnName];
+            columnRange = column.Range;
+            app = table.Application;
+            return app.Intersect(regionRange, columnRange)
+                ?? throw new InvalidOperationException(
+                    $"Table column '{columnName}' has no cells in the {region} region.");
+        }
+        finally
+        {
+            ComUtilities.Release(ref app);
+            ComUtilities.Release(ref columnRange);
+            ComUtilities.Release(ref column);
+            ComUtilities.Release(ref columns);
+            ComUtilities.Release(ref regionRange);
+        }
     }
 }

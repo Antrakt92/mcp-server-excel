@@ -364,11 +364,77 @@ public sealed class ExcelWorkerBoundaryTests
             registry.BeforeRecordReadForTests = File.Delete;
             Assert.Empty(registry.Read());
             registry.BeforeRecordReadForTests = null;
-            File.WriteAllText(Path.Combine(directory, record.PipeName + ".json"), "{");
-            Assert.Throws<System.Text.Json.JsonException>(() => registry.Read());
+            Assert.Null(registry.Read(record.PipeName));
         }
         finally
         {
+            registry.Remove(record.PipeName);
+            Directory.Delete(directory);
+        }
+    }
+
+    [Theory]
+    [InlineData("syntax")]
+    [InlineData("size")]
+    [InlineData("name")]
+    [InlineData("identity")]
+    [InlineData("worker-pid")]
+    [InlineData("controller-start")]
+    [InlineData("excel-pid")]
+    [InlineData("released-start")]
+    public void Registry_UnconfirmedRecordNamesItsFileAndPreservesIt(string defect)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"excelmcp-workers-{Guid.NewGuid():N}");
+        var registry = new WorkerRegistry(directory);
+        var current = WorkerProcess.Current;
+        var record = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}",
+            current, current, "generation", WorkerRegistry.Build, null);
+        var filenamePipe = defect == "name" ? $"excelmcp-worker-{Guid.NewGuid():N}" : record.PipeName;
+        string basename = filenamePipe + ".json";
+        string path = Path.Combine(directory, basename);
+        try
+        {
+            switch (defect)
+            {
+                case "syntax":
+                    File.WriteAllText(path, "{");
+                    break;
+                case "size":
+                    File.WriteAllText(path, new string(' ', 65537));
+                    break;
+                case "name":
+                    registry.Write(record);
+                    File.Move(Path.Combine(directory, record.PipeName + ".json"), path);
+                    break;
+                case "identity":
+                    registry.Write(record with { Worker = null! });
+                    break;
+                case "worker-pid":
+                    registry.Write(record with { Worker = current with { ProcessId = 0 } });
+                    break;
+                case "controller-start":
+                    registry.Write(record with { Controller = current with { StartedAtUtcFileTime = 0 } });
+                    break;
+                case "excel-pid":
+                    registry.Write(record with { Excel = new ExcelProcessIdentity(0, current.StartedAtUtcFileTime) });
+                    break;
+                case "released-start":
+                    registry.Write(record with { ReleasedExcel = new ExcelProcessIdentity(current.ProcessId, 0) });
+                    break;
+            }
+
+            byte[] before = File.ReadAllBytes(path);
+            var error = Assert.Throws<InvalidDataException>(() => registry.Read());
+            Assert.Contains(basename, error.Message, StringComparison.Ordinal);
+            Assert.Contains("ownership is unconfirmed", error.Message, StringComparison.Ordinal);
+            Assert.Contains("record was left untouched", error.Message, StringComparison.Ordinal);
+            var directError = Assert.Throws<InvalidDataException>(() => registry.Read(filenamePipe));
+            Assert.Equal(error.Message, directError.Message);
+            Assert.Equal(before, File.ReadAllBytes(path));
+        }
+        finally
+        {
+            File.Delete(path);
             registry.Remove(record.PipeName);
             Directory.Delete(directory);
         }

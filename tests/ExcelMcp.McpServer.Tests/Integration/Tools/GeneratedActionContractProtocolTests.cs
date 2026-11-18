@@ -156,6 +156,7 @@ public sealed class GeneratedActionContractProtocolTests : McpIntegrationTestBas
 
 
     [Theory]
+    [InlineData("powerquery", "create", "load_destination", "loadDestination", "")]
     [InlineData("powerquery", "load-to", "load_destination", "loadDestination", "not-a-destination")]
     [InlineData("powerquery", "load-to", "load_destination", "loadDestination", "work_sheet")]
     [InlineData("powerquery", "load-to", "load_destination", "loadDestination", "work-sheet")]
@@ -177,6 +178,8 @@ public sealed class GeneratedActionContractProtocolTests : McpIntegrationTestBas
         if (toolName == "powerquery")
         {
             arguments["query_name"] = "Probe";
+            if (action == "create")
+                arguments["m_code"] = "let Source = 1 in Source";
         }
         else
         {

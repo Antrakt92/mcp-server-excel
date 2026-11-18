@@ -751,7 +751,7 @@ public sealed class ExcelMcpService : IDisposable
             {
                 try
                 {
-                    _sessionManager.ValidateWorkbookOpen(result.FilePath, timeout);
+                    result.ExcelProcessExited = _sessionManager.ValidateWorkbookOpenAndReportExit(result.FilePath, timeout);
                     result.IsValid = true;
                     result.CanOpen = true;
                 }

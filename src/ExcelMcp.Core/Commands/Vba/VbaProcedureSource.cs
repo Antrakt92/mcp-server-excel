@@ -89,12 +89,6 @@ internal static class VbaProcedureSource
         }
     }
 
-    public static VbaProcedureDeclaration ParseProcedureHeader(string sourceLine)
-    {
-        return TryParseProcedureHeader(sourceLine)
-            ?? throw new ArgumentException("VBA procedure declaration could not be read.", nameof(sourceLine));
-    }
-
     public static VbaProcedureDeclaration? TryParseProcedureHeader(string sourceLine)
     {
         Match header = ProcedureHeader.Match(RemoveComment(sourceLine));
