@@ -317,25 +317,34 @@ internal static class WorkbookPackageStructure
         CancellationToken cancellationToken)
     {
         var result = new List<WorkbookPackageParentStyleMapping>();
-        var afterByName = after.ToLookup(style => style.Name, StringComparer.Ordinal);
+        var afterByDefinition = after.ToLookup(style => (style.Name, style.DefinitionSha256));
+        var afterNames = after.Select(style => style.Name).ToHashSet(StringComparer.Ordinal);
         var beforeByDefinition = before.ToLookup(style => (style.Name, style.DefinitionSha256));
         int candidateCount = 0;
         foreach (var style in before)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sameName = afterByName[style.Name].ToArray();
-            var matches = sameName.Where(candidate => candidate.DefinitionSha256 == style.DefinitionSha256).ToArray();
-            candidateCount += matches.Length;
+            var definition = (style.Name, style.DefinitionSha256);
+            var matches = afterByDefinition[definition];
+            int matchCount = matches.Count();
+            candidateCount += matchCount;
             if (candidateCount > MaxRecords)
                 throw new InvalidDataException("The package parent-style candidates exceed the report record limit.");
-            bool ambiguous = matches.Length > 1 || beforeByDefinition[(style.Name, style.DefinitionSha256)].Skip(1).Any();
+            bool ambiguous = matchCount > 1 || beforeByDefinition[definition].Count() > 1;
+            int singleAfterId = matchCount == 1 ? matches.First().XfId : default;
+            int[] candidateAfterIds = matchCount switch
+            {
+                0 => [],
+                1 => [singleAfterId],
+                _ => matches.Select(candidate => candidate.XfId).Distinct().Order().ToArray()
+            };
             result.Add(new WorkbookPackageParentStyleMapping
             {
                 Name = style.Name,
                 BeforeXfId = style.XfId,
-                AfterXfId = !ambiguous && matches.Length == 1 ? matches[0].XfId : null,
-                Status = ambiguous ? "ambiguous" : matches.Length == 1 ? "matched" : sameName.Length == 0 ? "removed" : "definition-changed",
-                CandidateAfterXfIds = matches.Select(candidate => candidate.XfId).Distinct().Order().ToArray()
+                AfterXfId = !ambiguous && matchCount == 1 ? singleAfterId : null,
+                Status = ambiguous ? "ambiguous" : matchCount == 1 ? "matched" : afterNames.Contains(style.Name) ? "definition-changed" : "removed",
+                CandidateAfterXfIds = candidateAfterIds
             });
         }
         var beforeNames = before.Select(style => style.Name).ToHashSet(StringComparer.Ordinal);
