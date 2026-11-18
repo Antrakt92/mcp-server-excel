@@ -222,6 +222,47 @@ public sealed partial class PersistentServiceTablePreflightTests
         Assert.All(data.Data, row => Assert.Null(row[4]));
     }
 
+    [Theory]
+    [InlineData("Product", 0, "already exists")]
+    [InlineData("product", 0, "already exists")]
+    [InlineData(null, 256, "cannot exceed 255 characters")]
+    public async Task AddColumn_InvalidHeaderPreservesTableAndAdjacentCells(
+        string? name, int length, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        const string sheetName = "Sales";
+        const string tableName = "SalesTable";
+        const string rangeAddress = "A1:F5";
+        RequireSuccess(_rangeCommands.SetValues(batch, sheetName, "F1:F2", [["Neighbor"], ["Sentinel"]]));
+        var workbookRange = new { sheetName, rangeAddress };
+        var table = new { tableName };
+        string? cellsBefore = _fixture.Send("range.get-values", workbookRange).Result;
+        string? tableBefore = _fixture.Send("table.read", table).Result;
+
+        var rejected = await _fixture.SendForFailureAsync("tablecolumn.add-column", new
+        {
+            tableName,
+            columnName = name ?? new string('H', length),
+            position = 1
+        });
+
+        Assert.Contains(expectedError, rejected.ErrorMessage);
+        Assert.Equal(cellsBefore, _fixture.Send("range.get-values", workbookRange).Result);
+        Assert.Equal(tableBefore, _fixture.Send("table.read", table).Result);
+    }
+
+    [Fact]
+    public void AddColumn_AcceptsMaximumHeaderLength()
+    {
+        var batch = _fixture.BatchToken;
+        string columnName = new('H', 255);
+
+        RequireSuccess(_tableCommands.AddColumn(batch, "SalesTable", columnName));
+
+        var table = RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!;
+        Assert.Equal(["Region", "Product", "Amount", "Date", columnName], table.Columns);
+    }
+
     /// <summary>
     /// Tests renaming a column in a table.
     /// LLM use case: "rename this table column"
