@@ -339,6 +339,35 @@ public sealed partial class PersistentServiceTablePreflightTests
         Assert.Equal("SalesTable[[Amount]]", result.StructuredReference);
     }
 
+    [Theory]
+    [InlineData("Totals", null, "does not show a totals row")]
+    [InlineData("Totals", "Amount", "does not show a totals row")]
+    [InlineData("Data", null, "has no data rows")]
+    [InlineData("Data", "Amount", "has no data rows")]
+    public async Task GetStructuredReference_UnavailableRegion_ExplainsMissingRange(
+        string region, string? columnName, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        if (region == "Data")
+        {
+            RequireSuccess(_rangeCommands.DeleteRows(batch, "Sales", "2:5"));
+        }
+
+        var before = RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!;
+        Assert.False(before.ShowTotals);
+        Assert.Equal(region == "Data" ? 0 : 4, before.RowCount);
+
+        var result = await _fixture.SendForFailureAsync("tablecolumn.get-structured-reference",
+            new { tableName = "SalesTable", region, columnName });
+
+        Assert.False(result.Success);
+        Assert.Contains(expectedError, result.ErrorMessage, StringComparison.Ordinal);
+        var after = RequireSuccess(_tableCommands.Read(batch, "SalesTable")).Table!;
+        Assert.Equal(before.RowCount, after.RowCount);
+        Assert.Equal(before.ShowTotals, after.ShowTotals);
+        Assert.Equal(before.Range, after.Range);
+    }
+
     [Fact]
     public void GetStructuredReference_WithSpecialHeaderCharacters_ReturnsUsableFormulaReference()
     {
