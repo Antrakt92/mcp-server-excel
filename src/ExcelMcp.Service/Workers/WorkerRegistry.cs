@@ -94,8 +94,22 @@ internal sealed class WorkerRegistry
                 var registration = JsonSerializer.Deserialize<WorkerRegistration>(
                     reader.ReadToEnd(), ServiceProtocol.JsonOptions)
                     ?? throw new InvalidDataException("An Excel worker record is empty.");
-                _ = GetPath(registration.PipeName);
+                var expectedPath = GetPath(registration.PipeName);
+                if (!Path.GetFileName(path).Equals(Path.GetFileName(expectedPath), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The record filename does not match its registered worker pipe.");
+                if (registration.Worker is not { ProcessId: > 0, StartedAtUtcFileTime: > 0 }
+                    || registration.Controller is not { ProcessId: > 0, StartedAtUtcFileTime: > 0 }
+                    || registration.Excel is { ProcessId: <= 0 } or { StartedAtUtcFileTime: <= 0 }
+                    || registration.ReleasedExcel is { ProcessId: <= 0 } or { StartedAtUtcFileTime: <= 0 })
+                    throw new InvalidDataException("The record contains a missing or invalid process identity.");
                 return registration;
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidDataException)
+            {
+                var reason = ex is JsonException ? "The record contains invalid JSON." : ex.Message;
+                throw new InvalidDataException(
+                    $"Excel worker ownership is unconfirmed for '{Path.GetFileName(path)}'. {reason} " +
+                    "The record was left untouched. Inspect the retained Excel worker before retrying.", ex);
             }
             catch (FileNotFoundException)
             {
@@ -112,7 +126,7 @@ internal sealed class WorkerRegistry
 
     private string GetPath(string pipeName)
     {
-        if (!pipeName.StartsWith("excelmcp-worker-", StringComparison.Ordinal)
+        if (string.IsNullOrEmpty(pipeName) || !pipeName.StartsWith("excelmcp-worker-", StringComparison.Ordinal)
             || !Guid.TryParseExact(pipeName["excelmcp-worker-".Length..], "N", out _))
             throw new InvalidDataException("Invalid Excel worker record name.");
         return Path.Combine(_directory, pipeName + ".json");
