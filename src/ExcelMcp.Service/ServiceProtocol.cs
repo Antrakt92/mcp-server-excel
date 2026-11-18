@@ -6,7 +6,6 @@ using Sbroenne.ExcelMcp.Generated;
 
 // Re-export shared types from ComInterop for CLI internal use
 using SharedProtocol = Sbroenne.ExcelMcp.ComInterop.ServiceClient.ServiceProtocol;
-using SharedRequest = Sbroenne.ExcelMcp.ComInterop.ServiceClient.ServiceRequest;
 using SharedResponse = Sbroenne.ExcelMcp.ComInterop.ServiceClient.ServiceResponse;
 
 namespace Sbroenne.ExcelMcp.Service;
@@ -51,18 +50,6 @@ public sealed class ServiceRequest
     internal CancellationToken CallerCancellation { get; set; }
     internal Task? LateNativeCompletion { get; set; }
     internal Task<ServiceResponse?>? LateWorkerResponse { get; set; }
-
-    /// <summary>
-    /// Converts to shared request type for serialization.
-    /// </summary>
-    public SharedRequest ToShared() => new()
-    {
-        Command = Command,
-        SessionId = SessionId,
-        Args = Args,
-        Source = Source ?? "cli",
-        OperationId = OperationId
-    };
 }
 
 /// <summary>
