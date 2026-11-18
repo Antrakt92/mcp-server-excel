@@ -33,7 +33,14 @@ public partial class RangeCommands
         var xlType = ParseValidationType(validationType);
         var xlOperator = ParseValidationOperator(validationOperator ?? "between");
         var xlAlertStyle = ParseErrorStyle(errorStyle ?? "stop");
-        if (formula1 is { Length: > 255 } && xlType != (int)Excel.XlDVType.xlValidateInputOnly)
+        if (xlType != Excel.XlDVType.xlValidateInputOnly && string.IsNullOrEmpty(formula1))
+        {
+            if (xlType is Excel.XlDVType.xlValidateList or Excel.XlDVType.xlValidateCustom)
+                throw new ArgumentException("List and custom validation require the first formula.", nameof(formula1));
+            if (string.IsNullOrEmpty(formula2))
+                throw new ArgumentException("Specify at least one formula or value for this validation rule.", nameof(formula1));
+        }
+        if (formula1 is { Length: > 255 } && xlType != Excel.XlDVType.xlValidateInputOnly)
         {
             throw new ArgumentException(
                 "The first validation formula can contain at most 255 characters. For a longer dropdown list, reference a worksheet range or defined name.",
@@ -63,7 +70,7 @@ public partial class RangeCommands
 
                 // Add validation
                 validation.Add(
-                    Type: (Excel.XlDVType)xlType,
+                    Type: xlType,
                     AlertStyle: xlAlertStyle,
                     Operator: xlOperator,
                     Formula1: formula1 ?? "",
@@ -104,18 +111,18 @@ public partial class RangeCommands
         });
     }
 
-    private static int ParseValidationType(string type)
+    private static Excel.XlDVType ParseValidationType(string type)
     {
         return type.ToLowerInvariant() switch
         {
-            "any" => 0, // xlValidateInputOnly
-            "whole" => 1, // xlValidateWholeNumber
-            "decimal" => 2, // xlValidateDecimal
-            "list" => 3, // xlValidateList
-            "date" => 4, // xlValidateDate
-            "time" => 5, // xlValidateTime
-            "textlength" => 6, // xlValidateTextLength
-            "custom" => 7, // xlValidateCustom
+            "any" => Excel.XlDVType.xlValidateInputOnly,
+            "whole" => Excel.XlDVType.xlValidateWholeNumber,
+            "decimal" => Excel.XlDVType.xlValidateDecimal,
+            "list" => Excel.XlDVType.xlValidateList,
+            "date" => Excel.XlDVType.xlValidateDate,
+            "time" => Excel.XlDVType.xlValidateTime,
+            "textlength" => Excel.XlDVType.xlValidateTextLength,
+            "custom" => Excel.XlDVType.xlValidateCustom,
             _ => throw new ArgumentException($"Invalid validation type: {type}")
         };
     }
