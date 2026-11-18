@@ -48,6 +48,30 @@ public sealed class ResultJsonTests
     }
 
     [Fact]
+    public void FixedFormatExport_KeepsPublishedPathWhenViewerLaunchWarns()
+    {
+        const string command = "workbook.export-fixed-format";
+        const string destination = @"C:\exports\Report.pdf";
+        var output = new OperationResult
+        {
+            Success = true,
+            Action = "export-fixed-format",
+            FilePath = destination,
+            Warning = new OperationWarning("ViewerLaunchFailed", "Could not open the viewer.", destination)
+        };
+        var result = ResultJson.Read(JsonSerializer.Serialize(output, JsonSerializerOptions.Web), command);
+        using var cli = JsonDocument.Parse(result.ToCliJson(command, 1));
+        using var mcp = JsonDocument.Parse(result.ToToolJson());
+        foreach (var document in new[] { cli, mcp })
+        {
+            Assert.True(document.RootElement.GetProperty("success").GetBoolean());
+            var warning = Assert.Single(document.RootElement.GetProperty("warnings").EnumerateArray());
+            Assert.Equal("ViewerLaunchFailed", warning.GetProperty("code").GetString());
+            Assert.Equal(destination, warning.GetProperty("outputPath").GetString());
+        }
+    }
+
+    [Fact]
     public void DictionaryResult_KeepsZeroAndNullEntries()
     {
         var result = ResultJson.Read(

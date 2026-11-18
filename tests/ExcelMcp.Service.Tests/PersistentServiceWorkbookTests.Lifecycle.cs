@@ -124,6 +124,41 @@ public sealed partial class PersistentServiceWorkbookTests
         }
     }
 
+    [Theory]
+    [InlineData("pdf")]
+    [InlineData("xps")]
+    public void ExportFixedFormat_ViewerFailureReportsPublishedOutput(string format)
+    {
+        FixedFormatExportPrerequisite.RequireUsableDefaultPrinter();
+        var targetPath = CreateOutputPath("WorkbookExportViewerFailure", format);
+        WriteCurrentWorkbookCell("Printable workbook content");
+        byte[]? publishedBytes = null;
+        WorkbookCommands.OpenExportedFileHookForTests = path =>
+        {
+            Assert.Equal(Path.GetFullPath(targetPath), path);
+            publishedBytes = File.ReadAllBytes(path);
+            throw new System.ComponentModel.Win32Exception(1155);
+        };
+        try
+        {
+            var response = _fixture.Send("workbook.export-fixed-format",
+                new { targetPath, formatType = format, openAfterPublish = true });
+            Assert.True(response.Success, response.ErrorMessage);
+            using var document = JsonDocument.Parse(response.Result!);
+            var result = document.RootElement;
+            Assert.True(result.GetProperty("success").GetBoolean());
+            var warning = result.GetProperty("warning");
+            Assert.Equal("ViewerLaunchFailed", warning.GetProperty("code").GetString());
+            Assert.Equal(Path.GetFullPath(targetPath), warning.GetProperty("outputPath").GetString());
+            Assert.NotEmpty(Assert.IsType<byte[]>(publishedBytes));
+            Assert.Equal(publishedBytes, File.ReadAllBytes(targetPath));
+        }
+        finally
+        {
+            WorkbookCommands.OpenExportedFileHookForTests = null;
+        }
+    }
+
     [Fact]
     public void SaveAs_InvalidFormatWithOverwrite_PreservesExistingDestination()
     {

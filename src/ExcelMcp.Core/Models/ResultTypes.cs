@@ -50,7 +50,20 @@ public class OperationResult : ResultBase
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Message { get; set; }
+
+    /// <summary>
+    /// A secondary problem that did not change the completed operation's result.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OperationWarning? Warning { get; set; }
 }
+
+/// <summary>A warning attached to a completed operation.</summary>
+/// <param name="Code">Machine-readable warning code.</param>
+/// <param name="Message">Description of the secondary problem.</param>
+/// <param name="OutputPath">Path of the output that was successfully published, if applicable.</param>
+public sealed record OperationWarning(string Code, string Message,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OutputPath = null);
 
 /// <summary>
 /// Result for rename operations across Core features
