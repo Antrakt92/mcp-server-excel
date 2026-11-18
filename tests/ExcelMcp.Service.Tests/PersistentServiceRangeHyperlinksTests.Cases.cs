@@ -139,6 +139,7 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
         Assert.True(before.Success, before.ErrorMessage);
         Assert.Equal("https://old.example.com/", Assert.Single(before.Hyperlinks).Address);
 
+        string tooltip = new('T', 255);
         var update = _commands.UpdateHyperlink(
             batch,
             sheetName,
@@ -146,7 +147,7 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
             url: "https://new.example.com/",
             subAddress: "section",
             displayText: "New",
-            tooltip: "Updated");
+            tooltip: tooltip);
         var get = _commands.GetHyperlink(batch, sheetName, "A1");
 
         Assert.True(update.Success, update.ErrorMessage);
@@ -155,7 +156,7 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
         Assert.Equal("https://new.example.com/", hyperlink.Address);
         Assert.Equal("section", hyperlink.SubAddress);
         Assert.Equal("New", hyperlink.DisplayText);
-        Assert.Equal("Updated", hyperlink.ScreenTip);
+        Assert.Equal(tooltip, hyperlink.ScreenTip);
         Assert.Equal("A1", hyperlink.CellAddress);
         var cells = _commands.GetValues(batch, sheetName, "A1:B1");
         Assert.True(cells.Success, cells.ErrorMessage);
@@ -183,6 +184,36 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
         Assert.Equal(string.Empty, hyperlink.Address);
         Assert.Equal("Jump", hyperlink.DisplayText);
         Assert.Equal("Go to B2", hyperlink.ScreenTip);
+    }
+
+    [Theory]
+    [InlineData("rangelink.add-hyperlink", "A2")]
+    [InlineData("rangelink.update-hyperlink", "A1")]
+    public async Task Hyperlink_OversizedTooltipPreservesLinksAndCells(string command, string cellAddress)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        Assert.True(_commands.AddHyperlink(batch, sheetName, "A1", "https://old.example.com/",
+            displayText: "Original", tooltip: "Original tooltip").Success);
+        const string rangeAddress = "A1:A2";
+        var sheet = new { sheetName };
+        var range = new { sheetName, rangeAddress };
+        string? linksBefore = _fixture.Send("rangelink.list-hyperlinks", sheet).Result;
+        string? cellsBefore = _fixture.Send("range.get-values", range).Result;
+
+        var rejected = await _fixture.SendForFailureAsync(command, new
+        {
+            sheetName,
+            cellAddress,
+            url = "https://new.example.com/",
+            displayText = "Rejected text",
+            tooltip = new string('T', 256)
+        });
+
+        Assert.Equal("InvalidInput", rejected.ErrorCategory);
+        Assert.Contains("cannot exceed 255 characters", rejected.ErrorMessage);
+        Assert.Equal(linksBefore, _fixture.Send("rangelink.list-hyperlinks", sheet).Result);
+        Assert.Equal(cellsBefore, _fixture.Send("range.get-values", range).Result);
     }
 
     [Fact]

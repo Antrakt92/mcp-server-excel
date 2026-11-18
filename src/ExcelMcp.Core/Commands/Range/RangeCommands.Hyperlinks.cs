@@ -11,6 +11,8 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 /// </summary>
 public partial class RangeCommands
 {
+    private const int MaxHyperlinkTooltipLength = 255;
+
     /// <inheritdoc />
     public OperationResult AddHyperlink(
         IExcelBatch batch,
@@ -21,6 +23,7 @@ public partial class RangeCommands
         string? tooltip = null,
         string? subAddress = null)
     {
+        ValidateHyperlinkTooltip(tooltip);
         var result = new OperationResult { FilePath = batch.WorkbookPath, Action = "add-hyperlink" };
 
         return batch.Execute((ctx, ct) =>
@@ -73,6 +76,7 @@ public partial class RangeCommands
         string? tooltip = null,
         string? subAddress = null)
     {
+        ValidateHyperlinkTooltip(tooltip);
         var result = new OperationResult { FilePath = batch.WorkbookPath, Action = "update-hyperlink" };
 
         return batch.Execute((ctx, ct) =>
@@ -319,6 +323,12 @@ public partial class RangeCommands
                 ComUtilities.Release(ref sheet);
             }
         });
+    }
+
+    private static void ValidateHyperlinkTooltip(string? tooltip)
+    {
+        if (tooltip?.Length > MaxHyperlinkTooltipLength)
+            throw new ArgumentOutOfRangeException(nameof(tooltip), $"Hyperlink tooltips cannot exceed {MaxHyperlinkTooltipLength} characters.");
     }
 
     private static string NormalizeHyperlinkAddress(string? url, string? subAddress)

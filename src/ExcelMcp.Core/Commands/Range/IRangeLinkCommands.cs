@@ -36,7 +36,7 @@ public interface IRangeLinkCommands
     /// <param name="cellAddress">Single cell address (e.g., 'A1')</param>
     /// <param name="url">Optional external URL or file path. Omit for an internal workbook link.</param>
     /// <param name="displayText">Text to display in the cell (optional, defaults to URL)</param>
-    /// <param name="tooltip">Tooltip text shown on hover (optional)</param>
+    /// <param name="tooltip">Optional tooltip text shown on hover, up to 255 characters.</param>
     /// <param name="subAddress">Optional internal workbook target such as "'Sheet2'!A1"</param>
     [ServiceAction("add-hyperlink")]
     OperationResult AddHyperlink(
@@ -56,7 +56,7 @@ public interface IRangeLinkCommands
     /// <param name="cellAddress">Single cell address containing a hyperlink</param>
     /// <param name="url">Optional new external URL or file path</param>
     /// <param name="displayText">Optional new display text</param>
-    /// <param name="tooltip">Optional new tooltip; empty string clears it</param>
+    /// <param name="tooltip">Optional new tooltip, up to 255 characters. Pass an empty string to clear it.</param>
     /// <param name="subAddress">Optional new workbook sub-address</param>
     [ServiceAction("update-hyperlink")]
     OperationResult UpdateHyperlink(
