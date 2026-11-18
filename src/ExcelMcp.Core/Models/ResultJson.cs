@@ -63,11 +63,17 @@ public sealed class ResultJson
         string? partialState = null,
         ResultContract? contract = null)
     {
+        bool fileTest = command.Equals("session.test", StringComparison.OrdinalIgnoreCase);
+        if (fileTest && string.IsNullOrWhiteSpace(json))
+            json = null;
         var data = json is null ? null : JsonNode.Parse(json);
         var root = data as JsonObject;
-        var failed = !delivered || IsNegative(root) ||
-            command == "session.test" && root?["canOpen"] is JsonValue canOpen &&
-            canOpen.TryGetValue<bool>(out var openable) && !openable;
+        bool openable = false;
+        bool hasOpenable = fileTest && root?["canOpen"] is JsonValue canOpen &&
+            canOpen.TryGetValue(out openable);
+        bool negative = IsNegative(root);
+        bool malformedFileTest = fileTest && delivered && !negative && !hasOpenable;
+        var failed = !delivered || negative || (fileTest && !openable);
         JsonObject? nestedFailure = null;
         if (contract is not null)
         {
@@ -92,11 +98,12 @@ public sealed class ResultJson
         {
             result.Error = new JsonObject
             {
-                ["category"] = category ?? ReadString(root, "errorCategory") ??
-                    ReadString(nestedFailure, "errorCategory") ?? "OperationFailed",
-                ["message"] = message ?? ReadString(root, "errorMessage") ??
-                    ReadString(nestedFailure, "errorMessage") ?? ReadString(root, "message") ??
-                    "The operation reported a failure.",
+                ["category"] = malformedFileTest ? "InvalidResponse" : category ??
+                    ReadString(root, "errorCategory") ?? ReadString(nestedFailure, "errorCategory") ?? "OperationFailed",
+                ["message"] = malformedFileTest
+                    ? "Excel file validation returned no boolean canOpen result."
+                    : message ?? ReadString(root, "errorMessage") ?? ReadString(nestedFailure, "errorMessage") ??
+                        ReadString(root, "message") ?? "The operation reported a failure.",
                 ["command"] = command
             };
             Add(result.Error, "sessionId", sessionId ?? ReadString(root, "sessionId") ?? ReadString(root, "workbook_session_id"));

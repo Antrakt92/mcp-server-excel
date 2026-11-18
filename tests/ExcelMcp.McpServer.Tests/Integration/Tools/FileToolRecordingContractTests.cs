@@ -321,6 +321,31 @@ public sealed class FileToolRecordingContractTests(
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("{}")]
+    [InlineData("""{"canOpen":"false"}""")]
+    public async Task Test_MalformedReply_ReturnsProtocolError(string? payload)
+    {
+        var path = Path.Join(Path.GetTempPath(), $"file-test-recording-{Guid.NewGuid():N}.xlsx");
+        var (result, requests) = await _fixture.CallSequenceAsync(
+            "file_read",
+            new Dictionary<string, object?>
+            {
+                ["action"] = "test",
+                ["file_path"] = path,
+                ["timeout_seconds"] = 45
+            },
+            new ServiceResponse { Success = true, Result = payload });
+
+        RecordingToolTest.AssertRequest(Assert.Single(requests), "session.test", null,
+            JsonSerializer.Serialize(new { filePath = path, timeoutSeconds = 45 }, ServiceProtocol.JsonOptions));
+        Assert.True(result.IsError);
+        var response = Assert.IsType<JsonElement>(result.StructuredContent);
+        Assert.False(response.GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", response.GetProperty("errorCategory").GetString());
+    }
+
+    [Theory]
     [InlineData("create", "session.create", false)]
     [InlineData("open", "session.open", true)]
     public async Task CreateAndOpen_DispatchNullSessionAndExplicitDefaults(

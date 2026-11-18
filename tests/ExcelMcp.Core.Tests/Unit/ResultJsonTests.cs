@@ -168,6 +168,23 @@ public sealed class ResultJsonTests
         Assert.Equal("Read-only access", result.Data["message"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("""{"canOpen":null}""")]
+    [InlineData("""{"canOpen":"false"}""")]
+    [InlineData("""{"canOpen":1}""")]
+    [InlineData("[]")]
+    public void FileTest_SuccessfulTransportWithoutBooleanOpenability_IsInvalidResponse(string? json)
+    {
+        var result = ResultJson.Read(json, "session.test");
+
+        Assert.False(result.Success);
+        Assert.Equal("InvalidResponse", result.Error!["category"]!.GetValue<string>());
+    }
+
     [Fact]
     public void OptionalTraceFailure_DoesNotChangeCompletedRefresh()
     {

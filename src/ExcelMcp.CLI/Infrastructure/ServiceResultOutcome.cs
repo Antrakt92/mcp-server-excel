@@ -18,7 +18,8 @@ internal static class ServiceResultOutcome
     {
         errorMessage = null;
         errorCategory = null;
-        if (string.IsNullOrWhiteSpace(resultJson))
+        if (string.IsNullOrWhiteSpace(resultJson) &&
+            !command.Equals("session.test", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
