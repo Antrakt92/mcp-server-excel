@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.CLI.Telemetry;
@@ -127,22 +128,36 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     {
         if (args is null)
             return null;
-        if (string.IsNullOrEmpty(outputPath) || command is not
-            ("workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image"))
+        var writesArtifact = command is "workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image";
+        var transfersSheet = command is "sheet.copy-to-file" or "sheet.move-to-file";
+        if (string.IsNullOrEmpty(outputPath) || (!writesArtifact && !transfersSheet))
             return JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions);
 
         var request = JsonSerializer.SerializeToNode(args, ServiceProtocol.JsonOptions)!.AsObject();
-        var targetPath = request["targetPath"]!.GetValue<string>();
         var callerDirectory = Environment.CurrentDirectory;
-        var target = Path.GetFullPath(targetPath, callerDirectory);
         var output = Path.GetFullPath(outputPath, callerDirectory);
-        if (string.Equals(output, target, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(output, target))
-            throw new ArgumentException("--output writes the command response and must use a different file from --target-path.");
+        if (transfersSheet)
+        {
+            ValidateOutputPath(request, "sourceFile", "--source-file", callerDirectory, output);
+            ValidateOutputPath(request, "targetFile", "--target-file", callerDirectory, output);
+        }
+        else
+        {
+            ValidateOutputPath(request, "targetPath", "--target-path", callerDirectory, output);
+        }
+        return request.ToJsonString(ServiceProtocol.JsonOptions);
+    }
+
+    private static void ValidateOutputPath(JsonObject request, string parameter, string option, string callerDirectory, string output)
+    {
+        var path = request[parameter]!.GetValue<string>();
+        var absolute = Path.GetFullPath(path, callerDirectory);
+        if (string.Equals(output, absolute, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(output, absolute))
+            throw new ArgumentException($"--output writes the command response and must use a different file from {option}.");
 
         // The daemon's working directory can differ from the caller's.
-        if (!Path.IsPathFullyQualified(targetPath))
-            request["targetPath"] = target;
-        return request.ToJsonString(ServiceProtocol.JsonOptions);
+        if (!Path.IsPathFullyQualified(path))
+            request[parameter] = absolute;
     }
 
     private static bool ReferToSameFile(string outputPath, string targetPath)

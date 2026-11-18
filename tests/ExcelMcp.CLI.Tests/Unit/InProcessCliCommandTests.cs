@@ -178,6 +178,44 @@ public sealed class InProcessCliCommandTests
         }
     }
 
+    [Theory]
+    [InlineData("copy-to-file", true)]
+    [InlineData("copy-to-file", false)]
+    [InlineData("move-to-file", true)]
+    [InlineData("move-to-file", false)]
+    public async Task OutputFile_RejectsBothWorkbooksOfSheetTransferBeforeConnecting(string action, bool sourceCollision)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-transfer-");
+        try
+        {
+            var source = Path.Combine(directory.FullName, "Source.xlsx");
+            var target = Path.Combine(directory.FullName, "Target.xlsx");
+            var outputPath = Path.Combine(directory.FullName, ".", sourceCollision ? "source.xlsx" : "target.xlsx");
+            await File.WriteAllTextAsync(source, "source workbook");
+            await File.WriteAllTextAsync(target, "target workbook");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+            using var output = new StringWriter();
+
+            var exit = await Program.RunAsync(
+                ["--quiet", "sheet", action, "--session", "target", "--source-file", source, "--source-sheet", "Data", "--target-file", target, "--output", outputPath],
+                CreateRuntime(factory, output, new StringWriter()));
+
+            Assert.Equal(1, exit);
+            Assert.Equal(0, factory.ConnectionCount);
+            Assert.Empty(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var error = result.RootElement.GetProperty("error");
+            Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+            Assert.Contains(sourceCollision ? "--source-file" : "--target-file", error.GetProperty("message").GetString());
+            Assert.Equal("source workbook", await File.ReadAllTextAsync(source));
+            Assert.Equal("target workbook", await File.ReadAllTextAsync(target));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public async Task OutputFile_WriteFailureRetainsCompletedOperation()
     {
