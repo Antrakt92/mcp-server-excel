@@ -351,6 +351,34 @@ public sealed class GeneratedActionContractTests
     }
 
     [Theory]
+    [InlineData("""{"queryName":"Probe","mCode":"let Source = 1 in Source"}""")]
+    [InlineData("""{"queryName":"Probe","mCode":"let Source = 1 in Source","loadDestination":null}""")]
+    public void PowerQueryCreate_UsesDefaultForOmittedOrNullLoadDestination(string argsJson)
+    {
+        var (commands, proxy) = CreateProxy<IPowerQueryCommands>();
+
+        ServiceRegistry.PowerQuery.DispatchToCore(
+            commands, PowerQueryAction.Create, null!, argsJson);
+
+        Assert.Equal(1, proxy.CallCount);
+        Assert.Equal(PowerQueryLoadMode.LoadToTable,
+            Assert.IsType<PowerQueryLoadMode>(proxy.LastArguments![3]));
+    }
+
+    [Fact]
+    public void PowerQueryCreate_RejectsExplicitEmptyLoadDestinationBeforeCoreDispatch()
+    {
+        var (commands, proxy) = CreateProxy<IPowerQueryCommands>();
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            ServiceRegistry.PowerQuery.DispatchToCore(commands, PowerQueryAction.Create, null!,
+                """{"queryName":"Probe","mCode":"let Source = 1 in Source","loadDestination":""}"""));
+
+        Assert.Contains("loadDestination", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, proxy.CallCount);
+    }
+
+    [Theory]
     [InlineData("not-a-destination")]
     [InlineData("work_sheet")]
     [InlineData("work-sheet")]
@@ -373,6 +401,7 @@ public sealed class GeneratedActionContractTests
     }
 
     [Theory]
+    [InlineData("set-settings", """{"mode":""}""")]
     [InlineData("set-settings", """{"mode":"not-a-mode"}""")]
     [InlineData("calculate", """{"scope":"not-a-scope"}""")]
     public void CalculationDispatch_RejectsUnknownEnumsBeforeCoreDispatch(string action, string argsJson)

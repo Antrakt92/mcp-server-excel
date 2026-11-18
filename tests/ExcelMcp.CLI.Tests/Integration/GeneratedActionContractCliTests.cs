@@ -205,11 +205,28 @@ public sealed class GeneratedActionContractCliTests : IDisposable
         Assert.DoesNotContain("session", combinedOutput, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task DirectCommand_RejectsExplicitEmptyLoadDestination()
+    {
+        var result = await InProcessCliHelper.RunAsync(
+            ["powerquery", "create", "--session", "missing-session", "--query-name", "Probe",
+             "--m-code", "let Source = 1 in Source", "--load-destination", string.Empty]);
+
+        Assert.Equal(1, result.ExitCode);
+        var output = result.Stdout + result.Stderr;
+        Assert.Contains("loadDestination", output, StringComparison.Ordinal);
+        Assert.Contains("Invalid value", output, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(
         """{"command":"calculationmode.calculate","sessionId":"missing-session","args":{"scope":"application","mode":"manual"}}""",
         "mode",
         "calculate")]
+    [InlineData(
+        """{"command":"powerquery.create","sessionId":"missing-session","args":{"queryName":"Probe","mCode":"let Source = 1 in Source","loadDestination":""}}""",
+        "loadDestination",
+        "Invalid value")]
     [InlineData(
         """{"command":"powerquery.load-to","sessionId":"missing-session","args":{"queryName":"Probe","loadDestination":"not-a-destination"}}""",
         "loadDestination",
