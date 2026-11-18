@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Generated;
 using Xunit;
@@ -12,6 +13,32 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 [Trait("RequiresExcel", "false")]
 public sealed class ResultJsonTests
 {
+    [Theory]
+    [InlineData("{\"values\":[\"α\",null,1.25],\"warnings\":[{\"code\":\"info\"}]}", true)]
+    [InlineData("{\"values\":[0,false],\"partialState\":{\"outcome\":\"unknown\"}}", false)]
+    [InlineData("[null,0,false]", true)]
+    [InlineData("null", true)]
+    public void ToolObject_CanBeExtendedWithoutChangingOriginalOutcome(string json, bool delivered)
+    {
+        const string command = "range.get-values";
+        var outcome = ResultJson.Read(json, command, delivered: delivered,
+            category: delivered ? null : "Timeout", sessionId: "retained-session");
+        var initialText = outcome.ToToolJson();
+        var response = outcome.ToToolObject();
+        Assert.Equal(initialText, response.ToJsonString(ResultJson.Options));
+
+        if (response["values"] is JsonArray values)
+            values.Clear();
+        if (response["partialState"] is JsonObject partialState)
+            partialState["outcome"] = "changed-by-caller";
+        if (response["warnings"] is JsonArray warnings)
+            warnings.Clear();
+        response["index"] = 1;
+        response["success"] = !delivered;
+
+        Assert.Equal(initialText, outcome.ToToolJson());
+    }
+
     [Fact]
     public void QueryList_NormalOutputOmitsPreviewAndKeepsCompleteMetadata()
     {

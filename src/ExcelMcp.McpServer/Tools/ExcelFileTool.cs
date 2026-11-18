@@ -235,9 +235,9 @@ public static partial class ExcelFileTool
 
     internal static JsonObject ConvertSessionResult(ResultJson outcome, string action, string? filePath = null)
     {
+        var result = outcome.ToToolObject();
         if (!outcome.Success && filePath is not null)
-            outcome.Error!["filePath"] = filePath;
-        var result = JsonNode.Parse(outcome.ToToolJson())!.AsObject();
+            result["filePath"] = filePath;
         var listing = outcome.Success ? result : result["partialState"] as JsonObject;
         if (action == "list" && listing?["sessions"] is JsonArray sessions)
         {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -182,6 +183,17 @@ public static class ExcelToolsBase
         return ClassifyToolResponse(toolName, actionName, document.RootElement);
     }
 
+    internal static ToolInvocationResult ClassifyToolOutcome(string toolName, string actionName, ResultJson outcome)
+    {
+        if (outcome.Success)
+            return new(ToolInvocationOutcome.Succeeded, null);
+        if (toolName == "file_read" && actionName == "test" && outcome.Data is JsonObject data &&
+            data["canOpen"] is JsonValue canOpen && canOpen.TryGetValue<bool>(out var openable) && !openable)
+            return new(ToolInvocationOutcome.ExpectedNegative, null);
+
+        return ClassifyFailedResponse(outcome.Error?["category"]?.GetValue<string>());
+    }
+
     private static ToolInvocationResult ClassifyToolResponse(string toolName, string actionName, JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
@@ -197,13 +209,13 @@ public static class ExcelToolsBase
         {
             var category = root.TryGetProperty("errorCategory", out var property)
                 && property.ValueKind == JsonValueKind.String ? property.GetString() : null;
-            return new(
-                ToolInvocationOutcome.Failed,
-                ClassifyFailure(category),
-                ClassifyFailureCause(category));
+            return ClassifyFailedResponse(category);
         }
         return new(ToolInvocationOutcome.Succeeded, null);
     }
+
+    private static ToolInvocationResult ClassifyFailedResponse(string? category) =>
+        new(ToolInvocationOutcome.Failed, ClassifyFailure(category), ClassifyFailureCause(category));
 
     private static ToolFailureCause? ClassifyFailureCause(string? category) => category switch
     {

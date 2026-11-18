@@ -168,7 +168,10 @@ public sealed class ResultJson
     }
 
     /// <summary>Returns the business payload in MCP's existing object form.</summary>
-    public string ToToolJson()
+    public string ToToolJson() => ToToolObject().ToJsonString(Options);
+
+    /// <summary>Creates a detached MCP response object that callers can extend.</summary>
+    public JsonObject ToToolObject()
     {
         var root = Data is JsonObject data
             ? (JsonObject)data.DeepClone()
@@ -185,7 +188,7 @@ public sealed class ResultJson
             foreach (var property in Error.Where(property => property.Key is not ("category" or "message")))
                 root[property.Key == "sessionId" ? "workbook_session_id" : property.Key] = property.Value?.DeepClone();
         }
-        return root.ToJsonString(Options);
+        return root;
     }
 
     /// <summary>Returns the common CLI outer object; batch items add only their index.</summary>
