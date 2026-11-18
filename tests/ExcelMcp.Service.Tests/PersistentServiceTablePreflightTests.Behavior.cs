@@ -99,6 +99,35 @@ public sealed partial class PersistentServiceTablePreflightTests
         AssertSalesData(RequireSuccess(_tableCommands.GetData(batch, "SalesTable")));
     }
 
+    [Fact]
+    public async Task Create_MissingTableStylePreservesSourceRange()
+    {
+        var batch = _fixture.BatchToken;
+        const string sheetName = "Sales";
+        const string rangeAddress = "F1:G3";
+        const string tableName = "NewTable";
+        const string tableStyle = "UnknownTableStyleForCreation";
+        RequireSuccess(_rangeCommands.SetValues(
+            batch, sheetName, "F1:G2", [[1, "First"], [2, "Second"]]));
+        var valuesBefore = _fixture.Send("range.get-values", new { sheetName, rangeAddress });
+        var tablesBefore = RequireSuccess(_tableCommands.List(batch)).Tables;
+
+        var rejected = await _fixture.SendForFailureAsync("table.create", new
+        {
+            sheetName,
+            tableName,
+            rangeAddress = "F1:G2",
+            hasHeaders = false,
+            tableStyle
+        });
+
+        Assert.Equal("NotFound", rejected.ErrorCategory);
+        Assert.Contains(tableStyle, rejected.ErrorMessage);
+        Assert.Equal(valuesBefore.Result, _fixture.Send("range.get-values", new { sheetName, rangeAddress }).Result);
+        var tablesAfter = RequireSuccess(_tableCommands.List(batch)).Tables;
+        Assert.Equal(tablesBefore.Select(table => table.Name), tablesAfter.Select(table => table.Name));
+    }
+
     /// <summary>
     /// Tests deleting a table.
     /// LLM use case: "delete this table"
