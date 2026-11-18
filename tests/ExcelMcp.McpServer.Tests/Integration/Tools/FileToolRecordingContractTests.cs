@@ -324,6 +324,8 @@ public sealed class FileToolRecordingContractTests(
     [InlineData(null)]
     [InlineData("{}")]
     [InlineData("""{"canOpen":"false"}""")]
+    [InlineData("{")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
     public async Task Test_MalformedReply_ReturnsProtocolError(string? payload)
     {
         var path = Path.Join(Path.GetTempPath(), $"file-test-recording-{Guid.NewGuid():N}.xlsx");

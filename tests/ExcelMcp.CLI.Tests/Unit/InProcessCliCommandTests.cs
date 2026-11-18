@@ -1995,6 +1995,7 @@ public sealed class InProcessCliCommandTests
     [Theory]
     [InlineData("{")]
     [InlineData("{}")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
     [InlineData(null)]
     public async Task SessionTest_MalformedSuccessResponse_TracksInvalidResponse(string? result)
     {

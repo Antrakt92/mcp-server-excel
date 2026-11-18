@@ -201,12 +201,28 @@ public sealed class ResultJsonTests
     [InlineData("""{"canOpen":"false"}""")]
     [InlineData("""{"canOpen":1}""")]
     [InlineData("[]")]
+    [InlineData("{")]
+    [InlineData("""{"canOpen":true,"canOpen":false}""")]
     public void FileTest_SuccessfulTransportWithoutBooleanOpenability_IsInvalidResponse(string? json)
     {
         var result = ResultJson.Read(json, "session.test");
 
         Assert.False(result.Success);
         Assert.Equal("InvalidResponse", result.Error!["category"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void FileTest_ServiceFailureRetainsRecoveryStateWithMalformedResult()
+    {
+        var result = ResultJson.Read("{", "session.test", delivered: false, message: "Still closing",
+            category: "Timeout", sessionId: "retained", partialState: """{"outcome":"unknown"}""");
+
+        Assert.False(result.Success);
+        Assert.True(result.CompletionUnconfirmed);
+        Assert.Equal("Timeout", result.Error!["category"]!.GetValue<string>());
+        Assert.Equal("retained", result.Error["sessionId"]!.GetValue<string>());
+        Assert.Equal("Still closing", result.Error["message"]!.GetValue<string>());
+        Assert.Equal("unknown", result.PartialState!["outcome"]!.GetValue<string>());
     }
 
     [Fact]

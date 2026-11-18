@@ -66,7 +66,16 @@ public sealed class ResultJson
         bool fileTest = command.Equals("session.test", StringComparison.OrdinalIgnoreCase);
         if (fileTest && string.IsNullOrWhiteSpace(json))
             json = null;
-        var data = json is null ? null : JsonNode.Parse(json);
+        JsonNode? data;
+        try
+        {
+            data = json is null ? null : JsonNode.Parse(json,
+                documentOptions: fileTest ? new JsonDocumentOptions { AllowDuplicateProperties = false } : default);
+        }
+        catch (JsonException) when (fileTest)
+        {
+            data = null;
+        }
         var root = data as JsonObject;
         bool openable = false;
         bool hasOpenable = fileTest && root?["canOpen"] is JsonValue canOpen &&
@@ -101,7 +110,7 @@ public sealed class ResultJson
                 ["category"] = malformedFileTest ? "InvalidResponse" : category ??
                     ReadString(root, "errorCategory") ?? ReadString(nestedFailure, "errorCategory") ?? "OperationFailed",
                 ["message"] = malformedFileTest
-                    ? "Excel file validation returned no boolean canOpen result."
+                    ? "Excel file validation returned an invalid result. Expected one boolean canOpen field."
                     : message ?? ReadString(root, "errorMessage") ?? ReadString(nestedFailure, "errorMessage") ??
                         ReadString(root, "message") ?? "The operation reported a failure.",
                 ["command"] = command
