@@ -1824,10 +1824,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             if (_readinessTask is { IsCompleted: true } previous)
             {
                 _readinessTask = null;
-                var state = previous.GetAwaiter().GetResult();
                 if (string.Equals(_readinessSelectionId, selectionId, StringComparison.Ordinal)
                     && _readinessOperationStartedAtUtc == OperationStatus.StartedAtUtc)
-                    return state;
+                    return previous.GetAwaiter().GetResult();
+
+                if (previous.Exception is { } staleFailure)
+                    _logger.LogDebug(staleFailure, "An older Excel readiness inspection failed after its selection or operation changed");
             }
             var completion = new TaskCompletionSource<WorkbookRefreshState>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
