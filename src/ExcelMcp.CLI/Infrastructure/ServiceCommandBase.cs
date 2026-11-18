@@ -78,10 +78,11 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
 
         string command;
         string? requestArgs;
+        OutputPathGuard? outputGuard;
         try
         {
             (command, var args) = Route(settings, action);
-            requestArgs = SerializeRequestArguments(command, args, outputPath);
+            (requestArgs, outputGuard) = PrepareRequestArguments(command, args, outputPath);
         }
         catch (ArgumentException ex)
         {
@@ -117,7 +118,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
 
             if (!string.IsNullOrEmpty(outputPath))
             {
-                return WriteOutputToFile(outcome, originalData, command, durationMs, outputPath);
+                return WriteOutputToFile(outcome, originalData, command, durationMs, outputPath, outputGuard);
             }
 
             return CliResultOutput.Write(outcome, command);
@@ -128,40 +129,48 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         }
     }
 
-    private static string? SerializeRequestArguments(string command, object? args, string? outputPath)
+    private static (string? Args, OutputPathGuard? Guard) PrepareRequestArguments(string command, object? args, string? outputPath)
     {
         if (args is null)
-            return null;
+            return (null, null);
         var writesArtifact = command is "workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image";
         var transfersSheet = command is "sheet.copy-to-file" or "sheet.move-to-file";
         if (string.IsNullOrEmpty(outputPath) || (!writesArtifact && !transfersSheet))
-            return JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions);
+            return (JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), null);
 
         var request = JsonSerializer.SerializeToNode(args, ServiceProtocol.JsonOptions)!.AsObject();
         var callerDirectory = Environment.CurrentDirectory;
-        var output = Path.GetFullPath(outputPath, callerDirectory);
-        if (transfersSheet)
-        {
-            ValidateOutputPath(request, "sourceFile", "--source-file", callerDirectory, output);
-            ValidateOutputPath(request, "targetFile", "--target-file", callerDirectory, output);
-        }
-        else
-        {
-            ValidateOutputPath(request, "targetPath", "--target-path", callerDirectory, output);
-        }
-        return request.ToJsonString(ServiceProtocol.JsonOptions);
+        var guard = new OutputPathGuard(Path.GetFullPath(outputPath, callerDirectory), transfersSheet
+            ? [(NormalizeArtifactPath(request, "sourceFile", callerDirectory), "--source-file"),
+                (NormalizeArtifactPath(request, "targetFile", callerDirectory), "--target-file")]
+            : [(NormalizeArtifactPath(request, "targetPath", callerDirectory), "--target-path")]);
+        guard.Validate();
+        return (request.ToJsonString(ServiceProtocol.JsonOptions), guard);
     }
 
-    private static void ValidateOutputPath(JsonObject request, string parameter, string option, string callerDirectory, string output)
+    private static string NormalizeArtifactPath(JsonObject request, string parameter, string callerDirectory)
     {
         var path = request[parameter]!.GetValue<string>();
         var absolute = Path.GetFullPath(path, callerDirectory);
-        if (string.Equals(output, absolute, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(output, absolute))
-            throw new ArgumentException($"--output writes the command response and must use a different file from {option}.");
 
         // The daemon's working directory can differ from the caller's.
         if (!Path.IsPathFullyQualified(path))
             request[parameter] = absolute;
+        return absolute;
+    }
+
+    private sealed class OutputPathGuard(string outputPath, (string Path, string Option)[] artifactPaths)
+    {
+        public string OutputPath { get; } = outputPath;
+
+        public void Validate()
+        {
+            foreach (var (path, option) in artifactPaths)
+            {
+                if (string.Equals(OutputPath, path, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(OutputPath, path))
+                    throw new ArgumentException($"--output writes the command response and must use a different file from {option}.");
+            }
+        }
     }
 
     private static bool ReferToSameFile(string outputPath, string targetPath)
@@ -191,16 +200,19 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "CLI output-file boundary reports the original write/encoding failure as success=false JSON and returns exit code 1.")]
     private static int WriteOutputToFile(ResultJson outcome, System.Text.Json.Nodes.JsonObject? originalData,
-        string command, long durationMs, string outputPath)
+        string command, long durationMs, string outputPath, OutputPathGuard? outputGuard)
     {
         try
         {
+            // A dangling link may have gained a target when the operation published an artifact.
+            outputGuard?.Validate();
+            var destination = outputGuard?.OutputPath ?? outputPath;
             Dictionary<string, object?> metadata;
             var base64Data = originalData?["imageBase64"]?.GetValue<string>();
             if (base64Data != null)
             {
                 var imageBytes = Convert.FromBase64String(base64Data);
-                File.WriteAllBytes(outputPath, imageBytes);
+                File.WriteAllBytes(destination, imageBytes);
                 // Write metadata (without the large base64 payload) to stdout
                 using var doc = JsonDocument.Parse(originalData!.ToJsonString());
                 metadata = new Dictionary<string, object?>
@@ -218,7 +230,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
             }
             else
             {
-                File.WriteAllText(outputPath, outcome.ToCliJson(command, durationMs));
+                File.WriteAllText(destination, outcome.ToCliJson(command, durationMs));
                 metadata = new Dictionary<string, object?>
                 {
                     ["success"] = true,

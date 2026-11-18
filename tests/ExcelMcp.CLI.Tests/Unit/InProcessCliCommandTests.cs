@@ -179,6 +179,53 @@ public sealed class InProcessCliCommandTests
     }
 
     [Theory]
+    [Trait("RunType", "OnDemand")] // Requires Windows permission to create symbolic links.
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OutputFile_AliasResolvedDuringDispatchPreservesPublishedArtifact(bool createAliasBeforeDispatch)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-late-alias-");
+        try
+        {
+            var artifact = Path.Combine(directory.FullName, "artifact.pdf");
+            var outputPath = Path.Combine(directory.FullName, "result.json");
+            if (createAliasBeforeDispatch)
+                File.CreateSymbolicLink(outputPath, artifact);
+            var factory = new RecordingClientFactory
+            {
+                Responder = async _ =>
+                {
+                    await File.WriteAllTextAsync(artifact, "published artifact");
+                    if (!createAliasBeforeDispatch)
+                        File.CreateSymbolicLink(outputPath, artifact);
+                    return new ServiceResponse { Success = true, Result = """{"success":true,"pages":6}""" };
+                }
+            };
+            using var output = new StringWriter();
+
+            var exit = await Program.RunAsync(
+                ["--quiet", "workbook", "export-fixed-format", "--session", "target", "--target-path", artifact, "--output", outputPath],
+                CreateRuntime(factory, output, new StringWriter()));
+
+            var artifactBytes = await File.ReadAllTextAsync(artifact);
+            Assert.Equal("published artifact", artifactBytes);
+            Assert.Equal(1, exit);
+            Assert.Single(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var root = result.RootElement;
+            Assert.Equal("OutputWriteFailed", root.GetProperty("error").GetProperty("category").GetString());
+            Assert.Contains("--target-path", root.GetProperty("error").GetProperty("message").GetString());
+            Assert.Equal(6, root.GetProperty("data").GetProperty("pages").GetInt32());
+            Assert.True(root.GetProperty("partialState").GetProperty("operationCompleted").GetBoolean());
+            Assert.False(root.GetProperty("partialState").GetProperty("outputWriteCompleted").GetBoolean());
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData("copy-to-file", true)]
     [InlineData("copy-to-file", false)]
     [InlineData("move-to-file", true)]
