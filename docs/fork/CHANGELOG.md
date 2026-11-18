@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.0) | 2026-11-18 | Paged visibility, workbook safeguards and Excel session recovery |
 | [5.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.4.0) | 2026-11-17 | Windows MCP bundle, workbook edits, and batch validation |
 | [5.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.3.0) | 2026-11-17 | Saved sheet identities, relationship ownership and parent-style diagnostics |
 | [5.2.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.2.0) | 2026-11-16 | Workbook package checks and hidden defined names |
@@ -26,6 +27,46 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.5.0 — 2026-11-18
+
+Read visibility across large ranges a page at a time, and copy or move sheets between files from the CLI without opening a workbook session. This release also fixes cases where rejected inputs could leave changes behind in Excel.
+
+### What changed
+
+- **Range visibility.** Use `offset` and `limit` with MCP `range_format_read` → `get-visibility`, or `--offset` and `--limit` with `excelcli rangeformat get-visibility`. Start at offset zero and reuse the same range, axis and limit with the returned `nextOffset` until it is absent. `totalDimensions` counts distinct rows or columns across the full scope.
+- **Batch responses.** In a local benchmark with a synthetic 2,040,924-byte response, median JSON processing fell from 30.37 ms to 6.84 ms and allocations from 17.7 MB to 4.45 MB. The benchmark measures response processing, including the final JSON write.
+- **Saved workbook comparisons.** Named parent styles are indexed by definition. This cuts repeated work when comparing saved files with many styles and preserves the reported matches.
+
+### Workbook changes and exports
+
+- Missing data-validation formulas are rejected before an existing rule is replaced. Creating a table with an unknown style leaves the source cells alone. Adding a table column rejects a header that duplicates an existing one regardless of case, or exceeds Excel's 255-character limit, before inserting the column.
+- Adding or editing a hyperlink rejects tooltips longer than 255 characters before changing the cell or link. Replacing manual page breaks preserves the worksheet's print scaling.
+- Structured references that do not resolve to a range return a clear failure. A PDF or XPS export still reports success if the file was written and only opening the viewer failed.
+- The CLI checks `--output` against the explicit file paths in `workbook save-as`, `workbook save-copy-as`, `workbook export-fixed-format`, `chart export-image`, and both workbooks in `sheet copy-to-file` and `sheet move-to-file`. If a file alias only resolves after the operation, the CLI preserves the artifact and reports that the operation completed and the response file could not be written.
+
+### Excel sessions and command errors
+
+- A delayed readiness error stays with the operation that started the check. When an Excel helper exits, the service records the lost session and releases its file reservations before removing it from the list. It leaves worker records with invalid or mismatched identity metadata untouched.
+- When workbook validation opens the file in a temporary Excel instance, it reports whether that process exited. Malformed validation replies stay in the normal error envelope, and explicitly empty enum arguments are rejected instead of receiving a default.
+- Concurrent first launches can read the same saved telemetry identity while another process finishes publishing it. Unused VBA parser and service-request wrappers were removed.
+
+### Upgrade notes
+
+- Scopes larger than 10,000 rows or columns now require a page limit. Choose a limit from 1 to 10,000. Smaller scopes can still be read without paging.
+- The portable CLI, MCP ZIP and MCPB target Windows x64 and use installed desktop Excel. The packages declare their upstream base from the exact source revision used to build them.
+
+### Dependencies
+
+| Scope | Dependency | Update |
+| --- | --- | --- |
+| Runtime | `Microsoft.Extensions.DependencyInjection` | 10.0.14 → 11.0.0 |
+| Runtime | `Microsoft.Extensions.ObjectPool` | 10.0.14 → 11.0.0 |
+| LLM tests | `pytest-asyncio` | 1.4.1.post1 → 1.5.0 |
+| Documentation | `mkdocs-material` | 9.8.0 → 9.8.1 |
+| GitHub Actions | `github/gh-aw/actions/setup` | pin `34f03fba65c7` → `399a445fe2d8` |
+
+Upstream base remains ExcelMcp 2.6.12. [Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.4.0...v5.5.0)
 
 ## 5.4.0 — 2026-11-17
 
