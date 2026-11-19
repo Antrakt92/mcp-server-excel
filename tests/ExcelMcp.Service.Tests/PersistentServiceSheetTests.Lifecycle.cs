@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.Core.Commands.Workbook;
+using Sbroenne.ExcelMcp.Core.Models;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -77,6 +79,69 @@ public sealed partial class PersistentServiceSheetTests
         _fixture.ForgetSheet(target);
         Assert.Equal(before.Where(item => item != target), ReadCurrentSheetNames());
         Assert.Equal(retained, CaptureSheet(guard));
+    }
+
+    [Theory]
+    [InlineData(SheetVisibility.Hidden)]
+    [InlineData(SheetVisibility.VeryHidden)]
+    public void Delete_HiddenWorksheet_RemovesOnlyTargetAndPreservesGuard(SheetVisibility visibility)
+    {
+        var target = CreateSeededSheet("DeleteHidden");
+        var guard = CreateSeededSheet("Guard");
+        RequireSuccess(_sheetCommands.SetVisibility(_fixture.BatchToken, target, visibility));
+        Assert.Equal(visibility, RequireSuccess(_sheetCommands.GetVisibility(_fixture.BatchToken, target)).Visibility);
+        var names = ReadCurrentSheetNames();
+        var guardContents = CaptureSheet(guard);
+        var guardVisibility = RequireSuccess(_sheetCommands.GetVisibility(_fixture.BatchToken, guard)).Visibility;
+        var nativeBefore = _fixture.ExecuteRawVerification((ctx, _) =>
+            (ctx.Book.ProtectStructure, ctx.Book.ProtectWindows, ctx.App.DisplayAlerts));
+        Assert.False(nativeBefore.ProtectStructure);
+
+        RequireSuccess(_sheetCommands.Delete(_fixture.BatchToken, target));
+        _fixture.ForgetSheet(target);
+
+        Assert.Equal(names.Where(name => name != target), ReadCurrentSheetNames());
+        Assert.Equal(guardContents, CaptureSheet(guard));
+        Assert.Equal(guardVisibility, RequireSuccess(_sheetCommands.GetVisibility(_fixture.BatchToken, guard)).Visibility);
+        Assert.Equal(nativeBefore, _fixture.ExecuteRawVerification((ctx, _) =>
+            (ctx.Book.ProtectStructure, ctx.Book.ProtectWindows, ctx.App.DisplayAlerts)));
+    }
+
+    [Theory]
+    [InlineData(SheetVisibility.Hidden)]
+    [InlineData(SheetVisibility.VeryHidden)]
+    public void Delete_ProtectedHiddenWorksheet_PreservesVisibilityContentsAndProtection(SheetVisibility visibility)
+    {
+        var batch = _fixture.BatchToken;
+        var target = CreateSeededSheet("ProtectedHidden");
+        var guard = CreateSeededSheet("Guard");
+        RequireSuccess(_sheetCommands.SetVisibility(batch, target, visibility));
+        var names = ReadCurrentSheetNames();
+        var targetContents = CaptureSheet(target);
+        var guardContents = CaptureSheet(guard);
+        var guardVisibility = RequireSuccess(_sheetCommands.GetVisibility(batch, guard)).Visibility;
+        var workbook = _fixture.CreateCommands<IWorkbookCommands>();
+        var original = _fixture.ExecuteRawVerification((ctx, _) => ctx.Book.ProtectStructure);
+        Assert.False(original);
+
+        PersistentServiceCleanupFailures.Run(() =>
+        {
+            RequireSuccess(workbook.SetProtection(batch, true));
+            var nativeBefore = _fixture.ExecuteRawVerification((ctx, _) =>
+                (ctx.Book.ProtectStructure, ctx.Book.ProtectWindows, ctx.App.DisplayAlerts));
+            Assert.True(nativeBefore.ProtectStructure);
+
+            var error = Assert.Throws<InvalidOperationException>(() => _sheetCommands.Delete(batch, target));
+
+            Assert.Contains("sheet.delete failed", error.Message, StringComparison.Ordinal);
+            Assert.Equal(names, ReadCurrentSheetNames());
+            Assert.Equal(visibility, RequireSuccess(_sheetCommands.GetVisibility(batch, target)).Visibility);
+            Assert.Equal(targetContents, CaptureSheet(target));
+            Assert.Equal(guardVisibility, RequireSuccess(_sheetCommands.GetVisibility(batch, guard)).Visibility);
+            Assert.Equal(guardContents, CaptureSheet(guard));
+            Assert.Equal(nativeBefore, _fixture.ExecuteRawVerification((ctx, _) =>
+                (ctx.Book.ProtectStructure, ctx.Book.ProtectWindows, ctx.App.DisplayAlerts)));
+        }, () => RequireSuccess(workbook.SetProtection(batch, original)));
     }
 
     [Fact]
