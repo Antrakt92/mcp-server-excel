@@ -949,6 +949,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
             finally
             {
+                using var failedStartupCleanup = started.Task.IsFaulted && startupExcel is not null
+                    ? workbookTestTimings?.BeginStage("excelFailedStartupCleanup")
+                    : null;
                 using var closeTimingContext = SessionDiagnostics.UseCloseTimings(_closeTimings);
                 // Cleanup COM objects on STA thread exit
                 _logger.LogDebug("STA thread cleanup starting for {FileName}", Path.GetFileName(_workbookPath));

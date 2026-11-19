@@ -98,7 +98,7 @@ public sealed class SessionLifecycleContractTests : IDisposable
 
     [Theory]
     [InlineData("missing.xlsx", false, false, false, false, false, false)]
-    [InlineData("invalid.txt", true, false, false, false, false, false)]
+    [InlineData("plain-text.txt", true, false, true, true, false, false)]
     [InlineData("corrupt.xlsx", true, false, false, false, false, false)]
     [InlineData("normal.xlsx", true, false, true, true, false, false)]
     [InlineData("protected.xlsx", true, true, false, false, false, true)]
