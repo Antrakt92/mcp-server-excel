@@ -47,7 +47,13 @@ public sealed class VbaCommandsTimeoutTests :
         var failure = await Record.ExceptionAsync(async () =>
         {
             await Task.Yield();
-            _ = commands.Import(batch, "TimeoutModule", vbaCode);
+            var import = commands.Import(batch, "TimeoutModule", vbaCode);
+            Assert.True(import.Success, import.ErrorMessage);
+            batch.Save();
+            var ownedBatch = Assert.IsType<ExcelBatch>(batch);
+            var approval = ownedBatch.ApplyWorkbookSecurity(
+                "enable-macros", approved: true, allowRememberedTrust: false, allowReopen: true);
+            Assert.True(approval.Reopened, approval.Message);
 
             var runStopwatch = Stopwatch.StartNew();
             var timeoutException = Assert.Throws<TimeoutException>(() =>
