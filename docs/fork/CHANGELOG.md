@@ -37,7 +37,7 @@ Bulk range writes and table appends now have a literal text mode. Pass `literal_
 
 - **Full-length cell text.** Formula and error reads work alongside 32,767-character cells. Oversized literal writes fail before changing cells, and overwrite checks identify occupied destinations.
 - **Empty tables.** An append with a nonblank first row can succeed when Excel leaves its blank insert row outside the table data. In that state the first row needs at least one value.
-- **VBA inspection.** Use `vba_read list` with `include_label_warnings: true` or `excelcli vba list --include-label-warnings true` to find labels that may have been intended as calls. Results identify the module, procedure and source line. The scan leaves the project unchanged.
+- **VBA inspection.** Use `vba_read list` with `include_label_warnings: true` or `excelcli vba list --include-label-warnings` to find labels that may have been intended as calls. Results identify the module, procedure and source line. The scan leaves the project unchanged.
 - **Workbook diagnostics.** `file_read test` and `excelcli session test` report `testTimingsMs` for measured phases, including Excel activation, workbook open and cleanup. Failed startup cleanup has a separate field. Controller and worker intervals can overlap.
 
 No dependency versions changed in this release.
