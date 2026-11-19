@@ -36,6 +36,16 @@ details are unavailable for URLs. Use open to check access. Test does not downlo
 file. Returned `exists: false`, zero size, and `isIrmProtected: false` are unknown
 remote metadata, not evidence of a missing or unprotected workbook.
 
+When the command returns a validation result, `testTimingsMs` reports measured
+phases in milliseconds. `fileProbe` covers file metadata, `excelActivation` covers
+COM activation and its retries, `workbookOpen` covers the native open call, and
+`excelCleanup` covers the validation batch close. The controller reports
+`controllerWorkerStartup` for launching and claiming its helper process and
+`controllerWorkerRequest` for dispatch, reply, and controller bookkeeping,
+including release of an empty helper. The request duration includes the worker
+phases. Skipped phases are absent. Timeouts and canceled requests can return
+before the native operation completes.
+
 Opening and attaching preserve Excel's existing AutoSave setting. Responses
 report its live status and warn when it is enabled. To explicitly change it:
 

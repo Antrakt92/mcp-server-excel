@@ -135,15 +135,8 @@ public static class ExcelSession
     internal static ExcelBatch BeginReadOnlyValidation(
         string filePath,
         TimeSpan? operationTimeout,
-        bool deferStartup = false)
-    {
-        return new ExcelBatch(
-            [filePath],
-            logger: null,
-            show: WorkbookLocation.IsRemote(filePath),
-            operationTimeout: operationTimeout,
-            openReadOnly: true,
-            deferStartup: deferStartup);
-    }
+        bool deferStartup = false,
+        SessionDiagnostics.TimingCollection? timings = null)
+        => ExcelBatch.BeginReadOnlyValidation(filePath, operationTimeout, deferStartup, timings);
 
 }

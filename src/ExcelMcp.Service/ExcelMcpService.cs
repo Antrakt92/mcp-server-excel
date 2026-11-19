@@ -744,14 +744,17 @@ public sealed class ExcelMcpService : IDisposable
 
         try
         {
-            var result = _fileCommands.Test(args.FilePath);
+            var timings = new SessionDiagnostics.TimingCollection();
+            FileValidationInfo result;
+            using (timings.BeginStage("fileProbe"))
+                result = _fileCommands.Test(args.FilePath);
             if (result.Exists
                 && !result.IsIrmProtected
                 && result.Message == null)
             {
                 try
                 {
-                    result.ExcelProcessExited = _sessionManager.ValidateWorkbookOpenAndReportExit(result.FilePath, timeout);
+                    result.ExcelProcessExited = _sessionManager.ValidateWorkbookOpenAndReportExit(result.FilePath, timeout, timings);
                     result.IsValid = true;
                     result.CanOpen = true;
                 }
@@ -766,6 +769,7 @@ public sealed class ExcelMcpService : IDisposable
                 }
             }
 
+            result.TestTimingsMs = timings.Snapshot();
             return new ServiceResponse
             {
                 Success = true,

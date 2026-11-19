@@ -97,6 +97,13 @@ public sealed partial class ServiceFileCommandsTests
         Assert.Null(info.Message);
         Assert.Equal(lastWriteTime, File.GetLastWriteTimeUtc(testFile));
         Assert.Equal(bytes, File.ReadAllBytes(testFile));
+        var timings = Assert.IsAssignableFrom<IReadOnlyDictionary<string, double>>(info.TestTimingsMs);
+        Assert.Equal(["excelActivation", "excelCleanup", "fileProbe", "workbookOpen"],
+            timings.Keys.Order(StringComparer.Ordinal));
+        Assert.True(timings["fileProbe"] >= 0);
+        Assert.True(timings["excelActivation"] > 0);
+        Assert.True(timings["workbookOpen"] > 0);
+        Assert.True(timings["excelCleanup"] > 0);
         Assert.Equal(0, _fixture.SessionCount);
     }
     [Fact]

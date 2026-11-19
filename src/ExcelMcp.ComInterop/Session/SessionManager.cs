@@ -1167,7 +1167,8 @@ public sealed class SessionManager : IDisposable
     public void ValidateWorkbookOpen(string filePath, TimeSpan? operationTimeout = null)
         => _ = ValidateWorkbookOpenAndReportExit(filePath, operationTimeout);
 
-    internal bool ValidateWorkbookOpenAndReportExit(string filePath, TimeSpan? operationTimeout)
+    internal bool ValidateWorkbookOpenAndReportExit(string filePath, TimeSpan? operationTimeout,
+        SessionDiagnostics.TimingCollection? timings = null)
     {
         ThrowIfClosedToNewSessions();
 
@@ -1187,14 +1188,15 @@ public sealed class SessionManager : IDisposable
             lock (_filePathReservationLock)
             {
                 ThrowIfClosedToNewSessions();
-                batch = ExcelSession.BeginReadOnlyValidation(filePath, operationTimeout, deferStartup: true);
+                batch = ExcelSession.BeginReadOnlyValidation(filePath, operationTimeout, deferStartup: true, timings: timings);
                 PublishSession(reservationId, normalizedPath, batch,
                     show: WorkbookLocation.IsRemote(normalizedPath),
                     SessionOrigin.Unknown,
                     readOnlyValidation: true);
             }
             batch.WaitForStartup();
-            batch.Close();
+            using (timings?.BeginStage("excelCleanup"))
+                batch.Close();
             return !batch.OwnedProcessLeftOpen;
         }
         catch (ExcelStartupPendingException ex)

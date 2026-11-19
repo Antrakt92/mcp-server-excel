@@ -53,7 +53,10 @@ public sealed class ForwardedResultConversionTests
         if (scenario == "nested-failure")
             Assert.Equal(ToolInvocationOutcome.Failed, typedTelemetry!.Value.Outcome);
         if (scenario == "diagnostic")
+        {
             Assert.Equal(ToolInvocationOutcome.ExpectedNegative, typedTelemetry!.Value.Outcome);
+            Assert.Equal(0.25, typedJson.RootElement.GetProperty("testTimingsMs").GetProperty("fileProbe").GetDouble());
+        }
     }
 
     [Theory]
@@ -134,7 +137,7 @@ public sealed class ForwardedResultConversionTests
         "diagnostic" => ("file_read", "test", "session.test", new ServiceResponse
         {
             Success = true,
-            Result = """{"canOpen":false,"exists":false,"message":"Missing fixture"}"""
+            Result = """{"canOpen":false,"exists":false,"message":"Missing fixture","testTimingsMs":{"fileProbe":0.25}}"""
         }),
         "failure" => ("range_read", "get-values", "range.get-values", new ServiceResponse
         {

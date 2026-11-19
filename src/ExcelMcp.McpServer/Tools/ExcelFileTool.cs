@@ -89,6 +89,8 @@ public static partial class ExcelFileTool
     /// Test defaults to 120 seconds and validates ordinary files through a temporary read-only Excel open.
     /// IRM/AIP files require visible authentication; Excel determines editing rights, not protection detection.
     /// Inspect canOpen, excelProcessExited, isIrmProtected, willOpenReadOnly, and requiresVisibleSession.
+    /// testTimingsMs reports elapsed file probe, Excel activation, workbook open, cleanup, and controller worker phases when observed.
+    /// Controller worker request time includes the work inside the worker. Do not add these durations together.
     /// excelProcessExited is false when Excel remains open with other workbooks after validation.
     /// willOpenReadOnly:false does not guarantee editing rights; inspect workbook_read get-info readOnly after opening.
     /// Test does not bypass authentication.

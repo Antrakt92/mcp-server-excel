@@ -211,6 +211,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     {
     }
 
+    internal static ExcelBatch BeginReadOnlyValidation(string filePath, TimeSpan? operationTimeout,
+        bool deferStartup, SessionDiagnostics.TimingCollection? timings) => new(
+            [filePath], logger: null, show: WorkbookLocation.IsRemote(filePath), openReadOnly: true,
+            createNewFile: false, isMacroEnabled: false, operationTimeout: operationTimeout,
+            deferStartup: deferStartup, workbookTestTimings: timings);
+
     /// <summary>
     /// Creates a new ExcelBatch that creates a new workbook file instead of opening an existing one.
     /// The file is saved immediately after creation, then kept open in the session.
@@ -577,7 +583,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         TimeSpan? operationTimeout = null,
         TimeSpan? startupTimeout = null,
         bool deferStartup = false,
-        RunningExcelWindows.ApplicationWindow? attachedApplication = null)
+        RunningExcelWindows.ApplicationWindow? attachedApplication = null,
+        SessionDiagnostics.TimingCollection? workbookTestTimings = null)
     {
         if (workbookPaths == null || workbookPaths.Length == 0)
             throw new ArgumentException("At least one workbook path is required", nameof(workbookPaths));
@@ -661,6 +668,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                     Excel.Application tempExcel;
                     try
                     {
+                        using var activation = workbookTestTimings?.BeginStage("excelActivation");
                         tempExcel = ResiliencePipelines.CreateSessionCreationPipeline().Execute(
                             () => (Excel.Application)Activator.CreateInstance(excelType)!);
                     }
@@ -828,9 +836,10 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                             if (publishedIdentity is not null)
                                 WorkbookCreationPublication.ConfirmIdentity(normalizedPath, publishedIdentity);
                             openingWorkbooks = tempExcel.Workbooks;
-                            wb = openingWorkbooks.Open(
-                                path, UpdateLinks: 0, ReadOnly: _openReadOnly,
-                                IgnoreReadOnlyRecommended: true, Notify: false, AddToMru: false);
+                            using (workbookTestTimings?.BeginStage("workbookOpen"))
+                                wb = openingWorkbooks.Open(
+                                    path, UpdateLinks: 0, ReadOnly: _openReadOnly,
+                                    IgnoreReadOnlyRecommended: true, Notify: false, AddToMru: false);
                             tempWorkbooks[normalizedPath] = wb;
                             if (publishedIdentity is not null)
                             {

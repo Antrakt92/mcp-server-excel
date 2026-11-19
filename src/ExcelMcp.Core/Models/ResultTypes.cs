@@ -1002,6 +1002,12 @@ public class FileValidationInfo
     public bool? ExcelProcessExited { get; set; }
 
     /// <summary>
+    /// Observed workbook test phases in milliseconds. Controller spans can include worker phases.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, double>? TestTimingsMs { get; set; }
+
+    /// <summary>
     /// Whether the file is IRM/AIP-protected (OLE2 compound document format).
     /// IRM-protected files require show=true for visible authentication.
     /// Excel determines the signed-in user's editing permissions; protection alone
