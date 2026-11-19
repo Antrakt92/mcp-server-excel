@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.6.0) | 2026-11-19 | Literal text writes, VBA label warnings and workbook timings |
 | [5.5.2](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.2) | 2026-11-19 | VeryHidden worksheet deletion and NuGet updates |
 | [5.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.1) | 2026-11-19 | VBA return values, timeout tests and workbook inspection guidance |
 | [5.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.0) | 2026-11-18 | Paged visibility, workbook safeguards and Excel session recovery |
@@ -29,6 +30,19 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.6.0 — 2026-11-19
+
+Bulk range writes and table appends now have a literal text mode. Pass `literal_text: true` in MCP, `--literal-text true` in the CLI, or `literalText: true` in batch JSON. Leading zeros, apostrophes, date-like strings and text beginning with `=` survive saving and reopening. Numbers and Booleans keep their types. Existing calls keep their formula and date interpretation.
+
+- **Full-length cell text.** Formula and error reads work alongside 32,767-character cells. Oversized literal writes fail before changing cells, and overwrite checks identify occupied destinations.
+- **Empty tables.** An append with a nonblank first row can succeed when Excel leaves its blank insert row outside the table data. In that state the first row needs at least one value.
+- **VBA inspection.** Use `vba_read list` with `include_label_warnings: true` or `excelcli vba list --include-label-warnings true` to find labels that may have been intended as calls. Results identify the module, procedure and source line. The scan leaves the project unchanged.
+- **Workbook diagnostics.** `file_read test` and `excelcli session test` report `testTimingsMs` for measured phases, including Excel activation, workbook open and cleanup. Failed startup cleanup has a separate field. Controller and worker intervals can overlap.
+
+No dependency versions changed in this release.
+
+[Implementation and verification](https://github.com/Antrakt92/mcp-server-excel/pull/81) · [Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.5.2...v5.6.0)
 
 ## 5.5.2 — 2026-11-19
 
