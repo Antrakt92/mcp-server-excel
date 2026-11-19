@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.5.2](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.2) | 2026-11-19 | VeryHidden worksheet deletion and NuGet updates |
 | [5.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.1) | 2026-11-19 | VBA return values, timeout tests and workbook inspection guidance |
 | [5.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.0) | 2026-11-18 | Paged visibility, workbook safeguards and Excel session recovery |
 | [5.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.4.0) | 2026-11-17 | Windows MCP bundle, workbook edits, and batch validation |
@@ -28,6 +29,25 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.5.2 — 2026-11-19
+
+Deleting a VeryHidden worksheet now works through MCP and the CLI. If Excel refuses or cancels the deletion and the original sheet still exists, the command restores its VeryHidden state before returning the error. This also covers a workbook where the only visible tab is a chart sheet.
+
+### Dependencies
+
+| Package | Previous | New |
+| --- | --- | --- |
+| ModelContextProtocol | 2.3.1 | 2.4.0 |
+| OpenTelemetry, OpenTelemetry.Api, OpenTelemetry.Extensions.Hosting, OpenTelemetry.Exporter.InMemory, OpenTelemetry.Exporter.OpenTelemetryProtocol | 1.20.1 | 1.21.0 |
+| Microsoft.Extensions.Caching.Abstractions, Configuration, Configuration.Binder, Configuration.EnvironmentVariables, Diagnostics, Diagnostics.Abstractions, FileProviders.Abstractions, Hosting, Hosting.Abstractions, Logging, Logging.Abstractions, Logging.Configuration, Options, Options.ConfigurationExtensions | 10.0.14 | 10.0.15 |
+| System.Drawing.Common | 10.0.14 | 11.0.0 |
+| Microsoft.Extensions.Resilience | 10.11.0 | 11.0.0 |
+| Microsoft.NET.Test.Sdk (test tooling) | 18.11.0 | 18.12.0 |
+
+The dependency updates come from the upstream project. Existing command arguments and the Windows x64 requirement carry forward.
+
+[Worksheet fix](https://github.com/Antrakt92/mcp-server-excel/pull/78) · [Upstream sync](https://github.com/Antrakt92/mcp-server-excel/pull/79) · [Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.5.1...v5.5.2)
 
 ## 5.5.1 — 2026-11-19
 
