@@ -124,6 +124,15 @@ Returned arrays are limited to 10,000 elements and results have a conservative
 4 MiB transport budget. If return conversion is refused, execution has already
 completed: inspect its workbook effects before considering another invocation.
 
+When `invoke` succeeds with `returnKind: "null"`, Excel supplied no usable
+scalar. This covers a Sub, a Variant containing Empty or Null, and worksheet
+module functions whose side effects ran even though `Application.Run` supplied
+no value. If a worksheet function's result matters, call an explicit Function
+in a standard VBA module that forwards the arguments and returns the worksheet
+function's value. Choose that entry point before invocation. After a null
+return, verify the expected workbook effect before deciding whether to run
+anything again.
+
 If a client presents `arguments[].value` as string-only, use the
 [MCP batch route](../reference/workflows.md#mcp-batch) to preserve scalar types.
 
@@ -151,6 +160,17 @@ alone is insufficient. Cover affected scalar/grid reads, formula traces and spil
 inspection with focused real-Excel regressions containing both numeric collisions
 and actual errors. This is a development invariant, not proof that an untested
 caller already satisfies it.
+
+For a cell that shows hashes in print, compare `range_read inspect-cells`
+(`value`, `displayedText`) with `range_format_read get-format-summary`
+(`numberFormat`, `columnWidth`, `wrapText`, `shrinkToFit`) on the same cell.
+`columnWidth` is in Excel character units. Confirm the final appearance in a
+PDF or print preview.
+
+`drawing_read list-objects` can identify ActiveX worksheet shapes by name and
+geometry under `kind: "Other"`. It provides shape text where available. ActiveX
+captions and `PrintObject` are outside this inventory. Verify control captions
+from supported saved control metadata and verify print visibility in the output.
 
 Use `range_format_read` action `get-format-summary` for aggregate stored,
 displayed or both views, including mixed fields. It is not a per-cell histogram;

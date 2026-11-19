@@ -1,8 +1,11 @@
 using System.Text.Json;
+using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.Core.Commands;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
+using Excel = Microsoft.Office.Interop.Excel;
+using Vbe = Microsoft.Vbe.Interop;
 
 namespace Sbroenne.ExcelMcp.Service.Tests;
 
@@ -737,6 +740,96 @@ End Sub";
         Assert.True(values[1][0].GetBoolean());
         Assert.True(values[1][1].GetBoolean());
         Assert.Equal(JsonValueKind.Null, values[1][2].ValueKind);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void ScriptCommands_Invoke_WorksheetFunctionNeedsExplicitBridgeForReturnValue(int view)
+    {
+        var batch = _fixture.BatchToken;
+        Import(batch, "SheetReturnBridge", "Option Explicit\nPublic Sub Bootstrap()\nEnd Sub");
+        string sheetName = _fixture.CreateTestSheet(batch);
+        string codeName = _fixture.ExecuteRawVerification((ctx, _) =>
+        {
+            Vbe.VBProject? project = null;
+            Vbe.VBComponents? components = null;
+            Excel.Sheets? sheets = null;
+            Excel.Worksheet? sheet = null;
+            try
+            {
+                project = ctx.Book.VBProject;
+                components = project.VBComponents;
+                sheets = ctx.Book.Worksheets;
+                sheet = (Excel.Worksheet)sheets[sheetName];
+                return sheet.CodeName;
+            }
+            finally
+            {
+                ComUtilities.Release(ref sheet);
+                ComUtilities.Release(ref sheets);
+                ComUtilities.Release(ref components);
+                ComUtilities.Release(ref project);
+            }
+        });
+        Assert.False(string.IsNullOrWhiteSpace(codeName), "The new worksheet requires an initialized VBA document CodeName.");
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1", [[0]]));
+        RequireSuccess(_scriptCommands.Update(batch, codeName, """
+            Option Explicit
+            Public Function PreparePrint(ByVal view As Long) As String
+                Me.Range("A1").Value2 = Me.Range("A1").Value2 + 1
+                If view = 1 Then
+                    Me.PageSetup.PrintArea = "$B$1"
+                Else
+                    Me.PageSetup.PrintArea = "$C$1"
+                End If
+                PreparePrint = "prepared:" & CStr(view)
+            End Function
+            """));
+        RequireSuccess(_scriptCommands.Update(batch, "SheetReturnBridge", $$"""
+            Option Explicit
+            Public Function PreparePrint(ByVal view As Long) As String
+                PreparePrint = {{codeName}}.PreparePrint(view)
+            End Function
+            """));
+
+        var direct = _fixture.Send("vba.invoke", new
+        {
+            procedureName = $"{codeName}.PreparePrint",
+            arguments = new[] { new { type = "number", value = view } }
+        });
+        Assert.True(direct.Success, direct.ErrorMessage);
+        using (var json = JsonDocument.Parse(direct.Result!))
+        {
+            Assert.True(json.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal("null", json.RootElement.GetProperty("returnKind").GetString());
+            Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("value").ValueKind);
+        }
+        AssertInvocationState(1);
+
+        var bridged = _fixture.Send("vba.invoke", new
+        {
+            procedureName = "SheetReturnBridge.PreparePrint",
+            arguments = new[] { new { type = "number", value = view } }
+        });
+        Assert.True(bridged.Success, bridged.ErrorMessage);
+        using (var json = JsonDocument.Parse(bridged.Result!))
+        {
+            Assert.True(json.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal("string", json.RootElement.GetProperty("returnKind").GetString());
+            Assert.Equal($"prepared:{view}", json.RootElement.GetProperty("value").GetString());
+        }
+        AssertInvocationState(2);
+
+        void AssertInvocationState(int callCount)
+        {
+            RangeReadAssertions.Number(callCount, RequireSuccess(_commands.GetValues(batch, sheetName, "A1")).Values[0][0]);
+            var setup = _fixture.Send("worksheetstyle.get-page-setup", new { sheetName });
+            Assert.True(setup.Success, setup.ErrorMessage);
+            using var pageSetup = JsonDocument.Parse(setup.Result!);
+            Assert.True(pageSetup.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(view == 1 ? "$B$1" : "$C$1", pageSetup.RootElement.GetProperty("printArea").GetString());
+        }
     }
 
     [Fact]
