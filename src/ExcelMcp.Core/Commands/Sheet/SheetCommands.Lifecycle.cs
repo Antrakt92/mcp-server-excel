@@ -304,6 +304,7 @@ public partial class SheetCommands
         return batch.Execute((ctx, ct) =>
         {
             Excel.Worksheet? sheet = null;
+            var restoreVisibility = false;
             try
             {
                 sheet = ComUtilities.FindSheet(ctx.Book, sheetName);
@@ -312,6 +313,14 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Sheet '{sheetName}' not found.");
                 }
                 ct.ThrowIfCancellationRequested();
+                // Excel rejects Delete on a VeryHidden worksheet until it is made visible.
+                restoreVisibility = sheet.Visible == Excel.XlSheetVisibility.xlSheetVeryHidden &&
+                    !ctx.Book.ProtectStructure;
+                if (restoreVisibility)
+                {
+                    sheet.Visible = Excel.XlSheetVisibility.xlSheetVisible;
+                    ct.ThrowIfCancellationRequested();
+                }
                 sheet.Delete();
                 // Excel's COM interop drops the Boolean result when the confirmation is cancelled.
                 bool originalStillPresent;
@@ -329,6 +338,19 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Excel did not delete worksheet '{sheetName}'. The original worksheet is still present.");
                 }
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
+            }
+            catch (Exception failure) when (restoreVisibility && sheet is not null)
+            {
+                OperationCleanup.Run(() =>
+                {
+                    if (!ContainsWorksheet(ctx.Book, sheet))
+                        return;
+                    if (sheet.Visible != Excel.XlSheetVisibility.xlSheetVeryHidden)
+                        sheet.Visible = Excel.XlSheetVisibility.xlSheetVeryHidden;
+                    if (sheet.Visible != Excel.XlSheetVisibility.xlSheetVeryHidden)
+                        throw new InvalidOperationException($"Could not restore the visibility of worksheet '{sheetName}'.");
+                }, failure);
+                throw;
             }
             finally
             {
