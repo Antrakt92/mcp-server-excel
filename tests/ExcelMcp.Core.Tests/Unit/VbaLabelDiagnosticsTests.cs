@@ -43,12 +43,13 @@ public sealed class VbaLabelDiagnosticsTests
     [InlineData("If state Then GoTo _\n        ResetTimer")]
     public void Analyze_ActualTargetsInSameProcedureAreExempt(string reference)
     {
-        var diagnostics = VbaLabelScanner.Analyze(
-        [
-            new("Module1", true, $"Sub ResetTimer()\nEnd Sub\nSub Probe()\n    {reference}\nReset: done = True\nEnd Sub")
-        ]);
+        const string prefix = "Sub ResetTimer()\nEnd Sub\nSub Probe()\n";
+        const string body = "ResetTimer: done = True\nEnd Sub";
+        var withoutJump = VbaLabelScanner.Analyze([new("Module1", true, prefix + body)]);
+        AssertWarning(Assert.Single(withoutJump.Warnings), "Module1", "Probe", 4, "ResetTimer");
 
-        Assert.Empty(diagnostics.Warnings);
+        var withJump = VbaLabelScanner.Analyze([new("Module1", true, prefix + "    " + reference + "\n" + body)]);
+        Assert.Empty(withJump.Warnings);
     }
 
     [Fact]
