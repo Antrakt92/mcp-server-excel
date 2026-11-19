@@ -22,8 +22,9 @@ internal static class VbaLabelScanner
     private static readonly Regex Label = new(@"^\s*(" + Identifier + @")\s*:", Keywords);
     private static readonly Regex Jump = new(
         @"\b(?:GoTo|GoSub|Resume)\s+(" + Target + @"(?:\s*,\s*" + Target + @")*)", Keywords);
-    private static readonly Regex QuotedText = new(
-        "\"(?:[^\"\\r\\n]|\"\")*\"", RegexOptions.NonBacktracking | RegexOptions.CultureInvariant);
+    private static readonly Regex NonStatementText = new(
+        "\"(?:[^\"\\r\\n]|\"\")*\"|\\[[^\\]\\r\\n]*\\]",
+        RegexOptions.NonBacktracking | RegexOptions.CultureInvariant);
 
     internal static VbaLabelDiagnostics Analyze(
         IReadOnlyList<VbaLabelSource> modules, CancellationToken cancellationToken = default)
@@ -121,13 +122,12 @@ internal static class VbaLabelScanner
                 procedure.Labels.Add((line, label.Groups[1].Value));
             }
 
-            string withoutStrings = QuotedText.Replace(code, "\"\"");
-            foreach (Match jump in Jump.Matches(withoutStrings))
+            foreach (Match jump in Jump.Matches(code))
             {
                 procedure.JumpTargets.UnionWith(jump.Groups[1].Value.Split(',', StringSplitOptions.TrimEntries));
             }
 
-            if (ProcedureEnd.IsMatch(withoutStrings))
+            if (ProcedureEnd.IsMatch(code))
             {
                 procedure = null;
             }
@@ -144,7 +144,9 @@ internal static class VbaLabelScanner
         for (int line = 1; reader.ReadLine() is { } physical; line++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string code = physical[..VbaModuleSource.CommentStart(physical)].TrimEnd();
+            // An apostrophe inside a bracketed member name is part of the name.
+            string masked = NonStatementText.Replace(physical, "\"\"");
+            string code = masked[..VbaModuleSource.CommentStart(masked)].TrimEnd();
             if (pending.Length == 0)
             {
                 startLine = line;

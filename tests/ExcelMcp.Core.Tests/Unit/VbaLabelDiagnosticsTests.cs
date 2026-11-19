@@ -41,6 +41,7 @@ public sealed class VbaLabelDiagnosticsTests
     [InlineData("On Error GoTo ResetTimer")]
     [InlineData("On state GoSub First, _\n        ResetTimer")]
     [InlineData("If state Then GoTo _\n        ResetTimer")]
+    [InlineData("Debug.Print recordset![Next's field]: GoTo ResetTimer")]
     public void Analyze_ActualTargetsInSameProcedureAreExempt(string reference)
     {
         const string prefix = "Sub ResetTimer()\nEnd Sub\nSub Probe()\n";
@@ -74,6 +75,25 @@ public sealed class VbaLabelDiagnosticsTests
         ]);
 
         AssertWarning(Assert.Single(diagnostics.Warnings), "Module1", "Probe", 7, "ResetTimer");
+    }
+
+    [Fact]
+    public void Analyze_BracketedMemberNamesDoNotActAsVbaStatements()
+    {
+        var diagnostics = VbaLabelScanner.Analyze(
+        [
+            new("Module1", true, """
+                Sub ResetTimer()
+                End Sub
+                Sub Probe()
+                    Debug.Print recordset![GoTo ResetTimer]
+                    Debug.Print recordset![Status: End Sub: cached]
+                ResetTimer: done = True
+                End Sub
+                """)
+        ]);
+
+        AssertWarning(Assert.Single(diagnostics.Warnings), "Module1", "Probe", 6, "ResetTimer");
     }
 
     [Fact]
