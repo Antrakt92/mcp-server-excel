@@ -45,7 +45,7 @@ public sealed class PersistentServiceRangeOverwritePolicyTests(
         var r1c1 = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:D1", FormulaReferenceStyle.R1C1));
         Assert.Equal(["", "", "=RC[-1]", "=1/0"], Assert.Single(r1c1.Formulas));
 
-        var page = RequireSuccess(_commands.GetValuesPage(batch, sheetName, "A1:D1"));
+        var page = RequireSuccess(_commands.GetValuesPage(batch, sheetName, "A1:E1"));
         Assert.Equal(values, Assert.Single(page.Values));
         Assert.Equal("D1", Assert.Single(page.CellErrors).CellAddress);
         Assert.Equal("=1/0", Assert.Single(page.CellErrors).Formula);

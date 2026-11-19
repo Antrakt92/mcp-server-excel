@@ -52,7 +52,7 @@ public sealed class PersistentServiceVbaCommandsTests :
     {
         var batch = _fixture.BatchToken;
         Import(batch, "LabelHelpers", "Public Sub LabelReset()\nEnd Sub");
-        Import(batch, "LabelProbe", "Public Sub Probe()\n    LabelReset: Debug.Print 1\nEnd Sub");
+        Import(batch, "LabelProbe", "Public Sub Probe()\nLabelReset:\n    Debug.Print 1\nEnd Sub");
         string original = RequireSuccess(_scriptCommands.View(batch, "LabelProbe")).Code;
         Assert.Null(RequireSuccess(_scriptCommands.List(batch)).LabelDiagnostics);
 
