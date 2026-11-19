@@ -745,6 +745,10 @@ public class VbaListResult : ResultBase
     /// List of VBA scripts
     /// </summary>
     public List<ScriptInfo> Scripts { get; set; } = [];
+
+    /// <summary>Advisory label diagnostics when explicitly requested by the list action.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VbaLabelDiagnostics? LabelDiagnostics { get; set; }
 }
 
 /// <summary>VBA project access and execution status.</summary>

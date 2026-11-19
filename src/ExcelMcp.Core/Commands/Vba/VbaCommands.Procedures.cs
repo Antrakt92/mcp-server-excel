@@ -218,7 +218,8 @@ public partial class VbaCommands
         });
     }
 
-    internal static List<VbaProcedureInfo> GetProcedures(Vbe.CodeModule codeModule, CancellationToken cancellationToken = default)
+    internal static List<VbaProcedureInfo> GetProcedures(
+        Vbe.CodeModule codeModule, CancellationToken cancellationToken = default, Action<string>? captureLine = null)
     {
         int moduleLineCount = Convert.ToInt32(codeModule.CountOfLines, CultureInfo.InvariantCulture);
         var procedures = new List<VbaProcedureInfo>();
@@ -228,6 +229,7 @@ public partial class VbaCommands
         {
             cancellationToken.ThrowIfCancellationRequested();
             string firstLine = Convert.ToString(codeModule.Lines[line, 1], CultureInfo.InvariantCulture) ?? string.Empty;
+            captureLine?.Invoke(firstLine);
             VbaProcedureDeclaration? declaration = VbaProcedureSource.TryParseProcedureHeader(firstLine);
             if (declaration == null)
             {

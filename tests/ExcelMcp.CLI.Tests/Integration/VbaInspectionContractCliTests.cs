@@ -51,6 +51,37 @@ public sealed class VbaInspectionContractCliTests
         Assert.Equal(12, match.GetProperty("column").GetInt32());
     }
 
+    [Fact]
+    public async Task List_OptInForwardsLabelDiagnostics()
+    {
+        ServiceRequest? captured = null;
+        var result = await InProcessCliHelper.RunAsync(
+            ["vba", "list", "--session", "session-1", "--include-label-warnings"],
+            request =>
+            {
+                captured = request;
+                return new ServiceResponse
+                {
+                    Success = true,
+                    Result = """
+                        {"success":true,"scripts":[],"labelDiagnostics":{"warnings":[{"moduleName":"Module1","procedureName":"Probe","line":4,"label":"Reset"}]}}
+                        """
+                };
+            });
+
+        Assert.True(result.ExitCode == 0, result.Stdout + result.Stderr);
+        Assert.NotNull(captured);
+        Assert.Equal("vba.list", captured.Command);
+        using var args = JsonDocument.Parse(captured.Args!);
+        Assert.True(args.RootElement.GetProperty("includeLabelWarnings").GetBoolean());
+        using var output = JsonDocument.Parse(result.Stdout);
+        var diagnostic = output.RootElement.GetProperty("data").GetProperty("labelDiagnostics");
+        var warning = Assert.Single(diagnostic.GetProperty("warnings").EnumerateArray());
+        Assert.Equal("Reset", warning.GetProperty("label").GetString());
+        Assert.Equal(4, warning.GetProperty("line").GetInt32());
+    }
+
+
     [Theory]
     [InlineData("status")]
     [InlineData("references")]

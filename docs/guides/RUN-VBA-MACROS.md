@@ -167,6 +167,25 @@ fingerprint includes introductory comments, so intervening changes to those
 comments also reject the replacement. Replacement is blocked while the project
 is running or paused in break mode.
 
+### Check ambiguous VBA labels
+
+To check edited VBA for accidental labels, use `vba_read` action `list` with
+`include_label_warnings: true`, or run:
+
+```powershell
+excelcli -q vba list --session $session --include-label-warnings
+```
+
+A line like `ResetTimer: started = Timer` defines a label. If you mean to call
+`ResetTimer`, write `Call ResetTimer` on its own line. The optional scan reports
+the module, procedure and line for labels that match a zero-argument `Sub` in
+the same module or a public `Sub` in another standard module. Labels that are
+jump targets are skipped. The scan leaves the VBA source untouched and reports
+at most 100 warnings. It skips declarations and labels inside conditional
+compilation blocks and requires source under the project scan limit. Use the
+VBA compiler and check observed behavior separately.
+
+
 ## Save to the right file format
 
 VBA commands support `.xlsm` workbooks. Saving VBA into an `.xlsx` silently
