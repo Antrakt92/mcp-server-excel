@@ -14,7 +14,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Table;
 public partial class TableCommands
 {
     /// <inheritdoc />
-    public OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, string? rowsFile = null)
+    public OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, string? rowsFile = null, bool literalText = false)
     {
         ValidateRequiredTableName(tableName);
         var resolvedRows = ParameterTransforms.ResolveValuesOrFile(rows, rowsFile, "rows");
@@ -27,6 +27,8 @@ public partial class TableCommands
             Excel.Worksheet? sheet = null;
             Excel.Range? tableRange = null;
             Excel.Range? expandedRange = null;
+            Excel.Range? expandedRows = null;
+            Excel.Range? currentTableRange = null;
             Excel.ListRows? listRows = null;
             Excel.Range? body = null;
             Excel.Range? bodyCells = null;
@@ -59,11 +61,13 @@ public partial class TableCommands
                 listRows = table.ListRows;
                 originalRowCount = listRows.Count;
                 bool showTotals = table.ShowTotals;
+                bool showHeaders = originalRowCount == 0 && !showTotals && table.ShowHeaders;
+                int tableFirstRow = tableRange.Row;
                 // An empty table's Range can include its blank insert row, which ListRows excludes.
                 int dataAndHeaderHeight = originalRowCount == 0 && !showTotals
-                    ? (table.ShowHeaders ? 1 : 0)
+                    ? (showHeaders ? 1 : 0)
                     : tableHeight;
-                int lastTableRow = tableRange.Row + dataAndHeaderHeight - 1;
+                int lastTableRow = tableFirstRow + dataAndHeaderHeight - 1;
                 int firstColumn = tableRange.Column;
                 int rowsToAdd = resolvedRows.Count;
                 EnsureAppendSpace(ctx, sheet, lastTableRow, firstColumn, rowsToAdd, columnCount);
@@ -72,7 +76,7 @@ public partial class TableCommands
                 {
                     ct.ThrowIfCancellationRequested();
                     for (int column = 0; column < columnCount; column++)
-                        values[row + 1, column + 1] = RangeHelpers.ConvertToCellValue(resolvedRows[row][column]);
+                        values[row + 1, column + 1] = RangeHelpers.ConvertToCellValue(resolvedRows[row][column], literalText);
                 }
 
                 expandedRange = tableRange.Resize[dataAndHeaderHeight + rowsToAdd, columnCount];
@@ -80,6 +84,41 @@ public partial class TableCommands
                 expectedRows = originalRowCount + rowsToAdd;
                 expansionAttempted = true;
                 table.Resize(expandedRange);
+                if (expectedRows == 1 && originalRowCount == 0 && !showTotals && listRows.Count == 0)
+                {
+                    // Excel may keep a blank insert row outside ListRows. Write the
+                    // supplied data only to the checked row, then verify the table again.
+                    if (!Enumerable.Range(1, columnCount).Any(column => values[1, column] is not string { Length: 0 }))
+                        throw new InvalidOperationException("Excel did not create a data row in the empty table. Include at least one value in its first appended row.");
+
+                    EnsureAppendSpace(ctx, sheet, lastTableRow, firstColumn, rowsToAdd, columnCount);
+                    expandedRows = expandedRange.Rows;
+                    destination = expandedRows[dataAndHeaderHeight + 1, Type.Missing];
+                    if (RangeHelpers.GetDimensions(destination) != (1, columnCount)
+                        || destination.Row != lastTableRow + 1 || destination.Column != firstColumn)
+                        throw new InvalidOperationException("Excel did not return the requested first append row.");
+                    ct.ThrowIfCancellationRequested();
+                    writeAttempted = true;
+                    destination.Value2 = values;
+
+                    // Excel may auto-expand or run a workbook handler during the write.
+                    // Do not resize over either change. Retry only the original zero-row shape.
+                    if (listRows.Count == 0)
+                    {
+                        currentTableRange = table.Range;
+                        var currentDimensions = RangeHelpers.GetDimensions(currentTableRange);
+                        if (!string.Equals(table.Name, tableName, StringComparison.OrdinalIgnoreCase)
+                            || table.ShowHeaders != showHeaders || table.ShowTotals != showTotals
+                            || currentTableRange.Row != tableFirstRow || currentTableRange.Column != firstColumn
+                            || expandedRange.Row != tableFirstRow || expandedRange.Column != firstColumn
+                            || RangeHelpers.GetDimensions(expandedRange) != (dataAndHeaderHeight + 1, columnCount)
+                            || currentDimensions.Columns != columnCount || currentDimensions.Rows > dataAndHeaderHeight + 1)
+                            throw new InvalidOperationException("Excel changed the table before the first append row could be verified.");
+
+                        ct.ThrowIfCancellationRequested();
+                        table.Resize(expandedRange);
+                    }
+                }
 
                 body = table.DataBodyRange;
                 int actualRows = listRows.Count;
@@ -97,10 +136,13 @@ public partial class TableCommands
                 if (firstNewCell.Row != lastTableRow + (showTotals ? 0 : 1) || firstNewCell.Column != firstColumn)
                     throw new InvalidOperationException("Excel moved the new data rows outside the expected append location.");
 
-                destination = firstNewCell.Resize[rowsToAdd, columnCount];
-                ct.ThrowIfCancellationRequested();
-                writeAttempted = true;
-                destination.Value2 = values;
+                if (!writeAttempted)
+                {
+                    destination = firstNewCell.Resize[rowsToAdd, columnCount];
+                    ct.ThrowIfCancellationRequested();
+                    writeAttempted = true;
+                    destination.Value2 = values;
+                }
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             catch (Exception ex) when (expansionAttempted)
@@ -119,6 +161,8 @@ public partial class TableCommands
                 ComUtilities.Release(ref firstNewCell);
                 ComUtilities.Release(ref bodyCells);
                 ComUtilities.Release(ref body);
+                ComUtilities.Release(ref currentTableRange);
+                ComUtilities.Release(ref expandedRows);
                 ComUtilities.Release(ref expandedRange);
                 ComUtilities.Release(ref listRows);
                 ComUtilities.Release(ref tableRange);

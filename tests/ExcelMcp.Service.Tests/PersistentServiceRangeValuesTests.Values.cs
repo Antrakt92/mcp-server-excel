@@ -14,6 +14,52 @@ public sealed partial class PersistentServiceRangeValuesTests
     // === VALUE OPERATIONS TESTS ===
 
     [Fact]
+    public void SetValues_LiteralTextPreservesValuesAndFormats()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "C1", "@"));
+        string longText = new('x', 32766);
+        string[] text = ["=1+2", "'literal", "+1", "-2", "@name", "\t=7+8", "00008",
+            "2026-01-05", "9E2", " spaced ", "a\"b"];
+        object?[] inputs = [.. text, 17, true, null, "", longText];
+
+        var write = _fixture.Send("range.set-values",
+            new { sheetName, rangeAddress = "A1:P1", values = new[] { inputs }, literalText = true });
+        Assert.True(write.Success, write.ErrorMessage);
+
+        var result = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:O1"));
+        Assert.All(Assert.Single(result.Formulas), formula => Assert.Empty(formula));
+        var values = Assert.Single(result.Values);
+        Assert.Equal(text, values.Take(text.Length).Select(Assert.IsType<string>));
+        Assert.Equal(17d, Convert.ToDouble(values[11], CultureInfo.InvariantCulture));
+        Assert.Equal(true, values[12]);
+        Assert.Null(values[13]);
+        Assert.Null(values[14]);
+        string retainedText = Assert.IsType<string>(
+            RequireSuccess(_commands.GetValues(batch, sheetName, "P1")).Values[0][0]);
+        Assert.Equal(longText.Length, retainedText.Length);
+        Assert.Equal(longText, retainedText);
+        Assert.Equal<string>(["General", "General", "@"],
+            RequireSuccess(_commands.GetNumberFormats(batch, sheetName, "A1:C1")).Formats[0]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SetValues_InvalidLiteralTextLeavesTheEntireRangeBlank(bool embeddedNull)
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        var invalid = embeddedNull ? "bad\0text" : new string('x', 32767);
+        var result = await _fixture.SendForFailureAsync("range.set-values",
+            new { sheetName, rangeAddress = "A1:B1", values = new[] { new[] { "First", invalid } }, literalText = true });
+
+        Assert.Equal("InvalidInput", result.ErrorCategory);
+        Assert.All(RequireSuccess(_commands.GetValues(_fixture.BatchToken, sheetName, "A1:B1")).Values[0],
+            value => Assert.Null(value));
+    }
+
+    [Fact]
     public async Task SetValues_QuotedCsvPreservesCellsAndRejectsMalformedInputBeforeWrite()
     {
         var batch = _fixture.BatchToken;

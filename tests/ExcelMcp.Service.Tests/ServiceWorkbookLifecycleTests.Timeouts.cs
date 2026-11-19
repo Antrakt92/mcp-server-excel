@@ -763,6 +763,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
             Assert.Equal(path, result.RootElement.GetProperty("filePath").GetString());
             Assert.Contains("cannot open", result.RootElement.GetProperty("message").GetString(),
                 StringComparison.OrdinalIgnoreCase);
+            var timings = result.RootElement.GetProperty("testTimingsMs");
+            Assert.Equal(["excelActivation", "excelFailedStartupCleanup", "fileProbe", "workbookOpen"],
+                timings.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+            Assert.True(timings.GetProperty("excelFailedStartupCleanup").GetDouble() > 0);
             Assert.Equal(0, service.SessionCount);
             Assert.Empty(service.SessionManager.GetActiveSessions());
             Assert.Equal("not an Excel workbook", await File.ReadAllTextAsync(path));

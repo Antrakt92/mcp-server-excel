@@ -48,16 +48,15 @@ public static class SessionDiagnostics
         operation();
     }
 
-    internal static CloseStageTiming? BeginCloseStage(string stage) =>
-        CloseTimings.Value is { } timings ? new CloseStageTiming(stage, timings) : null;
+    internal static TimingCollection.Stage? BeginCloseStage(string stage) =>
+        CloseTimings.Value?.BeginStage(stage);
 
-    internal sealed class CloseTimingCollection : IDisposable
+    internal class TimingCollection
     {
-        private readonly CloseTimingCollection? _previous = CloseTimings.Value;
         private readonly Lock _lock = new();
         private readonly Dictionary<string, double> _elapsed = new(StringComparer.Ordinal);
 
-        internal CloseTimingCollection() => CloseTimings.Value = this;
+        internal Stage BeginStage(string stage) => new(stage, this);
 
         internal void Record(string stage, double elapsedMs)
         {
@@ -70,6 +69,20 @@ public static class SessionDiagnostics
             lock (_lock)
                 return _elapsed.ToDictionary(entry => entry.Key, entry => Math.Round(entry.Value, 2));
         }
+
+        internal sealed class Stage(string stage, TimingCollection timings) : IDisposable
+        {
+            private readonly long _started = Stopwatch.GetTimestamp();
+
+            public void Dispose() => timings.Record(stage, Stopwatch.GetElapsedTime(_started).TotalMilliseconds);
+        }
+    }
+
+    internal sealed class CloseTimingCollection : TimingCollection, IDisposable
+    {
+        private readonly CloseTimingCollection? _previous = CloseTimings.Value;
+
+        internal CloseTimingCollection() => CloseTimings.Value = this;
 
         public void Dispose() => CloseTimings.Value = _previous;
     }
@@ -86,12 +99,5 @@ public static class SessionDiagnostics
         }
 
         public void Dispose() => CloseTimings.Value = _previous;
-    }
-
-    internal sealed class CloseStageTiming(string stage, CloseTimingCollection timings) : IDisposable
-    {
-        private readonly long _started = Stopwatch.GetTimestamp();
-
-        public void Dispose() => timings.Record(stage, Stopwatch.GetElapsedTime(_started).TotalMilliseconds);
     }
 }

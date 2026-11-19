@@ -4,6 +4,19 @@ Make targeted edits to the intended cells, preserving unrelated data and layout.
 Use CLI help or MCP tool descriptions for current command syntax and inputs.
 This guide explains choices that affect the workbook, not the command catalogue.
 
+## Bulk text and formulas
+
+For identifiers, date-like strings, or formula results you want to keep as
+text, set `literal_text: true` on MCP `range set-values`, use
+`--literal-text true` in the CLI, or pass `literalText: true` in batch JSON.
+Nonempty strings keep their leading zeros, apostrophes, and any initial
+`=`. Numbers and Booleans keep their types. Empty strings and null write
+blank cells. Literal text supports up to 32,766 UTF-16 code units and cannot
+contain NUL. Use `set-formulas` for formulas.
+
+When sourcing a CSV file, quote fields whose surrounding spaces matter.
+Use JSON for unambiguous strings and typed numbers or Booleans.
+
 ## Formula preflight
 
 `validate-formulas` checks the actual target rectangle and payload dimensions,

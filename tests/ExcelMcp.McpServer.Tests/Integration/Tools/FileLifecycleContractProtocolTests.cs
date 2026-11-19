@@ -127,8 +127,15 @@ public sealed class FileLifecycleContractProtocolTests : McpIntegrationTestBase
         Assert.NotNull(serviceResponse.Result);
         using var serviceJson = JsonDocument.Parse(serviceResponse.Result);
         using var json = JsonDocument.Parse(toolResult);
-        foreach (var property in serviceJson.RootElement.EnumerateObject())
+        foreach (var property in serviceJson.RootElement.EnumerateObject().Where(property => property.Name != "testTimingsMs"))
             Assert.True(JsonElement.DeepEquals(property.Value, json.RootElement.GetProperty(property.Name)), property.Name);
+
+        var directTiming = Assert.Single(serviceJson.RootElement.GetProperty("testTimingsMs").EnumerateObject());
+        Assert.Equal("fileProbe", directTiming.Name);
+        Assert.True(directTiming.Value.GetDouble() >= 0);
+        var mcpTiming = Assert.Single(json.RootElement.GetProperty("testTimingsMs").EnumerateObject());
+        Assert.Equal(directTiming.Name, mcpTiming.Name);
+        Assert.True(mcpTiming.Value.GetDouble() >= 0);
         Assert.Equal("OperationFailed", json.RootElement.GetProperty("errorCategory").GetString());
         Assert.False(json.RootElement.TryGetProperty("isError", out _));
         Assert.False(json.RootElement.GetProperty("canOpen").GetBoolean());

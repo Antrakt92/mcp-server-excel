@@ -106,6 +106,8 @@ public partial class RangeCommands
 
             var expected = PrepareCellState(edit.Expected);
             var replacement = PrepareCellState(edit.Replacement);
+            if (!replacement.IsFormula && replacement.Content is string replacementText)
+                RangeHelpers.ValidateLiteralCellText(replacementText);
             textLength += (expected.Content as string)?.Length ?? 0;
             textLength += (replacement.Content as string)?.Length ?? 0;
             if (textLength > 131_072)

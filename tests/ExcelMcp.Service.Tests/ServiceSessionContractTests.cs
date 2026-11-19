@@ -127,6 +127,9 @@ public sealed class ServiceSessionContractTests
         Assert.Equal(".xlsx", info.Extension);
         Assert.Contains("authentication", info.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("not found", info.Message, StringComparison.OrdinalIgnoreCase);
+        var probe = Assert.Single(info.TestTimingsMs!);
+        Assert.Equal("fileProbe", probe.Key);
+        Assert.True(probe.Value >= 0);
         Assert.Equal(0, service.SessionCount);
     }
 

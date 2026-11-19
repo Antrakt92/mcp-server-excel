@@ -62,6 +62,21 @@ public sealed class PersistentServiceRangePatchTests(PersistentServiceWorkbookFi
     }
 
     [Fact]
+    public async Task OversizedLiteralIsRejectedBeforeAnyPatchWrite()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var edits = new[]
+        {
+            new { address = "A1", expected = new { value = (string?)null }, replacement = new { value = "First" } },
+            new { address = "B1", expected = new { value = (string?)null }, replacement = new { value = new string('x', 32767) } }
+        };
+        var result = await _fixture.SendForFailureAsync("range.patch-cells", new { sheetName, patchOptions = new { edits } });
+        Assert.Equal("InvalidInput", result.ErrorCategory);
+        Assert.All(RequireSuccess(_commands.GetValues(batch, sheetName, "A1:B1")).Values[0], value => Assert.Null(value));
+    }
+
+    [Fact]
     public async Task LaterInvalidFormulaReportsEarlierNativeWriteAndLeavesNextCellUnchanged()
     {
         var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);

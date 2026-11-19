@@ -316,6 +316,7 @@ public partial class NamedRangeCommands
     /// <inheritdoc />
     public OperationResult Write(IExcelBatch batch, string name, string value)
     {
+        var cellValue = RangeHelpers.ConvertToCellValue(ParseWriteValue(value), literalText: true);
         return batch.Execute((ctx, ct) =>
         {
             Excel.Name? nameObj = null;
@@ -343,8 +344,7 @@ public partial class NamedRangeCommands
                     calculationChanged = true;
                 }
 
-                var parsed = ParseWriteValue(value);
-                refersToRange.Value2 = parsed is string { Length: > 0 } text ? "'" + text : parsed;
+                refersToRange.Value2 = cellValue;
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath }; // Dummy return for batch.Execute
             }

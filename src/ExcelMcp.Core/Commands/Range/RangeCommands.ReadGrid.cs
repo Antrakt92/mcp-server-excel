@@ -8,6 +8,12 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 public partial class RangeCommands
 {
+    // Excel's formula getter can fail on full-length text constants returned in a bulk grid.
+    // A string longer than the formula limit is the signal to use scalar formula reads.
+    private const int FormulaTextLimit = 8192;
+
+    private static bool IsLongCellText(object? value) => value is string { Length: > FormulaTextLimit };
+
     private static (int Rows, int Columns) RequireReadRectangle(Excel.Range range)
     {
         Excel.Areas? areas = null;
@@ -60,33 +66,48 @@ public partial class RangeCommands
                     if (grid.RowCount != window.Rows || grid.ColumnCount != window.Columns)
                         throw new InvalidOperationException("Excel returned dimensions different from the requested read tile.");
                     // Reject oversized values before requesting an additional native formula array.
+                    bool containsLongText = false;
                     foreach (var values in grid.Values)
                         foreach (var value in values)
                         {
                             ct.ThrowIfCancellationRequested();
                             budget.AddScalar(value);
+                            containsLongText |= IsLongCellText(value);
                         }
-                    object? formulas = formulaRows is null ? null : ReadFormulas(ctx, tile, referenceStyle);
-                    bool formulasRead = formulaRows is not null;
+                    bool bulkFormulasRead = formulaRows is not null && !containsLongText;
+                    object? formulas = bulkFormulasRead ? ReadFormulas(ctx, tile, referenceStyle) : null;
+                    bool noFormulas = containsLongText && formulaRows is not null && tile.HasFormula is false;
                     for (int row = 0; row < window.Rows; row++)
                     {
                         for (int column = 0; column < window.Columns; column++)
                         {
                             ct.ThrowIfCancellationRequested();
                             object? value = grid.Values[row][column];
-                            string formula = formulaRows is null ? string.Empty : GetReturnedFormula(GridEntry(formulas, row, column));
-                            if (formulaRows is not null && !IsReturnedFormula(tile, row + 1, column + 1, formula, value))
-                                formula = string.Empty;
-                            if (ExcelErrorMapper.TryGet(value, out int code, out var error) && IsNativeError(ctx, tile, row + 1, column + 1))
+                            bool isError = ExcelErrorMapper.TryGet(value, out int code, out var error)
+                                && IsNativeError(ctx, tile, row + 1, column + 1);
+                            string formula = string.Empty;
+                            if ((formulaRows is not null || isError) && !noFormulas)
                             {
-                                if (!formulasRead)
+                                if (containsLongText)
                                 {
-                                    formulas = ReadFormulas(ctx, tile, referenceStyle);
-                                    formulasRead = true;
+                                    formula = ReadGridCellFormula(ctx, tile, row + 1, column + 1, value, referenceStyle);
                                 }
-                                string errorFormula = GetReturnedFormula(GridEntry(formulas, row, column));
-                                budget.AddError(errorFormula);
-                                value = ConvertMappedErrorForRead(value, errorFormula,
+                                else
+                                {
+                                    if (!bulkFormulasRead)
+                                    {
+                                        formulas = ReadFormulas(ctx, tile, referenceStyle);
+                                        bulkFormulasRead = true;
+                                    }
+                                    formula = GetReturnedFormula(GridEntry(formulas, row, column));
+                                    if (formulaRows is not null && !IsReturnedFormula(tile, row + 1, column + 1, formula, value))
+                                        formula = string.Empty;
+                                }
+                            }
+                            if (isError)
+                            {
+                                budget.AddError(formula);
+                                value = ConvertMappedErrorForRead(value, formula,
                                     startRow + window.RowOffset + row, startColumn + window.ColumnOffset + column,
                                     result.CellErrors, code, error);
                                 budget.AddScalar(value);
@@ -106,6 +127,33 @@ public partial class RangeCommands
         }
         finally { ComUtilities.Release(ref cells); }
     }
+
+    private static string ReadGridCellFormula(ExcelContext context, Excel.Range tile, int row, int column,
+        object? value, FormulaReferenceStyle referenceStyle)
+    {
+        Excel.Range? cells = null;
+        Excel.Range? cell = null;
+        try
+        {
+            cells = tile.Cells;
+            cell = cells[row, column];
+            if (IsLongCellText(value) && !ReadCellHasFormula(cell))
+                return string.Empty;
+
+            string formula = GetReturnedFormula(ReadFormulas(context, cell, referenceStyle));
+            return formula.Length != 0 && value is string text && string.Equals(formula, text, StringComparison.Ordinal)
+                && !ReadCellHasFormula(cell) ? string.Empty : formula;
+        }
+        finally
+        {
+            ComUtilities.Release(ref cell);
+            ComUtilities.Release(ref cells);
+        }
+    }
+
+    private static bool ReadCellHasFormula(Excel.Range cell) =>
+        cell.HasFormula is bool hasFormula ? hasFormula
+            : throw new InvalidOperationException("Excel did not return a formula state for a single cell.");
 
     private static object? GridEntry(object? grid, int row, int column) => grid is Array array
         ? array.GetValue(row + array.GetLowerBound(0), column + array.GetLowerBound(1)) : grid;

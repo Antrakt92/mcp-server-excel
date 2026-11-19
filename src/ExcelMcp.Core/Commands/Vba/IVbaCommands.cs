@@ -30,8 +30,9 @@ public interface IVbaCommands
     /// <summary>
     /// Lists all VBA modules and procedures in the workbook
     /// </summary>
+    /// <param name="includeLabelWarnings">For list only. Scan the project for unreferenced labels matching zero-argument Subs. Returns up to 100 advisory warnings with module and line. Leaves the source unchanged.</param>
     [ServiceAction("list")]
-    VbaListResult List(IExcelBatch batch);
+    VbaListResult List(IExcelBatch batch, bool includeLabelWarnings = false);
 
     /// <summary>
     /// Reports actual VBA project access, password protection, and execution mode without changing settings.

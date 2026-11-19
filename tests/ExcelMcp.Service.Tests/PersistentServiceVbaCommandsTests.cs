@@ -48,6 +48,26 @@ public sealed class PersistentServiceVbaCommandsTests :
         AssertStoredCode(vbaCode, code.Code);
     }
     [Fact]
+    public void ScriptCommands_ListLabelWarnings_UsesAllModulesWithoutEditingSource()
+    {
+        var batch = _fixture.BatchToken;
+        Import(batch, "LabelHelpers", "Public Sub LabelReset()\nEnd Sub");
+        Import(batch, "LabelProbe", "Public Sub Probe()\nLabelReset:\n    Debug.Print 1\nEnd Sub");
+        string original = RequireSuccess(_scriptCommands.View(batch, "LabelProbe")).Code;
+        Assert.Null(RequireSuccess(_scriptCommands.List(batch)).LabelDiagnostics);
+
+        var result = RequireSuccess(_scriptCommands.List(batch, includeLabelWarnings: true));
+
+        Assert.NotNull(result.LabelDiagnostics);
+        var warning = Assert.Single(result.LabelDiagnostics.Warnings);
+        Assert.Equal("LabelProbe", warning.ModuleName);
+        Assert.Equal("Probe", warning.ProcedureName);
+        Assert.Equal(2, warning.Line);
+        Assert.Equal("LabelReset", warning.Label);
+        Assert.Equal(original, RequireSuccess(_scriptCommands.View(batch, "LabelProbe")).Code);
+    }
+
+    [Fact]
     public void ScriptCommands_Run_WithTrustEnabled_WorksCorrectly()
     {
         // Arrange

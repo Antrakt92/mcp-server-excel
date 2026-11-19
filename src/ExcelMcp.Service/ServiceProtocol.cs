@@ -132,13 +132,16 @@ public sealed class ServiceResponse
         };
     }
 
-    internal ServiceResponse WithCloseTimings(IReadOnlyDictionary<string, double> timings)
+    internal ServiceResponse WithCloseTimings(IReadOnlyDictionary<string, double> timings) =>
+        WithResultTimings("closeTimingsMs", timings);
+
+    internal ServiceResponse WithResultTimings(string property, IReadOnlyDictionary<string, double> timings)
     {
         var result = Result is null ? new JsonObject() : JsonNode.Parse(Result)!.AsObject();
-        if (result["closeTimingsMs"] is not JsonObject measured)
+        if (result[property] is not JsonObject measured)
         {
             measured = new JsonObject();
-            result["closeTimingsMs"] = measured;
+            result[property] = measured;
         }
         foreach (var (stage, elapsedMs) in timings)
             measured[stage] = elapsedMs;

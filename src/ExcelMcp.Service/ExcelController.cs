@@ -221,6 +221,7 @@ internal sealed class ExcelController : IDisposable
         var reservation = new PathReservation(Guid.NewGuid().ToString("N"),
             request.Command == "workbook.save-as" ? request.SessionId : null);
         ExcelWorkerClient? worker = null;
+        var testTimings = request.Command == "session.test" ? new SessionDiagnostics.TimingCollection() : null;
         var sent = false;
         try
         {
@@ -277,7 +278,8 @@ internal sealed class ExcelController : IDisposable
                         return ExcelWorkerHost.Failure(request, "Conflict", "This workbook is already reserved by another session or pending request.");
                     reservedPaths.Add(normalized);
                 }
-                worker = await StartWorkerAsync(null, request.CallerCancellation);
+                using (testTimings?.BeginStage("controllerWorkerStartup"))
+                    worker = await StartWorkerAsync(null, request.CallerCancellation);
             }
             else if (request.Command == "session.attach")
             {
@@ -366,10 +368,17 @@ internal sealed class ExcelController : IDisposable
             if (!worker.Registration.Worker.IsAlive())
                 throw new IOException("The Excel worker exited before this request was sent. Discover open workbooks to reconnect; no work was started.");
             sent = true;
-            var completion = CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation);
-            return waitForWorkerCompletion
-                ? await completion
-                : await completion.WaitAsync(request.CallerCancellation);
+            ServiceResponse response;
+            using (testTimings?.BeginStage("controllerWorkerRequest"))
+            {
+                var completion = CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation);
+                response = waitForWorkerCompletion
+                    ? await completion
+                    : await completion.WaitAsync(request.CallerCancellation);
+            }
+            return testTimings is not null && response.Success
+                ? response.WithResultTimings("testTimingsMs", testTimings.Snapshot())
+                : response;
         }
         catch (Exception ex)
         {

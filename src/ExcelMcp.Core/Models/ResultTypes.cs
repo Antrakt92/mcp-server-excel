@@ -745,6 +745,10 @@ public class VbaListResult : ResultBase
     /// List of VBA scripts
     /// </summary>
     public List<ScriptInfo> Scripts { get; set; } = [];
+
+    /// <summary>Advisory label diagnostics when explicitly requested by the list action.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VbaLabelDiagnostics? LabelDiagnostics { get; set; }
 }
 
 /// <summary>VBA project access and execution status.</summary>
@@ -996,6 +1000,12 @@ public class FileValidationInfo
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ExcelProcessExited { get; set; }
+
+    /// <summary>
+    /// Observed workbook test phases in milliseconds. Controller spans can include worker phases.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, double>? TestTimingsMs { get; set; }
 
     /// <summary>
     /// Whether the file is IRM/AIP-protected (OLE2 compound document format).

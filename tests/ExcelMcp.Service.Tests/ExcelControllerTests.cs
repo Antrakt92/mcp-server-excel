@@ -361,6 +361,12 @@ public sealed partial class ExcelControllerTests
         Assert.True(validated.Success, validated.ErrorMessage);
         using var result = JsonDocument.Parse(validated.Result!);
         Assert.False(result.RootElement.GetProperty("isValid").GetBoolean());
+        var timings = result.RootElement.GetProperty("testTimingsMs");
+        Assert.Equal(["controllerWorkerRequest", "controllerWorkerStartup", "fileProbe"],
+            timings.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+        Assert.True(timings.GetProperty("controllerWorkerStartup").GetDouble() > 0);
+        Assert.True(timings.GetProperty("controllerWorkerRequest").GetDouble() > 0);
+        Assert.True(timings.GetProperty("fileProbe").GetDouble() >= 0);
         var opened = await controller.ProcessAsync(new ServiceRequest
         {
             Command = "session.open",

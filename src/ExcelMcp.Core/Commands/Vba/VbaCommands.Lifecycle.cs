@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -12,7 +13,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 public partial class VbaCommands
 {
     /// <inheritdoc />
-    public VbaListResult List(IExcelBatch batch)
+    public VbaListResult List(IExcelBatch batch, bool includeLabelWarnings = false)
     {
         var result = new VbaListResult { FilePath = batch.WorkbookPath };
 
@@ -26,6 +27,8 @@ public partial class VbaCommands
 
         return batch.Execute((ctx, ct) =>
         {
+            List<VbaLabelSource>? sourceModules = includeLabelWarnings ? [] : null;
+            int capturedCharacters = 0;
             Vbe.VBProject? vbaProject = null;
             Vbe.VBComponents? vbComponents = null;
             try
@@ -48,7 +51,22 @@ public partial class VbaCommands
 
                         codeModule = component.CodeModule;
                         int moduleLineCount = codeModule.CountOfLines;
-                        List<VbaProcedureInfo> procedureDetails = GetProcedures(codeModule, ct);
+                        StringBuilder? source = sourceModules is null ? null : new StringBuilder();
+                        List<VbaProcedureInfo> procedureDetails = GetProcedures(codeModule, ct, source is null ? null : line =>
+                        {
+                            if (line.Length >= VbaLabelScanner.MaximumProjectCharacters - capturedCharacters)
+                            {
+                                throw InvalidVbaInput("VBA label diagnostics can scan at most 2,000,000 characters. Run list without label diagnostics to inspect the module inventory.");
+                            }
+
+                            capturedCharacters += line.Length + 1;
+                            source.Append(line).Append('\n');
+                        });
+
+                        if (sourceModules is not null && source is not null)
+                        {
+                            sourceModules.Add(new(name, type == (int)Vbe.vbext_ComponentType.vbext_ct_StdModule, source.ToString()));
+                        }
 
                         result.Scripts.Add(new ScriptInfo
                         {
@@ -64,6 +82,11 @@ public partial class VbaCommands
                         ComUtilities.Release(ref codeModule);
                         ComUtilities.Release(ref component);
                     }
+                }
+
+                if (sourceModules is not null)
+                {
+                    result.LabelDiagnostics = VbaLabelScanner.Analyze(sourceModules, ct);
                 }
 
                 result.Success = true;

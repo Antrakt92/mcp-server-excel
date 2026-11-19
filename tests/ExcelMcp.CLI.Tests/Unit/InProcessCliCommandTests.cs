@@ -2166,13 +2166,14 @@ public sealed class InProcessCliCommandTests
     public async Task SessionTest_CanOpenFalse_TracksExpectedNegative()
     {
         var telemetry = new List<(string Command, bool Succeeded, string? ErrorCategory, bool ExpectedNegative)>();
+        using var output = new StringWriter();
         var runtime = CreateRuntime(
             new RecordingClientFactory(new ServiceResponse
             {
                 Success = true,
-                Result = """{"canOpen":false}"""
+                Result = """{"canOpen":false,"testTimingsMs":{"fileProbe":0.25,"controllerWorkerRequest":25.5}}"""
             }),
-            new StringWriter(),
+            output,
             new StringWriter(),
             telemetryObserver: (command, _, succeeded, errorCategory, expectedNegative) =>
                 telemetry.Add((command, succeeded, errorCategory, expectedNegative)));
@@ -2182,6 +2183,10 @@ public sealed class InProcessCliCommandTests
             runtime);
 
         Assert.Equal(1, exitCode);
+        using var result = JsonDocument.Parse(output.ToString());
+        var timings = result.RootElement.GetProperty("data").GetProperty("testTimingsMs");
+        Assert.Equal(0.25, timings.GetProperty("fileProbe").GetDouble());
+        Assert.Equal(25.5, timings.GetProperty("controllerWorkerRequest").GetDouble());
         Assert.Equal(
             [("session.test", true, null, true)],
             telemetry);
