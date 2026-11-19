@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.1) | 2026-11-19 | VBA return values, timeout tests and workbook inspection guidance |
 | [5.5.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.0) | 2026-11-18 | Paged visibility, workbook safeguards and Excel session recovery |
 | [5.4.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.4.0) | 2026-11-17 | Windows MCP bundle, workbook edits, and batch validation |
 | [5.3.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.3.0) | 2026-11-17 | Saved sheet identities, relationship ownership and parent-style diagnostics |
@@ -27,6 +28,29 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.5.1 — 2026-11-19
+
+This maintenance release documents how to check a VBA call that returns null,
+diagnose a print display issue and recover after a macro times out.
+
+- **VBA function results.** A function in a worksheet module can change the
+  workbook and still return null through Excel's `Application.Run`. The guide
+  shows when to use an explicit standard-module wrapper and when to read back
+  workbook state. New desktop Excel tests verify the return value, print area
+  and call count for both entry points.
+- **VBA timeouts.** The regression test now saves and reopens its disposable
+  workbook through the normal macro approval path. It verifies that Excel can
+  finish the macro after the caller times out and that the late workbook
+  change can be read before closing the session.
+- **Workbook inspection.** The guide shows how to compare displayed cell text
+  with its number format, width, wrapping and shrink-to-fit settings. It also
+  explains which ActiveX layout details the drawing inventory returns.
+- **Dependabot.** NuGet minor and patch updates now use separate groups for
+  test, compiler and runtime dependencies. Major updates still open
+  individually. Package versions and the upstream 2.6.12 base carry forward.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.5.0...v5.5.1)
 
 ## 5.5.0 — 2026-11-18
 
