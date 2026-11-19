@@ -18,6 +18,61 @@ public sealed class PersistentServiceRangeOverwritePolicyTests(
     PersistentServiceWorkbookTestBase(fixture),
     IClassFixture<PersistentServiceWorkbookFixture>
 {
+    [Fact]
+    public void ReadGrid_WithMaximumLengthText_PreservesValuesFormulasAndErrors()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        string longText = new('x', 32767);
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:B1", [[longText, 5]]));
+        const string longResultFormula = "=REPT(\"y\",32767)";
+        RequireSuccess(_commands.SetFormulas(batch, sheetName, "C1:E1", [["=B1", "=1/0", longResultFormula]]));
+
+        var constants = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:B1"));
+        Assert.Equal(longText, constants.Values[0][0]);
+        Assert.Equal(["", ""], Assert.Single(constants.Formulas));
+
+        var cells = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:E1"));
+        var values = Assert.Single(cells.Values);
+        Assert.Equal(longText, values[0]);
+        Assert.Equal(5d, Convert.ToDouble(values[1], CultureInfo.InvariantCulture));
+        Assert.Equal(5d, Convert.ToDouble(values[2], CultureInfo.InvariantCulture));
+        Assert.Equal("#DIV/0!", values[3]);
+        Assert.Equal(new string('y', 32767), values[4]);
+        Assert.Equal(["", "", "=B1", "=1/0", longResultFormula], Assert.Single(cells.Formulas));
+        Assert.Equal("=1/0", Assert.Single(cells.CellErrors).Formula);
+
+        var r1c1 = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:D1", FormulaReferenceStyle.R1C1));
+        Assert.Equal(["", "", "=RC[-1]", "=1/0"], Assert.Single(r1c1.Formulas));
+
+        var page = RequireSuccess(_commands.GetValuesPage(batch, sheetName, "A1:D1"));
+        Assert.Equal(values, Assert.Single(page.Values));
+        Assert.Equal("D1", Assert.Single(page.CellErrors).CellAddress);
+        Assert.Equal("=1/0", Assert.Single(page.CellErrors).Formula);
+    }
+
+    [Fact]
+    public async Task RejectNonempty_WithMaximumLengthText_ReportsConflictAndPreservesCells()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        string longText = new('x', 32767);
+        RequireSuccess(_commands.SetValues(batch, sheetName, "B1", [[longText]]));
+        RequireSuccess(_commands.SetFormulas(batch, sheetName, "C1", [["=\"\""]]));
+
+        int[][] values = [[1, 2, 3]];
+        var response = await _fixture.SendForFailureAsync("range.set-values",
+            new { sheetName, rangeAddress = "A1:C1", values });
+
+        Assert.Equal("Conflict", response.ErrorCategory);
+        Assert.Contains("$B$1", response.ErrorMessage);
+        Assert.Contains("$C$1", response.ErrorMessage);
+        var result = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:C1"));
+        Assert.Null(result.Values[0][0]);
+        Assert.Equal(longText, result.Values[0][1]);
+        Assert.Equal("=\"\"", result.Formulas[0][2]);
+    }
+
     [Theory]
     [InlineData("set-values")]
     [InlineData("set-formulas")]

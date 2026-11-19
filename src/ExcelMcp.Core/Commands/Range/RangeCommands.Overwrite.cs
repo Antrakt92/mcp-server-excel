@@ -147,19 +147,26 @@ public partial class RangeCommands
                     start = anchor.Offset[rowOffset, 0];
                     block = start.Resize[rows, dimensions.Columns];
                     object? values = block.Value2;
-                    object? formulas = ReadFormulas(context, block);
+                    bool containsLongText = values is object[,] valueGrid
+                        ? valueGrid.Cast<object?>().Any(IsLongCellText)
+                        : IsLongCellText(values);
+                    object? formulas = containsLongText ? null : ReadFormulas(context, block);
+                    bool mayHaveFormulas = containsLongText && block.HasFormula is not false;
                     for (int row = 0; row < rows; row++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         for (int column = 0; column < dimensions.Columns; column++)
                         {
                             object? value = GetInspectionCell(values, rows, dimensions.Columns, row, column);
-                            object? formula = GetInspectionCell(formulas, rows, dimensions.Columns, row, column);
-                            if (value is null && !(formula is string text && text.StartsWith('=')))
+                            if (writesCell is not null && !writesCell(rowOffset + row, column))
                             {
                                 continue;
                             }
-                            if (writesCell is not null && !writesCell(rowOffset + row, column))
+
+                            if (value is null && !(containsLongText
+                                ? mayHaveFormulas && DestinationCellHasFormula(cells, rowOffset + row + 1, column + 1)
+                                : GetInspectionCell(formulas, rows, dimensions.Columns, row, column) is string formula
+                                    && formula.StartsWith('=')))
                             {
                                 continue;
                             }
@@ -190,6 +197,20 @@ public partial class RangeCommands
             ComUtilities.Release(ref anchor);
             ComUtilities.Release(ref cells);
             ComUtilities.Release(ref sheet);
+        }
+    }
+
+    private static bool DestinationCellHasFormula(Excel.Range cells, int row, int column)
+    {
+        Excel.Range? cell = null;
+        try
+        {
+            cell = cells[row, column];
+            return ReadCellHasFormula(cell);
+        }
+        finally
+        {
+            ComUtilities.Release(ref cell);
         }
     }
 
