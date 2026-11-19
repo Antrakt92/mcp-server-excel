@@ -57,7 +57,7 @@ public partial class RangeCommands
     }
 
     /// <inheritdoc />
-    public OperationResult SetValues(IExcelBatch batch, string sheetName, string rangeAddress, List<List<object?>>? values = null, string? valuesFile = null, OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty)
+    public OperationResult SetValues(IExcelBatch batch, string sheetName, string rangeAddress, List<List<object?>>? values = null, string? valuesFile = null, OverwritePolicy overwritePolicy = OverwritePolicy.RejectNonempty, bool literalText = false)
     {
         ValidateOverwritePolicy(overwritePolicy);
         // Resolve values from inline parameter or file
@@ -84,14 +84,6 @@ public partial class RangeCommands
                 ValidateContentWriteDimensions(range, resolvedValues, nameof(values), "Value");
                 EnsureDestinationWritable(ctx, range, overwritePolicy, ct);
 
-                // Calculation suppressed here (not in ExcelWriteGuard) because Data Model ops need it enabled
-                originalCalculation = (int)ctx.App.Calculation;
-                if (originalCalculation != -4135) // xlCalculationManual
-                {
-                    ctx.App.Calculation = (Excel.XlCalculation)(-4135);
-                    calculationChanged = true;
-                }
-
                 // Convert List<List<object?>> to 2D array
                 // Excel COM requires 1-based arrays for multi-cell ranges
                 int rows = resolvedValues.Count;
@@ -105,11 +97,12 @@ public partial class RangeCommands
 
                     for (int r = 1; r <= rows; r++)
                     {
+                        ct.ThrowIfCancellationRequested();
                         for (int c = 1; c <= cols; c++)
                         {
                             // Convert JsonElement to proper C# type for COM interop
                             // MCP framework deserializes JSON to JsonElement, not primitives
-                            object cellValue = RangeHelpers.ConvertToCellValue(resolvedValues[r - 1][c - 1]);
+                            object cellValue = RangeHelpers.ConvertToCellValue(resolvedValues[r - 1][c - 1], literalText);
                             if (cellValue is string text && text.StartsWith('='))
                             {
                                 formulaCount++;
@@ -117,6 +110,14 @@ public partial class RangeCommands
 
                             arrayValues[r, c] = cellValue;
                         }
+                    }
+
+                    // Calculation suppressed here (not in ExcelWriteGuard) because Data Model ops need it enabled
+                    originalCalculation = (int)ctx.App.Calculation;
+                    if (originalCalculation != -4135) // xlCalculationManual
+                    {
+                        ctx.App.Calculation = (Excel.XlCalculation)(-4135);
+                        calculationChanged = true;
                     }
 
                     if (formulaCount > 0)

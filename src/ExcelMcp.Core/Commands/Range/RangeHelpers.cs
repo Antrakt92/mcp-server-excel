@@ -560,7 +560,27 @@ public static class RangeHelpers
     /// </summary>
     /// <param name="value">Value from MCP JSON deserialization or direct C# types</param>
     /// <returns>Proper C# type (string, long, double, bool) for COM marshalling</returns>
-    public static object ConvertToCellValue(object? value)
+    public static object ConvertToCellValue(object? value) => ConvertToCellValue(value, literalText: false);
+
+    internal static object ConvertToCellValue(object? value, bool literalText)
+    {
+        object cellValue = ConvertToComValue(value);
+        if (!literalText || cellValue is not string { Length: > 0 } text)
+            return cellValue;
+
+        ValidateLiteralCellText(text);
+        return "'" + text;
+    }
+
+    internal static void ValidateLiteralCellText(string text)
+    {
+        // Excel reserves one character for the entry apostrophe. At 32,768 input
+        // characters it can store the prefix instead of consuming it.
+        if (text.Length > 32766 || text.Contains('\0'))
+            throw new ArgumentException("Literal cell text supports up to 32,766 UTF-16 code units and cannot contain NUL.");
+    }
+
+    private static object ConvertToComValue(object? value)
     {
         if (value == null)
             return string.Empty;

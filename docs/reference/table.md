@@ -26,6 +26,10 @@ count; include `null` for an intentionally blank cell. All row widths are checke
 before writing cells or changing calculation mode. A mismatched row is rejected
 without truncating values, inserting incomplete records, or expanding the Table.
 This validation does not promise rollback for unrelated later Excel failures.
+For text such as account codes or formula results, use the same
+[literal text option](range.md#bulk-text-and-formulas) on `table append`.
+If Excel leaves a newly resized empty Table without a data row, its first
+appended row needs at least one nonblank value.
 
 ## Native filtering
 

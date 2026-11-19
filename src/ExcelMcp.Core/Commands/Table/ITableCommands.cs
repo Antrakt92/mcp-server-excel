@@ -27,7 +27,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Table;
 /// </summary>
 [ServiceCategory("Table")]
 [McpTool("table", Title = "Table Operations", Destructive = true, Category = "data",
-    Description = "Create, change, delete, and append data to Excel Tables (ListObjects). SAFE CREATION: Create checks merged cells, headers, excluded contiguous columns, formula-sort risks, and the effective range. It rejects deterministic blockers; heuristic warnings remain advisory. Formula risk analysis is skipped with an explicit warning when the proposed range exceeds 100,000 cells. CONVERT TO TABLE: Write data to a range, then use create. APPEND: Every input row must match the table's column count. The table needs empty cells below it for expansion. The totals row is preserved. STYLING: Pass tableStyle on create or use set-style later; never apply range_format to table headers or data rows. Prefer append/resize/rename over delete+recreate. Deleting tables used by PivotTables or the Data Model breaks those objects. Use table_column for filtering, sorting, and columns.")]
+    Description = "Create, change, delete, and append data to Excel Tables (ListObjects). SAFE CREATION: Create checks merged cells, headers, excluded contiguous columns, formula-sort risks, and the effective range. It rejects deterministic blockers; heuristic warnings remain advisory. Formula risk analysis is skipped with an explicit warning when the proposed range exceeds 100,000 cells. CONVERT TO TABLE: Write data to a range, then use create. APPEND: Every input row must match the table's column count. The table needs empty cells below it for expansion. The totals row is preserved. Set literal_text=true to preserve text instead of letting Excel parse strings. STYLING: Pass tableStyle on create or use set-style later; never apply range_format to table headers or data rows. Prefer append/resize/rename over delete+recreate. Deleting tables used by PivotTables or the Data Model breaks those objects. Use table_column for filtering, sorting, and columns.")]
 [McpReadOnlyActions("list", "preflight", "read", "get-data", "get-dax")]
 public interface ITableCommands
 {
@@ -124,8 +124,9 @@ public interface ITableCommands
     /// <param name="rows">2D array of row data to append - every row must match the table's column count and column order. Optional if rowsFile is provided.</param>
     /// <param name="rowsFile">Path to a JSON or CSV file containing the rows to append. Every row must match the table's column count. JSON: 2D array. CSV: rows/columns. Alternative to inline rows parameter.</param>
     /// <exception cref="InvalidOperationException">Table not found or append failed</exception>
+    /// <param name="literalText">Preserve nonempty strings as entered, including formula-like text, dates, leading zeros, and apostrophes. Empty strings and null write blanks. Literal text is limited to 32,766 UTF-16 code units and excludes NUL.</param>
     [ServiceAction("append")]
-    OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, [LocalInputFile] string? rowsFile = null);
+    OperationResult Append(IExcelBatch batch, string tableName, List<List<object?>>? rows = null, [LocalInputFile] string? rowsFile = null, bool literalText = false);
 
     /// <summary>
     /// Retrieves data rows from a table, optionally limited to currently visible rows. Large results are bounded. Use table read for the worksheet and range, then range get-values-page to read large tables in parts.

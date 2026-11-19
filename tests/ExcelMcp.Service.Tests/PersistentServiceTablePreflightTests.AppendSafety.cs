@@ -130,6 +130,26 @@ public sealed partial class PersistentServiceTablePreflightTests
     }
 
     [Fact]
+    public void Append_LiteralTextDoesNotCreateFormulasOrCoerceStrings()
+    {
+        var batch = _fixture.BatchToken;
+        SetValues(batch, "F1:I1", [["Formula text", "Quoted", "Code", "Amount"]]);
+        RequireSuccess(_tableCommands.Create(batch, "Sales", "LiteralAppend", "F1:I1", true));
+        SetValues(batch, "F3", [["Below table"]]);
+
+        RequireSuccess(_tableCommands.Append(batch, "LiteralAppend",
+            [["=1+2", "'literal", "00008", 17]], literalText: true));
+        Assert.Equal(1, RequireSuccess(_tableCommands.GetData(batch, "LiteralAppend")).RowCount);
+
+        var result = RequireSuccess(_rangeCommands.GetFormulas(batch, "Sales", "F2:I2"));
+        Assert.All(Assert.Single(result.Formulas), formula => Assert.Empty(formula));
+        var values = Assert.Single(result.Values);
+        Assert.Equal(new object?[] { "=1+2", "'literal", "00008" }, values.Take(3));
+        Assert.Equal(17d, Convert.ToDouble(values[3], CultureInfo.InvariantCulture));
+        Assert.Equal("Below table", RequireSuccess(_rangeCommands.GetValues(batch, "Sales", "F3")).Values[0][0]);
+    }
+
+    [Fact]
     public void Append_PreservesExistingCalculatedColumnAndWritesRequestedFormula()
     {
         var batch = _fixture.BatchToken;
