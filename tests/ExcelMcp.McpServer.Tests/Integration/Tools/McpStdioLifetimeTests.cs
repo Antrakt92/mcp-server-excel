@@ -73,6 +73,32 @@ public sealed class McpStdioLifetimeTests(ITestOutputHelper output)
         });
     }
 
+    [Theory(Timeout = 45000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InputCloses_WithDiagnostics_ReportsOneReasonOnStderr(bool useDotnet)
+    {
+        await RunServerAsync(useDotnet, "close-diagnostics", async (server, measurements) =>
+        {
+            await InitializeAsync(server.StandardInput, server.StandardOutput);
+            measurements.Phase = "disconnect";
+            server.StandardInput.Close();
+            await AssertCleanExitAsync(server);
+        }, "ExcelMCP stdio stopped: reason=stdin_eof exit=0");
+    }
+
+    [Fact(Timeout = 45000)]
+    public async Task StartupFailure_WithDiagnostics_HidesConfigurationAndReportsExitCode()
+    {
+        await RunServerAsync(useDotnet: false, "startup-failure-diagnostics", async (server, measurements) =>
+        {
+            measurements.Phase = "startup-failure";
+            await server.WaitForExitAsync().WaitAsync(ResponseTimeout);
+            Assert.Equal(1, server.ExitCode);
+        }, "ExcelMCP stdio stopped: reason=host_failure exit=1",
+            start => start.Environment["Logging__LogLevel__Default"] = "diagnostic-test-value");
+    }
+
     [Theory(Timeout = 60000)]
     [InlineData(false)]
     [InlineData(true)]
@@ -197,9 +223,14 @@ public sealed class McpStdioLifetimeTests(ITestOutputHelper output)
     }
 
     private async Task RunServerAsync(bool useDotnet, string scenario,
-        Func<Process, ResourceMeasurements, Task> test)
+        Func<Process, ResourceMeasurements, Task> test, string? diagnostic = null,
+        Action<ProcessStartInfo>? configure = null)
     {
-        using var server = Process.Start(CreateStartInfo(useDotnet))!;
+        var start = CreateStartInfo(useDotnet);
+        if (diagnostic is not null)
+            start.Environment["EXCELMCP_STDIO_DIAGNOSTICS"] = "1";
+        configure?.Invoke(start);
+        using var server = Process.Start(start)!;
         _ = server.Handle;
         var errors = server.StandardError.ReadToEndAsync();
         ResourceMeasurements? measurements = null;
@@ -209,7 +240,8 @@ public sealed class McpStdioLifetimeTests(ITestOutputHelper output)
             measurements = new ResourceMeasurements(server, output, $"{scenario}-{useDotnet}");
             await test(server, measurements);
             Assert.Empty(await server.StandardOutput.ReadToEndAsync().WaitAsync(ResponseTimeout));
-            Assert.Empty(await errors.WaitAsync(ResponseTimeout));
+            Assert.Equal(diagnostic is null ? string.Empty : diagnostic + Environment.NewLine,
+                await errors.WaitAsync(ResponseTimeout));
         }
         catch (Exception ex)
         {
@@ -257,6 +289,7 @@ public sealed class McpStdioLifetimeTests(ITestOutputHelper output)
         if (useDotnet)
             start.ArgumentList.Add(Path.ChangeExtension(executable, ".dll"));
         start.Environment["EXCELMCP_TELEMETRY_MODE"] = "off";
+        start.Environment.Remove("EXCELMCP_STDIO_DIAGNOSTICS");
         return start;
     }
 

@@ -45,6 +45,38 @@ public class Program
             }
         }
 
+        var diagnostics = new StdioShutdownDiagnostics(
+            string.Equals(Environment.GetEnvironmentVariable("EXCELMCP_STDIO_DIAGNOSTICS"), "1", StringComparison.Ordinal));
+        int exitCode = 0;
+        try
+        {
+            exitCode = await RunStdioHostAsync(args, testInputPipe, testOutputPipe, runToken, serviceFactory, diagnostics);
+            return exitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            diagnostics.Record(StdioStopReason.Canceled);
+            return exitCode;
+        }
+#pragma warning disable CA1031 // The process boundary returns a deterministic failure status.
+        catch (Exception ex)
+        {
+            exitCode = 1;
+            diagnostics.Record(StdioStopReason.HostFailure);
+            ExcelMcpTelemetry.TrackUnhandledException(ex, "McpServer.RunAsync");
+            return exitCode;
+        }
+#pragma warning restore CA1031
+        finally
+        {
+            _ = await diagnostics.ReportAsync(static () => Console.Error, exitCode);
+        }
+    }
+
+    private static async Task<int> RunStdioHostAsync(string[] args, Pipe? testInputPipe, Pipe? testOutputPipe,
+        CancellationToken runToken, Func<ServiceBridge.IServiceBridgeBackend>? serviceFactory,
+        StdioShutdownDiagnostics diagnostics)
+    {
         // Register global exception handlers for unhandled exceptions (telemetry)
         RegisterGlobalExceptionHandlers();
 
@@ -72,6 +104,7 @@ public class Program
         catch (InvalidOperationException ex)
         {
             Console.Error.WriteLine(ex.Message);
+            diagnostics.Record(StdioStopReason.HostFailure);
             return 1;
         }
 
@@ -109,12 +142,21 @@ public class Program
             });
 
         IHostApplicationLifetime? transportLifetime = null;
+        void StopFromTransport(StdioStopReason reason)
+        {
+            if (transportLifetime is not { ApplicationStopping.IsCancellationRequested: false })
+                return;
+
+            diagnostics.Record(reason);
+            transportLifetime.StopApplication();
+        }
+
         var testTransport = testInputPipe != null && testOutputPipe != null;
         var input = testTransport ? testInputPipe!.Reader.AsStream() : Console.OpenStandardInput();
         var output = testTransport ? testOutputPipe!.Writer.AsStream() : ProtocolOutput.Open();
         mcpBuilder.WithStreamServerTransport(
-            new TransportLifetimeStream(input, () => transportLifetime?.StopApplication()),
-            new TransportLifetimeStream(output, () => transportLifetime?.StopApplication()));
+            new TransportLifetimeStream(input, StopFromTransport),
+            new TransportLifetimeStream(output, StopFromTransport));
 
         using var host = builder.Build();
         transportLifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
@@ -122,36 +164,25 @@ public class Program
         // Note: Update checks are handled by ExcelMCP Service (shown via Windows notification)
         // to avoid duplicate notifications when running in unified package mode
 
-        var parentMonitor = !testTransport
-            ? ParentProcessMonitor.Start(transportLifetime)
+        using var parentMonitor = !testTransport
+            ? ParentProcessMonitor.Start(() => StopFromTransport(StdioStopReason.ParentExit))
             : null;
-
         try
         {
             await host.StartAsync(runToken);
             await host.WaitForShutdownAsync(runToken);
+            if (runToken.IsCancellationRequested)
+                diagnostics.Record(StdioStopReason.Canceled);
             return 0;
         }
-        catch (OperationCanceledException)
-        {
-            // Graceful shutdown via cancellation (e.g., Ctrl+C, SIGTERM)
-            // This is expected behavior, not an error
-            return 0;
-        }
-#pragma warning disable CA1031 // Catch general exception - this is a top-level handler that must not crash
         catch (Exception ex)
         {
-            // Track MCP SDK/transport errors (protocol errors, serialization errors, etc.)
-            ExcelMcpTelemetry.TrackUnhandledException(ex, "McpServer.RunAsync");
-
-            // Return exit code 1 for fatal errors (FR-024, SC-015a)
-            // Do NOT re-throw - deterministic exit code is more important for callers
-            return 1;
+            // Record before disposal can generate a secondary stream notification.
+            diagnostics.Record(ex is OperationCanceledException ? StdioStopReason.Canceled : StdioStopReason.HostFailure);
+            throw;
         }
-#pragma warning restore CA1031
         finally
         {
-            parentMonitor?.Dispose();
             ExcelMcpTelemetry.SignalExit();
         }
     }

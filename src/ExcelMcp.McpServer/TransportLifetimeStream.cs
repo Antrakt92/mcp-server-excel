@@ -1,81 +1,81 @@
 namespace Sbroenne.ExcelMcp.McpServer;
 
 /// <summary>Observes terminal transport failures without a second reader or a blocking poll.</summary>
-internal sealed class TransportLifetimeStream(Stream inner, Action onEnded) : Stream
+internal sealed class TransportLifetimeStream(Stream inner, Action<StdioStopReason> onEnded) : Stream
 {
     private int _reported;
     private int _disposed;
 
-    private void Ended()
+    private void Ended(StdioStopReason reason)
     {
         if (Interlocked.Exchange(ref _reported, 1) == 0)
-            onEnded();
+            onEnded(reason);
     }
 
     private int Observe(int count, int requested)
     {
-        if (requested > 0 && count == 0) Ended();
+        if (requested > 0 && count == 0) Ended(StdioStopReason.StdinEof);
         return count;
     }
 
     public override int Read(byte[] buffer, int offset, int count)
     {
         try { return Observe(inner.Read(buffer, offset, count), count); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdinFailure); throw; }
     }
 
     public override int Read(Span<byte> buffer)
     {
         try { return Observe(inner.Read(buffer), buffer.Length); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdinFailure); throw; }
     }
 
     public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         try { return Observe(await inner.ReadAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false), count); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdinFailure); throw; }
     }
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         try { return Observe(await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false), buffer.Length); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdinFailure); throw; }
     }
 
     public override void Write(byte[] buffer, int offset, int count)
     {
         try { inner.Write(buffer, offset, count); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override void Write(ReadOnlySpan<byte> buffer)
     {
         try { inner.Write(buffer); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         try { await inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
         try { await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override void Flush()
     {
         try { inner.Flush(); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override async Task FlushAsync(CancellationToken cancellationToken)
     {
         try { await inner.FlushAsync(cancellationToken).ConfigureAwait(false); }
-        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(); throw; }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { Ended(StdioStopReason.StdoutFailure); throw; }
     }
 
     public override bool CanRead => inner.CanRead;
