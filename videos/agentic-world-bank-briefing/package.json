@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "footage": "node prepare-footage.mjs",
+    "footage:substitutes": "node generate-substitutes.mjs",
     "slides": "node prepare-slides.mjs",
     "build": "node build.mjs",
     "dev": "hyperframes preview",
