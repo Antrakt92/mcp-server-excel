@@ -48,6 +48,42 @@ Fork 3.0.0 uses upstream 2.6.0 and requires CLI consumer changes:
 
 Finish or explicitly hand over current workbook work with the old version before switching. Test migrated automation on synthetic data before using operational workbooks. See [agent workflows](AGENT-WORKFLOWS.md) for current inspection and VBA limits. Older verification records describe their own release only.
 
+## When an MCP connection closes
+
+`Transport closed` means the client lost its connection to that server.
+The message alone gives no outcome for the last operation. If the client can
+reconnect the server, use that control. Otherwise start a fresh client session
+with the configured server. Verify that `file_read list` answers on the new
+connection. A successful response confirms that connection, and its session
+list describes only the current controller.
+
+For a local desktop workbook, rediscover the open book before opening its
+saved file again. Use MCP `file_read discover` on a working connection, or the
+CLI if that is an appropriate entry point for the workbook:
+
+```powershell
+excelcli -q session discover
+```
+
+For the CLI, inspect `success`, `data.complete`, and `data.errors`. A successful
+command can return incomplete discovery. Identify the intended workbook by
+location and Excel process, and check `saved` for unsaved edits. If discovery
+reports an active owner, a different build, or release still in progress, use
+the owning connection or wait for release and rediscover.
+
+Attach only when the task authorizes working on the open workbook. Use the
+`workbookId` from the same controller's discovery result, as
+`file attach` with `open_workbook_id` in MCP or
+`excelcli session attach --workbook-id <ID>` in the CLI. Use the newly returned
+session ID for subsequent commands (`data.sessionId` in CLI JSON). Attachment
+keeps the workbook's unsaved edits and visibility.
+
+Operation receipts belong to the controller that handled the original
+request. A fresh MCP connection or the CLI cannot recover a receipt from a
+different controller. If the original receipt is unavailable, inspect the
+book's current state and any pending work before retrying a write, save,
+or macro. Follow the recovery checks below while the operation is uncertain.
+
 ## After cancellation, timeout or a lost connection
 
 Cancellation and timeout stop waiting; Excel's work may continue. Check the Excel window and discover/list sessions before retrying. Do not assume the operation failed, undo partial changes automatically, or close a workbook as cleanup. If the host exits, unsaved workbooks may remain open and visible and attached workbooks stay untouched, following upstream 2.6.0 ownership rules. Pending work can remain in a retained worker; inspect its reported state using the matching build before retrying. Changing binaries does not finish, reverse or authorize cleanup of that work. AutoSave may already have saved changes independently.

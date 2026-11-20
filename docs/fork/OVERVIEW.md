@@ -86,6 +86,14 @@ Verification must distinguish compilation and tests without Excel, actual stdio/
 
 For lifecycle changes, include EOF, broken stdout with stdin still open, and parent exit while another writer retains stdin. Warm the same workload before comparing resources. Measure a bounded workload and shutdown; do not advertise an all-day leak guarantee or performance improvement without matching evidence.
 
+For a local shutdown trace, set `EXCELMCP_STDIO_DIAGNOSTICS=1` in the MCP
+client's environment for the next server launch. On managed process exit, the
+server attempts one stderr line such as
+`ExcelMCP stdio stopped: reason=stdin_eof exit=0`. The line contains the first
+observed stop reason and the process exit code. It carries no workbook or
+request details. An abrupt kill or closed stderr may leave no line. A separate
+client connection is still needed after the transport closes.
+
 ## Maintenance boundary
 
 Keep fork changes separate from unrelated upstream behavior. Preserve upstream license attribution, source contracts, calculation behavior and workbook ownership. Public reports and packages must exclude personal configuration, workbook data, private paths, secrets and unsanitized diagnostic output.

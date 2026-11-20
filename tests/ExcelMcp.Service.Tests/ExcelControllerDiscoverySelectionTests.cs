@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Service.Rpc;
@@ -81,6 +82,54 @@ public sealed partial class ExcelControllerTests
                 newer.GetProperty("workbooks")[0].GetProperty("sessionId").GetString());
         });
 
+    [Theory(Timeout = 15000)]
+    [InlineData(true, "This Excel application belongs to another running ExcelMcp controller.")]
+    [InlineData(false, "A retained Excel worker uses a different product build. It has not been replaced.")]
+    public async Task Controller_DiscoveryRefusesForeignLiveControllerOrMismatchedBuild(
+        bool foreignController, string expectedError)
+    {
+        using var owner = foreignController
+            ? Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                "/d /q /c set /p \"unused=\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true
+            })
+            : null;
+        Assert.False(foreignController && owner is null);
+        try
+        {
+            WorkerProcess? controllerIdentity = owner is null ? null : WorkerProcess.From(owner);
+            await WithDiscoveryWorkerAsync(retained: true, async (controller, worker) =>
+            {
+                var discovered = await ReadDiscoveryAsync(controller);
+                Assert.False(discovered.GetProperty("complete").GetBoolean());
+                Assert.Empty(discovered.GetProperty("workbooks").EnumerateArray());
+                var error = Assert.Single(discovered.GetProperty("errors").EnumerateArray());
+                Assert.Equal(WorkerProcess.Current.ProcessId, error.GetProperty("processId").GetInt32());
+                Assert.Equal(expectedError, error.GetProperty("message").GetString());
+
+                var attached = await AttachDiscoverySelectionAsync(controller);
+                Assert.False(attached.Success);
+                Assert.Equal("InvalidInput", attached.ErrorCategory);
+                Assert.Equal("Unknown open-workbook selection. Discover open workbooks first.", attached.ErrorMessage);
+                Assert.Equal(0, worker.ClaimCalls);
+                Assert.Equal(0, worker.AttachCalls);
+            }, registeredController: controllerIdentity, registeredBuild: foreignController ? null : "different-build");
+            if (owner is not null)
+                Assert.False(owner.HasExited);
+        }
+        finally
+        {
+            if (owner is not null)
+            {
+                owner.StandardInput.Close();
+                await owner.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+            }
+        }
+    }
+
     private static async Task<JsonElement> ReadDiscoveryAsync(ExcelController controller)
     {
         var result = await controller.ProcessAsync(new ServiceRequest { Command = "session.discover" });
@@ -96,18 +145,22 @@ public sealed partial class ExcelControllerTests
             Args = """{"workbookId":"selection"}"""
         });
 
-    private static async Task WithDiscoveryWorkerAsync(bool retained, Func<ExcelController, DiscoveryWorker, Task> run)
+    private static async Task WithDiscoveryWorkerAsync(bool retained, Func<ExcelController, DiscoveryWorker, Task> run,
+        WorkerProcess? registeredController = null, string? registeredBuild = null)
     {
         var directory = Directory.CreateTempSubdirectory("excelmcp-discovery-selection-");
         var registry = new WorkerRegistry(directory.FullName);
         var process = WorkerProcess.Current;
         var native = new ExcelProcessIdentity(process.ProcessId, process.StartedAtUtcFileTime);
         var previous = process with { StartedAtUtcFileTime = process.StartedAtUtcFileTime - 1 };
-        var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", process, previous,
-            "previous", WorkerRegistry.Build, native, OwnsExcel: true);
+        var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", process,
+            registeredController ?? previous, "previous", registeredBuild ?? WorkerRegistry.Build, native, OwnsExcel: true);
         var target = new DiscoveryWorker(registration, Path.Combine(directory.FullName, "book.xlsx"), retained);
         registry.Write(registration);
-        using var controller = new ExcelController(launcher: Launcher, registry: registry);
+        var launcher = registeredController is not null || registeredBuild is not null
+            ? new ProductProcessLauncher(Path.Combine(directory.FullName, "must-not-launch.exe"), [])
+            : Launcher;
+        using var controller = new ExcelController(launcher: launcher, registry: registry);
         await StopNativeObservationPollingAsync(controller);
         using var host = new DaemonHost(registration.PipeName, pipe => new JsonRpc(pipe, pipe, target),
             maximumConnections: 8);
@@ -136,10 +189,12 @@ public sealed partial class ExcelControllerTests
         internal bool IncludeWorkbook { get; set; } = true;
         internal bool Complete { get; set; } = true;
         internal Func<Task>? BeforeDiscoveryReply { get; set; }
+        internal int ClaimCalls { get; private set; }
         internal int AttachCalls { get; private set; }
 
         public Task<WorkerSnapshot> ClaimAsync(WorkerClaim claim, CancellationToken cancellationToken = default)
         {
+            ClaimCalls++;
             registration = registration with { Controller = claim.Controller, Generation = claim.Generation };
             return Task.FromResult(Snapshot());
         }

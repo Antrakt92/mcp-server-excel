@@ -27,7 +27,7 @@ public sealed class ParentProcessMonitorTests
         var lifetime = new FakeLifetime();
         try
         {
-            using var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)child.Id,
+            using var monitor = ParentProcessMonitor.StartForProcess(lifetime.StopApplication, (uint)child.Id,
                 TimeSpan.FromMilliseconds(10));
             Assert.NotNull(monitor);
             await Task.Delay(100);
@@ -48,7 +48,7 @@ public sealed class ParentProcessMonitorTests
         var lifetime = new FakeLifetime();
         try
         {
-            var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)child.Id,
+            var monitor = ParentProcessMonitor.StartForProcess(lifetime.StopApplication, (uint)child.Id,
                 TimeSpan.FromMilliseconds(10));
             Assert.NotNull(monitor);
             monitor.Dispose(); monitor.Dispose();
@@ -65,7 +65,7 @@ public sealed class ParentProcessMonitorTests
     {
         var lifetime = new FakeLifetime();
         using var self = Process.GetCurrentProcess();
-        using var monitor = ParentProcessMonitor.StartForProcess(lifetime, (uint)self.Id,
+        using var monitor = ParentProcessMonitor.StartForProcess(lifetime.StopApplication, (uint)self.Id,
             notCreatedAfter: self.StartTime.ToUniversalTime().ToFileTimeUtc() - 1);
         Assert.Null(monitor);
         Assert.Equal(1, lifetime.Stops);
@@ -77,7 +77,7 @@ public sealed class ParentProcessMonitorTests
     public async Task EofReportsOncePreservesDataAndIgnoresEmptyRead()
     {
         var stops = 0;
-        using var stream = new TransportLifetimeStream(new MemoryStream([10, 20]), () => stops++);
+        using var stream = new TransportLifetimeStream(new MemoryStream([10, 20]), reason => { Assert.Equal(StdioStopReason.StdinEof, reason); stops++; });
         Assert.Equal(0, stream.Read([], 0, 0));
         Assert.Equal(0, stops);
         var buffer = new byte[4];

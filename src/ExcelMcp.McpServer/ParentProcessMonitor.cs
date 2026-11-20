@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Win32.SafeHandles;
 
 namespace Sbroenne.ExcelMcp.McpServer;
@@ -13,21 +12,21 @@ internal sealed class ParentProcessMonitor : IDisposable
     private const uint SnapshotProcesses = 2;
     private const uint WaitObject0 = 0;
     private readonly SafeProcessHandle _parent;
-    private readonly IHostApplicationLifetime _lifetime;
+    private readonly Action _onParentExit;
     private readonly Timer _timer;
     private int _checking;
     private int _disposed;
     private int _signaled;
 
-    private ParentProcessMonitor(IHostApplicationLifetime lifetime, SafeProcessHandle parent,
+    private ParentProcessMonitor(Action onParentExit, SafeProcessHandle parent,
         TimeSpan interval)
     {
         _parent = parent;
-        _lifetime = lifetime;
+        _onParentExit = onParentExit;
         _timer = new Timer(CheckParent, null, interval, interval);
     }
 
-    internal static ParentProcessMonitor? Start(IHostApplicationLifetime lifetime)
+    internal static ParentProcessMonitor? Start(Action onParentExit)
     {
         // Interactive/file-redirection launches retain the SDK's normal lifecycle.
         if (GetFileType(GetStdHandle(-10)) != 3)
@@ -43,14 +42,14 @@ internal sealed class ParentProcessMonitor : IDisposable
             if (entry.ProcessId == (uint)Environment.ProcessId)
             {
                 using var self = Process.GetCurrentProcess();
-                return StartForProcess(lifetime, entry.ParentProcessId,
+                return StartForProcess(onParentExit, entry.ParentProcessId,
                     notCreatedAfter: self.StartTime.ToUniversalTime().ToFileTimeUtc());
             }
         } while (Process32Next(snapshot, ref entry));
         return null;
     }
 
-    internal static ParentProcessMonitor? StartForProcess(IHostApplicationLifetime lifetime,
+    internal static ParentProcessMonitor? StartForProcess(Action onParentExit,
         uint processId, TimeSpan? interval = null, long? notCreatedAfter = null)
     {
         var parent = OpenProcess(Synchronize | QueryLimitedInformation, false, processId);
@@ -59,7 +58,7 @@ internal sealed class ParentProcessMonitor : IDisposable
             var error = Marshal.GetLastWin32Error();
             parent.Dispose();
             if (error == 87) // Parent has already exited.
-                lifetime.StopApplication();
+                onParentExit();
             return null;
         }
         // A PID can be reused between the process snapshot and OpenProcess.
@@ -71,10 +70,10 @@ internal sealed class ParentProcessMonitor : IDisposable
         if (notCreatedAfter.HasValue && created > notCreatedAfter.Value)
         {
             parent.Dispose();
-            lifetime.StopApplication();
+            onParentExit();
             return null;
         }
-        return new ParentProcessMonitor(lifetime, parent, interval ?? TimeSpan.FromSeconds(1));
+        return new ParentProcessMonitor(onParentExit, parent, interval ?? TimeSpan.FromSeconds(1));
     }
 
     private void CheckParent(object? state)
@@ -86,7 +85,7 @@ internal sealed class ParentProcessMonitor : IDisposable
             // Zero-time process waits do not serialize with stdin reads or block workers.
             if (WaitForSingleObject(_parent, 0) == WaitObject0 &&
                 Interlocked.Exchange(ref _signaled, 1) == 0)
-                _lifetime.StopApplication();
+                _onParentExit();
         }
         catch (ObjectDisposedException) when (Volatile.Read(ref _disposed) != 0)
         {

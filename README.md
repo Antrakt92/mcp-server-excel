@@ -78,6 +78,9 @@ For a manual stdio connection, extract the MCP ZIP and configure your client to 
 
 Restart or reconnect that client connection after changing its executable. Updating files does not replace a server already running in memory. Client configuration formats vary; use the equivalent local stdio command setting in your client.
 
+If a client reports `Transport closed`, see [how to reconnect and recover an
+open workbook](docs/fork/RECOVERY.md#when-an-mcp-connection-closes).
+
 ## Use the CLI
 
 Extract the CLI ZIP and run:

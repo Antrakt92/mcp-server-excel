@@ -24,7 +24,12 @@ public sealed class TransportFailureLifetimeTests
     {
         var failure = new IOException("Controlled pipe failure");
         var calls = 0;
-        using var stream = new TransportLifetimeStream(new FailingStream(failure), () => calls++);
+        using var stream = new TransportLifetimeStream(new FailingStream(failure), reason =>
+        {
+            Assert.Equal(operation.StartsWith("read", StringComparison.Ordinal)
+                ? StdioStopReason.StdinFailure : StdioStopReason.StdoutFailure, reason);
+            calls++;
+        });
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var actual = await Assert.ThrowsAsync<IOException>(() => Invoke(stream, operation));
@@ -37,7 +42,7 @@ public sealed class TransportFailureLifetimeTests
     public async Task CancellationDoesNotEndTransport()
     {
         var calls = 0;
-        using var stream = new TransportLifetimeStream(new FailingStream(new OperationCanceledException()), () => calls++);
+        using var stream = new TransportLifetimeStream(new FailingStream(new OperationCanceledException()), _ => calls++);
         await Assert.ThrowsAsync<OperationCanceledException>(() => Invoke(stream, "read-memory-async"));
         await Assert.ThrowsAsync<OperationCanceledException>(() => Invoke(stream, "write-memory-async"));
         Assert.Equal(0, calls);
@@ -48,7 +53,7 @@ public sealed class TransportFailureLifetimeTests
     {
         var memory = new CountingMemoryStream();
         var calls = 0;
-        var stream = new TransportLifetimeStream(memory, () => calls++);
+        var stream = new TransportLifetimeStream(memory, _ => calls++);
         await stream.WriteAsync(new byte[] { 1, 2, 3 });
         memory.Position = 0;
         var actual = new byte[3];
