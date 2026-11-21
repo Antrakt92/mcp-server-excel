@@ -8,9 +8,8 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 public partial class RangeCommands
 {
     private static void ReplaceFirst(ExcelContext context, Excel.Range range, string findValue,
-        string replaceValue, ReplaceOptions options, CancellationToken ct)
+        string replaceValue, string? firstLiteral, ReplaceOptions options, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(findValue);
         Excel.Range? cell = null;
         try
         {
@@ -20,9 +19,8 @@ public partial class RangeCommands
 
             bool hasFormula = cell.HasFormula is true;
             string updated = replaceValue;
-            if (!options.MatchEntireCell)
+            if (firstLiteral is not null)
             {
-                string literal = DecodeFirstReplacementLiteral(findValue);
                 object? original = hasFormula ? ReadFormulas(context, cell) : cell.Value2;
                 if (original is not string text)
                 {
@@ -31,14 +29,14 @@ public partial class RangeCommands
                 }
 
                 var comparison = options.MatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-                int index = text.IndexOf(literal, comparison);
+                int index = text.IndexOf(firstLiteral, comparison);
                 if (index < 0)
                 {
                     throw new InvalidOperationException(
                         "Excel found a match that could not be located unambiguously in the stored text or formula.");
                 }
 
-                updated = string.Concat(text.AsSpan(0, index), replaceValue, text.AsSpan(index + literal.Length));
+                updated = string.Concat(text.AsSpan(0, index), replaceValue, text.AsSpan(index + firstLiteral.Length));
             }
 
             ct.ThrowIfCancellationRequested();
