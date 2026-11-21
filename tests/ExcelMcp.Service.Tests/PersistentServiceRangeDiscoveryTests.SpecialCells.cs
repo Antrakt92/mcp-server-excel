@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
 using Xunit;
@@ -179,6 +180,55 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
 
         Assert.Equal(4, result.RootElement.GetProperty("cellCount").GetInt64());
         Assert.Equal(["$A$1", "$C$1", "$A$3", "$C$3"], ReadAreas(result));
+    }
+
+    [Theory]
+    [InlineData("columns", "B1:B400", "$B$1:$B$400", 400L)]
+    [InlineData("rows", "A2:AZ2", "$A$2:$AZ$2", 52L)]
+    public void SpecialCells_VisibleOnOneHiddenDimension_ReturnsNoMatches(
+        string axis, string rangeAddress, string visibleAddress, long cellCount)
+    {
+        var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
+        foreach (string cellAddress in rangeAddress.Split(':'))
+            RequireSuccess(_commands.SetValues(_fixture.BatchToken, sheetName, cellAddress, [["Keep"]]));
+        var hidden = _fixture.Send("rangeformat.set-visibility", new { sheetName, rangeAddress, axis, hidden = true });
+        Assert.True(hidden.Success, hidden.ErrorMessage);
+
+        // Confirm the real Excel response takes the ambiguous-error path that requires a separate proof.
+        _fixture.ExecuteRawVerification((context, _) =>
+        {
+            Excel.Worksheet? sheet = null;
+            Excel.Range? scope = null;
+            Excel.Range? dimension = null;
+            Excel.Range? match = null;
+            try
+            {
+                sheet = ComUtilities.FindSheet(context.Book, sheetName);
+                Assert.NotNull(sheet);
+                scope = sheet.Range[rangeAddress];
+                dimension = axis == "columns" ? scope.EntireColumn : scope.EntireRow;
+                Assert.True(Assert.IsType<bool>((object)dimension.Hidden));
+                var failure = Assert.Throws<COMException>(() => match = scope.SpecialCells(Excel.XlCellType.xlCellTypeVisible));
+                Assert.Equal(unchecked((int)0x800A03EC), failure.HResult);
+            }
+            finally
+            {
+                ComUtilities.Release(ref match);
+                ComUtilities.Release(ref dimension);
+                ComUtilities.Release(ref scope);
+                ComUtilities.Release(ref sheet);
+            }
+        });
+
+        using var hiddenResult = Discover(sheetName, rangeAddress, "visible");
+        Assert.Equal(0, hiddenResult.RootElement.GetProperty("cellCount").GetInt64());
+        Assert.Empty(ReadAreas(hiddenResult));
+
+        var shown = _fixture.Send("rangeformat.set-visibility", new { sheetName, rangeAddress, axis, hidden = false });
+        Assert.True(shown.Success, shown.ErrorMessage);
+        using var shownResult = Discover(sheetName, rangeAddress, "visible");
+        Assert.Equal(cellCount, shownResult.RootElement.GetProperty("cellCount").GetInt64());
+        Assert.Equal([visibleAddress], ReadAreas(shownResult));
     }
 
     [Fact]

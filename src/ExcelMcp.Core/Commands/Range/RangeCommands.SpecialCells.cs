@@ -273,11 +273,16 @@ public partial class RangeCommands
         Excel.Range? columns = null;
         try
         {
-            cells = scope.Cells;
+            ct.ThrowIfCancellationRequested();
             rows = scope.Rows;
             columns = scope.Columns;
             int rowCount = rows.Count;
             int columnCount = columns.Count;
+
+            if (TryConfirmSingleHiddenDimension(scope, rowCount, columnCount))
+                return false;
+
+            cells = scope.Cells;
             for (int row = 1; row <= rowCount; row++)
             {
                 for (int column = 1; column <= columnCount; column++)
@@ -302,9 +307,34 @@ public partial class RangeCommands
         }
         finally
         {
+            ComUtilities.Release(ref cells);
             ComUtilities.Release(ref columns);
             ComUtilities.Release(ref rows);
-            ComUtilities.Release(ref cells);
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A failed optional shortcut falls back to the existing per-cell verification, which still propagates errors.")]
+    private static bool TryConfirmSingleHiddenDimension(Excel.Range scope, int rowCount, int columnCount)
+    {
+        if (rowCount != 1 && columnCount != 1)
+            return false;
+
+        Excel.Range? dimension = null;
+        try
+        {
+            // A single hidden row or column proves no cell in this rectangle is visible.
+            dimension = columnCount == 1 ? scope.EntireColumn : scope.EntireRow;
+            object? hidden = dimension.Hidden;
+            return hidden is true;
+        }
+        catch (COMException)
+        {
+            return false;
+        }
+        finally
+        {
+            ComUtilities.Release(ref dimension);
         }
     }
 
