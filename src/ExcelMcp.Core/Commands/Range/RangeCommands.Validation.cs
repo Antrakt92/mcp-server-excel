@@ -1,3 +1,4 @@
+using System.Globalization;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -52,63 +53,76 @@ public partial class RangeCommands
         {
             Excel.Worksheet? sheet = null;
             Excel.Range? range = null;
-            Excel.Validation? validation = null;
+            Excel.Range? cells = null;
+            Excel.Range? firstCell = null;
+            Excel.Validation? firstValidation = null;
+            Excel.Validation? rangeValidation = null;
 
             try
             {
-                // Get sheet
                 sheet = Utilities.WorksheetLookup.Get(ctx.Book, sheetName);
-
-                // Get range
                 range = sheet.Range[rangeAddress];
 
-                // Get validation object
-                validation = range.Validation;
-
-                // Delete existing validation
-                validation.Delete();
-
-                // Add validation
-                validation.Add(
-                    Type: xlType,
-                    AlertStyle: xlAlertStyle,
-                    Operator: xlOperator,
-                    Formula1: formula1 ?? "",
-                    Formula2: formula2 ?? "");
-
-                // Configure input message
-                validation.ShowInput = showInputMessage ?? false;
-                if (showInputMessage is true)
+                if (Convert.ToInt64((object)range.CountLarge, CultureInfo.InvariantCulture) > 1)
                 {
-                    validation.InputTitle = inputTitle ?? "";
-                    validation.InputMessage = inputMessage ?? "";
+                    cells = range.Cells;
+                    firstCell = cells[1, 1];
                 }
 
-                // Configure error alert
-                if (effectiveShowErrorAlert)
+                // Let Excel accept the rule at its first target cell before deleting a mixed
+                // range's rules. Excel's Modify also keeps an existing single-cell rule on rejection.
+                var firstTarget = firstCell ?? range;
+                firstValidation = firstTarget.Validation;
+                var hasRule = ReadValidationType(() => firstValidation.Type,
+                    () => HasValidationInScope(ctx.App, firstTarget)).HasValue;
+                if (hasRule)
+                    firstValidation.Modify(xlType, xlAlertStyle, xlOperator, formula1 ?? "", formula2 ?? "");
+                else
+                    AddRule(firstValidation);
+
+                var validation = firstValidation;
+                if (firstCell is not null)
                 {
-                    validation.ErrorTitle = errorTitle ?? "";
-                    validation.ErrorMessage = errorMessage ?? "";
+                    rangeValidation = range.Validation;
+                    rangeValidation.Delete();
+                    AddRule(rangeValidation);
+                    validation = rangeValidation;
+                }
+
+                // Modify can retain earlier text. Match the defaults of a new rule.
+                var modifiedSingleCell = firstCell is null && hasRule;
+                if (showInputMessage is true || modifiedSingleCell)
+                {
+                    validation.InputTitle = showInputMessage is true ? inputTitle ?? "" : "";
+                    validation.InputMessage = showInputMessage is true ? inputMessage ?? "" : "";
+                }
+                validation.ShowInput = showInputMessage ?? false;
+                if (effectiveShowErrorAlert || modifiedSingleCell)
+                {
+                    validation.ErrorTitle = effectiveShowErrorAlert ? errorTitle ?? "" : "";
+                    validation.ErrorMessage = effectiveShowErrorAlert ? errorMessage ?? "" : "";
                 }
                 validation.ShowError = effectiveShowErrorAlert;
-
-                // Configure additional options
                 validation.IgnoreBlank = ignoreBlank ?? true;
 
-                if (validationType.Equals("list", StringComparison.OrdinalIgnoreCase))
-                {
+                if (xlType == Excel.XlDVType.xlValidateList)
                     validation.InCellDropdown = showDropdown ?? true;
-                }
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }
             finally
             {
-                ComUtilities.Release(ref validation!);
-                ComUtilities.Release(ref range!);
-                ComUtilities.Release(ref sheet!);
+                ComUtilities.Release(ref rangeValidation);
+                ComUtilities.Release(ref firstValidation);
+                ComUtilities.Release(ref firstCell);
+                ComUtilities.Release(ref cells);
+                ComUtilities.Release(ref range);
+                ComUtilities.Release(ref sheet);
             }
         });
+
+        void AddRule(Excel.Validation validation) =>
+            validation.Add(xlType, xlAlertStyle, xlOperator, formula1 ?? "", formula2 ?? "");
     }
 
     private static Excel.XlDVType ParseValidationType(string type)

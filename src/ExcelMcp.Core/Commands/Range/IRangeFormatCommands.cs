@@ -142,7 +142,7 @@ public interface IRangeFormatCommands
     /// <summary>
     /// Adds data validation rules to range.
     /// Invalid type, comparison operator, error style, missing required formulas, and an oversized first formula are rejected before replacing an existing rule.
-    /// A later Excel error applying the replacement is not rolled back.
+    /// Excel must accept the rule on the first target cell before bulk replacement. Later application errors may leave changes.
     /// </summary>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
     /// <param name="rangeAddress">Cell range address to validate (e.g., 'A1:D10')</param>

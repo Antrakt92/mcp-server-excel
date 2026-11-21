@@ -190,7 +190,9 @@ replace the target's existing validation rule. Invalid validation types,
 comparison operators, and error styles are rejected before removing that rule.
 Rules that use the first formula reject it above 255 characters. For a longer
 dropdown list, reference a worksheet range or defined name.
-This does not promise rollback for errors Excel raises while applying a rule.
+Excel must accept the new rule on the first target cell before the operation
+removes any rules from a multi-cell range. A later application error can leave a
+partially applied replacement.
 
 Explicit `show_input_message: false` / `--show-input-message false` and
 `show_error_alert: false` / `--show-error-alert false` disable those messages.
