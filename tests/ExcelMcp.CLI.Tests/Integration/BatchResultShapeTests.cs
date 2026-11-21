@@ -182,6 +182,32 @@ public sealed class BatchResultShapeTests
         Assert.True(output.RootElement.GetProperty("data").GetProperty("running").GetBoolean());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("The service stopped, but an Excel process remained open.")]
+    public async Task Batch_ShutdownAcknowledgement_PreservesAnyWarning(string? warning)
+    {
+        var result = await InProcessCliHelper.RunAsync(
+            ["batch"],
+            request =>
+            {
+                Assert.Equal("service.shutdown", request.Command);
+                return new ServiceResponse { Success = true, PartialState = warning };
+            },
+            """{"command":"Service.Shutdown"}""");
+
+        Assert.Equal(0, result.ExitCode);
+        using var output = JsonDocument.Parse(result.Stdout);
+        var item = output.RootElement;
+        Assert.Equal(0, item.GetProperty("index").GetInt32());
+        Assert.Equal("Service.Shutdown", item.GetProperty("command").GetString());
+        Assert.True(item.GetProperty("success").GetBoolean());
+        if (warning is null)
+            Assert.False(item.TryGetProperty("partialState", out _));
+        else
+            Assert.Equal(warning, item.GetProperty("partialState").GetProperty("shutdownWarning").GetString());
+    }
+
     [Fact]
     public async Task Batch_InvalidTypePreservesOriginalCauseWithoutDispatch()
     {
