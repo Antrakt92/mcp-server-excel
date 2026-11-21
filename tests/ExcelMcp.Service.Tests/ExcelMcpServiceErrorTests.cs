@@ -976,8 +976,14 @@ public sealed partial class ExcelMcpServiceErrorTests
 
     private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState, IExcelBatchProcessObservation
     {
-        public WorkbookRefreshState GetRefreshState() =>
-            HasTimedOutOperation ? WorkbookRefreshState.Busy : WorkbookRefreshState.Ready;
+        public WorkbookRefreshState GetRefreshState()
+        {
+            if (ExitDuringRefresh)
+                IsAlive = false;
+            if (RefreshException is { } error)
+                throw error;
+            return HasTimedOutOperation ? WorkbookRefreshState.Busy : WorkbookRefreshState.Ready;
+        }
         public string WorkbookPath { get; init; } = Path.Combine(Path.GetTempPath(), $"fake-batch-{Guid.NewGuid():N}.xlsx");
         public Microsoft.Extensions.Logging.ILogger Logger { get; } = NullLogger.Instance;
         public IReadOnlyDictionary<string, Excel.Workbook> Workbooks { get; } = new Dictionary<string, Excel.Workbook>();
@@ -985,9 +991,11 @@ public sealed partial class ExcelMcpServiceErrorTests
         public bool IsAlive { get; private set; } = true;
         public bool IsAliveAfterSaveException { get; init; } = true;
         public bool IsAliveAfterExecuteException { get; init; } = true;
+        public bool ExitDuringRefresh { get; init; }
         public ExcelNativeProcessObservation? ProcessObservation { get; set; }
         public ExcelNativeProcessObservation? ProcessObservationAfterDeathCheck { get; init; }
         public Exception? ExecuteException { get; init; }
+        public Exception? RefreshException { get; init; }
         public Exception? SaveException { get; init; }
         public int ExecuteCalls { get; private set; }
         public int SaveCalls { get; private set; }

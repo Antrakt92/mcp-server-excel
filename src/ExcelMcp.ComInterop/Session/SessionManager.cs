@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -1468,6 +1469,8 @@ public sealed class SessionManager : IDisposable
         bool allowTimedOutOperation = false) =>
         TryBeginOperation(sessionId, out batch, out errorMessage, out error, out _, allowTimedOutOperation);
 
+    [SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A COM error from the readiness scan is replaced only when the exact Excel process is confirmed exited. Live or unconfirmed COM errors retain their original details.")]
     internal bool TryBeginOperation(
         string sessionId,
         [NotNullWhen(true)] out IExcelBatch? batch,
@@ -1525,10 +1528,20 @@ public sealed class SessionManager : IDisposable
             var excelAlive = batch.IsExcelProcessAlive();
             if (excelAlive && !allowTimedOutOperation && batch.HasTimedOutOperation)
             {
-                var refreshState = GetRefreshState(batch);
+                var refreshState = WorkbookRefreshState.Unknown;
+                try
+                {
+                    refreshState = GetRefreshState(batch);
+                }
+                catch (COMException scanError) when (!batch.IsExcelProcessAlive() &&
+                    (batch as IExcelBatchProcessObservation)?.ProcessObservation is { State: ExcelNativeProcessState.Exited })
+                {
+                    _logger?.LogDebug(scanError, "Excel session {SessionId} exited during the readiness scan", sessionId);
+                    excelAlive = false;
+                }
                 // A dead Excel instance cannot report readiness. Confirm whether it
                 // exited during the scan before treating the previous wait as pending.
-                excelAlive = batch.IsExcelProcessAlive();
+                excelAlive = excelAlive && batch.IsExcelProcessAlive();
                 if (excelAlive && refreshState != WorkbookRefreshState.Ready)
                 {
                     errorMessage = $"A previous wait on session '{sessionId}' expired. " +

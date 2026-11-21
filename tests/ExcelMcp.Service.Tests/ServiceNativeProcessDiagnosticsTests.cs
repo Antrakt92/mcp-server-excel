@@ -127,6 +127,66 @@ public sealed partial class ExcelMcpServiceErrorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_ReadinessComErrorWithLiveExcel_PreservesOriginalError()
+    {
+        using var service = new ExcelMcpService();
+        var error = NewReadinessComError();
+        var batch = new FakeBatch
+        {
+            HasTimedOutOperation = true,
+            RefreshException = error
+        };
+        const string sessionId = "live-excel-during-readiness-check";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = "sheet.list", SessionId = sessionId });
+
+        Assert.False(response.Success);
+        Assert.Equal("ComInterop", response.ErrorCategory);
+        Assert.Equal("0x800706BE", response.HResult);
+        Assert.Contains(error.Message, response.ErrorMessage);
+        Assert.Equal(0, batch.ExecuteCalls);
+        Assert.Equal(0, batch.DisposeCalls);
+        Assert.Contains(sessionId, service.SessionManager.ActiveSessionIds);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessAsync_ExcelExitsDuringReadinessCheck_ReportsConfirmedExit(bool scanThrows)
+    {
+        using var service = new ExcelMcpService();
+        var identity = new ExcelProcessIdentity(123, 456);
+        var batch = new FakeBatch
+        {
+            HasTimedOutOperation = true,
+            ExitDuringRefresh = true,
+            RefreshException = scanThrows ? NewReadinessComError() : null,
+            ProcessObservationAfterDeathCheck = new(identity, ExcelNativeProcessState.Exited, 17, null)
+        };
+        const string sessionId = "excel-exit-during-readiness-check";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = "sheet.list", SessionId = sessionId });
+
+        Assert.False(response.Success);
+        Assert.Equal("ExcelProcessDied", response.ErrorCategory);
+        Assert.Equal("sheet.list", response.Command);
+        Assert.Equal(sessionId, response.SessionId);
+        Assert.Equal(0, batch.ExecuteCalls);
+        Assert.Equal(1, batch.DisposeCalls);
+        Assert.DoesNotContain(sessionId, service.SessionManager.ActiveSessionIds);
+        using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        var native = AssertNativeDiagnosticsIdentity(state, "Exited");
+        Assert.Equal(17u, native.GetProperty("exitCode").GetUInt32());
+    }
+
+#pragma warning disable CA2201 // Simulates a COM error from the readiness scan without starting Excel.
+    private static COMException NewReadinessComError() =>
+        new("Synthetic readiness scan COM error.", unchecked((int)0x800706BE));
+#pragma warning restore CA2201
+
+    [Fact]
     public void NativeDiagnostics_NoObservationPreservesExistingBytesAndNull()
     {
         const string original = " { \"phase\": \"verifying\", \"diagnostics\": { \"execution\": { \"complete\": false } } } ";
