@@ -30,7 +30,7 @@ public partial class RangeCommands
             {
                 throw new OperationFailureException(
                     OperationFailureCategory.InvalidInput,
-                    "Content writes require a single rectangular range; use separate requests for disjoint ranges.");
+                    "This operation requires a single rectangular range; use separate requests for disjoint ranges.");
             }
 
             rows = range.Rows;

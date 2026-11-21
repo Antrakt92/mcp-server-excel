@@ -150,7 +150,7 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                (int rowCount, int columnCount) = RangeHelpers.GetDimensions(range);
+                (int rowCount, int columnCount) = GetContentDimensions(range);
 
                 // Validate dimensions match
                 if (resolvedFormats.Count != rowCount)

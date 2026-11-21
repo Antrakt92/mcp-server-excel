@@ -35,6 +35,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 /// Transpose is included in destination geometry; skipped blanks are not overwritten.
 ///
 /// NUMBER FORMATS: Use US locale format codes (e.g., '#,##0.00', 'mm/dd/yyyy', '0.00%').
+/// Use one rectangular target for a matrix of number formats.
 /// </summary>
 [ServiceCategory("Range")]
 [McpTool("range", Title = "Range Operations", Destructive = true, Category = "data",
@@ -43,6 +44,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
         "OVERWRITE POLICY: set-values, set-formulas, and content-writing copy kinds default to overwrite_policy='reject-nonempty'. Values, whitespace, errors, and formulas displaying blank count as occupied. Conflicts or failed inspection stop before writing; errors list at most 10 conflicting addresses. Checks cover direct destinations, not future spills. Use overwrite_policy='allow' when the user's request authorizes replacement, without redundant confirmation. Never automatically retry a rejected write with allow. " +
         "COPY: Required paste_kind (all/values/formulas/formats/validation); transpose and skip_blanks default false. Formats/validation preserve content and need no overwrite permission; formats include number formats, protection, and applicable conditional rules. Copy checks exclude skipped source blanks. Source and destination must be unmerged rectangles; the destination is one anchor cell or a whole multiple of the (transposed) source size. Uses Excel's clipboard. " +
         "MERGED CELLS: Writes that intersect merged cells fail unless the target is only the merged range's top-left cell. " +
+        "NUMBER FORMATS: set-number-formats requires one rectangle per request. " +
         "CLEAR ACTIONS HAVE NO TOOL-LEVEL UNDO: clear-all removes values, formulas, and formats; clear-contents keeps formatting; clear-formats keeps content. " +
         "Value/formula writes attempt to restore the prior calculation mode; restoration can fail without failing the write. Verify the mode when later work depends on it; manual mode needs calculation_mode calculate. " +
         "To create an Excel Table use table create, not range. Use range_edit for insert/delete/find/sort/fill, range_format for styling/validation, and range_link for hyperlinks/protection.")]
@@ -329,12 +331,12 @@ public interface IRangeCommands
     OperationResult SetNumberFormat(IExcelBatch batch, string sheetName, [RequiredParameter] string rangeAddress, [RequiredParameter] string formatCode);
 
     /// <summary>
-    /// Sets number formats cell-by-cell from 2D array or file.
+    /// Sets number formats cell-by-cell in one rectangle from a 2D array or file.
     /// Provide EITHER formats (inline JSON 2D array) OR formatsFile (path to .json file), not both.
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Name of the worksheet containing the range</param>
-    /// <param name="rangeAddress">Cell range address matching formats dimensions</param>
+    /// <param name="rangeAddress">One rectangular range matching the format matrix dimensions</param>
     /// <param name="formats">2D array of format codes - same dimensions as target range (e.g., [['#,##0.00', '0.00%'], ['mm/dd/yyyy', 'General']]). Optional if formatsFile is provided.</param>
     /// <param name="formatsFile">Path to a JSON file containing 2D array of format codes. Alternative to inline formats parameter.</param>
     [ServiceAction("set-number-formats")]

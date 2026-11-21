@@ -206,6 +206,32 @@ public sealed partial class PersistentServiceRangeNumberFormatTests
     }
 
     [Fact]
+    public async Task SetNumberFormats_DisjointRange_PreservesEveryCellFormat()
+    {
+        const string unionAddress = "A1,C1";
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "A1:C1", FormatNumber));
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, unionAddress, FormatPercentage));
+        var before = _commands.GetNumberFormats(batch, sheetName, "A1:C1");
+        RequireSuccess(before);
+        AssertFormatMatrix([[FormatPercentage, FormatNumber, FormatPercentage]], before.Formats);
+
+        var failure = await _fixture.SendForFailureAsync("range.set-number-formats", new
+        {
+            sheetName,
+            rangeAddress = unionAddress,
+            formats = new[] { new[] { FormatCurrency } }
+        });
+
+        Assert.Equal("InvalidInput", failure.ErrorCategory);
+        Assert.Contains("single rectangular range", failure.ErrorMessage, StringComparison.Ordinal);
+        var after = _commands.GetNumberFormats(batch, sheetName, "A1:C1");
+        RequireSuccess(after);
+        AssertFormatMatrix(before.Formats, after.Formats);
+    }
+
+    [Fact]
     public void SetNumberFormat_TextFormat_PreservesLeadingZeros()
     {
         // Arrange
