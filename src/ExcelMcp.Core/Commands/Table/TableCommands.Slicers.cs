@@ -237,7 +237,7 @@ public partial class TableCommands
                 result.Success = true;
                 result.WorkflowHint = selectAll
                     ? $"Table slicer '{slicerName}' filter cleared - all items are now visible."
-                    : $"Table slicer '{slicerName}' selection updated to {selectedItems.Count} item(s).";
+                    : $"Table slicer '{slicerName}' selection updated to {result.SelectedItems.Count} item(s).";
 
                 return result;
             }
