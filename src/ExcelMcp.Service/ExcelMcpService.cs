@@ -671,7 +671,7 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return HandleExcelDisconnect(request.SessionId, ex, GetNativeProcessObservation(closingBatch));
+            return HandleExcelDisconnect(request.SessionId, ex, closingBatch);
         }
 
         if (closed)
@@ -1225,7 +1225,7 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return Task.FromResult(HandleExcelDisconnect(sessionId, ex, GetNativeProcessObservation(batch)));
+            return Task.FromResult(HandleExcelDisconnect(sessionId, ex, batch));
         }
         catch (Exception ex)
         {
@@ -1246,14 +1246,14 @@ public sealed class ExcelMcpService : IDisposable
         }
     }
 
-    private ServiceResponse HandleExcelDisconnect(string sessionId, Exception exception,
-        ExcelNativeProcessObservation? observation = null)
+    private ServiceResponse HandleExcelDisconnect(string sessionId, Exception exception, IExcelBatch? failedBatch)
     {
         var batch = _sessionManager.GetSession(sessionId);
-        observation ??= GetNativeProcessObservation(batch);
+        var diagnosticBatch = failedBatch ?? batch;
         if (batch is not null && batch.IsExcelProcessAlive())
         {
             _sessionManager.RevealForRecovery(sessionId);
+            var observation = GetNativeProcessObservation(diagnosticBatch);
             var retainedState = SerializeDisconnectedOperationState(exception);
             var state = retainedState is null
                 ? new System.Text.Json.Nodes.JsonObject()
@@ -1282,8 +1282,10 @@ public sealed class ExcelMcpService : IDisposable
             };
         }
         CleanupDeadSession(sessionId);
+        // Looking up a dead session can remove it. Read the original batch's retained exit evidence.
         return CreateExcelDisconnectedResponse(sessionId, exception,
-            "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.", observation);
+            "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.",
+            GetNativeProcessObservation(diagnosticBatch));
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
