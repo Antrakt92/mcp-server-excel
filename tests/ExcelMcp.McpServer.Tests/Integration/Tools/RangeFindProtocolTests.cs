@@ -79,6 +79,9 @@ public sealed class RangeFindProtocolTests(RecordingProgramTransportFixture fixt
         Assert.Contains("default: 10", tool.Description, StringComparison.Ordinal);
         Assert.Contains("not search time", tool.Description, StringComparison.Ordinal);
         Assert.True(tool.JsonSchema.GetProperty("properties").TryGetProperty("max_matches", out _));
+        var findOptions = tool.JsonSchema.GetProperty("properties").GetProperty("find_options");
+        Assert.Contains("matches in both are counted once", findOptions.GetProperty("description").GetString(),
+            StringComparison.Ordinal);
         var parameter = GeneratedToolContract.GetParameter("range_edit_read", "max_matches");
         Assert.True(parameter.IsOptional);
         Assert.Equal(typeof(int?), parameter.ParameterType);
