@@ -899,12 +899,18 @@ internal sealed class ExcelController : IDisposable
                             }
                             else if (record.Build != WorkerRegistry.Build)
                             {
-                                errors.Add(new(window.Process.ProcessId, "A retained Excel worker uses a different product build. It has not been replaced."));
+                                errors.Add(new(window.Process.ProcessId,
+                                    "Discovery skipped this Excel instance because its worker uses a different ExcelMcp build. " +
+                                    "Use the connection that owns the worker if available. " +
+                                    "For workbooks already managed by this controller, continue using their existing session IDs."));
                                 continue;
                             }
                             else if (record.Controller != _identity && record.Controller.IsAlive())
                             {
-                                errors.Add(new(window.Process.ProcessId, "This Excel application belongs to another running ExcelMcp controller."));
+                                errors.Add(new(window.Process.ProcessId,
+                                    "Discovery skipped this Excel instance because it belongs to another running ExcelMcp controller. " +
+                                    "Reuse the owning CLI daemon or MCP connection if available. " +
+                                    "For workbooks already managed by this controller, continue using their existing session IDs."));
                                 continue;
                             }
                             else

@@ -83,10 +83,10 @@ public sealed partial class ExcelControllerTests
         });
 
     [Theory(Timeout = 15000)]
-    [InlineData(true, "This Excel application belongs to another running ExcelMcp controller.")]
-    [InlineData(false, "A retained Excel worker uses a different product build. It has not been replaced.")]
+    [InlineData(true, "another running ExcelMcp controller", "Reuse the owning CLI daemon or MCP connection")]
+    [InlineData(false, "a different ExcelMcp build", "Use the connection that owns the worker")]
     public async Task Controller_DiscoveryRefusesForeignLiveControllerOrMismatchedBuild(
-        bool foreignController, string expectedError)
+        bool foreignController, string expectedReason, string expectedNextStep)
     {
         using var owner = foreignController
             ? Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
@@ -108,7 +108,11 @@ public sealed partial class ExcelControllerTests
                 Assert.Empty(discovered.GetProperty("workbooks").EnumerateArray());
                 var error = Assert.Single(discovered.GetProperty("errors").EnumerateArray());
                 Assert.Equal(WorkerProcess.Current.ProcessId, error.GetProperty("processId").GetInt32());
-                Assert.Equal(expectedError, error.GetProperty("message").GetString());
+                var message = error.GetProperty("message").GetString();
+                Assert.Contains("Discovery skipped this Excel instance", message, StringComparison.Ordinal);
+                Assert.Contains(expectedReason, message, StringComparison.Ordinal);
+                Assert.Contains(expectedNextStep, message, StringComparison.Ordinal);
+                Assert.Contains("continue using their existing session IDs", message, StringComparison.Ordinal);
 
                 var attached = await AttachDiscoverySelectionAsync(controller);
                 Assert.False(attached.Success);
