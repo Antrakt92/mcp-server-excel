@@ -60,7 +60,7 @@ not permission to bypass the compiler with dynamic access.
 ### Power Query — `Workbook.Queries` / `WorkbookQuery`
 
 - **Status**: Typed via `Microsoft.Office.Interop.Excel` 16.x.
-- **Affected files**: `ComUtilities.cs` and Power Query command files now use `Excel.Queries` and `Excel.WorkbookQuery`.
+- **Affected files**: Power Query command files use `Excel.Queries` and `Excel.WorkbookQuery`.
 
 ### DataModel measures/formats — `ModelMeasures` / `ModelMeasure` / `ModelFormat*`
 
@@ -239,10 +239,7 @@ typed; the build rule prevents adding the same kind of dynamic fallback again.
 
 ### ComUtilities Helpers — Return Types
 
-- `FindQuery(Excel.Workbook workbook, ...)` returns `Excel.WorkbookQuery?`
-- `FindConnection(Excel.Workbook workbook, ...)` returns `Excel.WorkbookConnection?`
 - `FindSheet(Excel.Workbook workbook, ...)` returns `Excel.Worksheet?`
-- `FindName(Excel.Workbook workbook, ...)` returns `Excel.Name?`
 - `ResolveRange()` in `RangeHelpers.cs` returns `Excel.Range?`
 
 ### Style indentation and mixed formatting
