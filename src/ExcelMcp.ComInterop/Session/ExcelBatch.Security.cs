@@ -168,20 +168,31 @@ internal sealed partial class ExcelBatch
             var security = _excel!.AutomationSecurity;
             Exception? failure = null;
             var editingStarted = false;
-            var editingCompleted = false;
+            var editableWorkbookReturned = false;
             try
             {
                 _excel.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
                 editingStarted = true;
                 editable = view.Edit(UpdateLinks: 0);
-                editingCompleted = true;
+                if (editable is null)
+                {
+                    throw new WorkbookSecurityCompletionUnconfirmedException(FindProtectedViewAndRelease(book)
+                        ? "Excel kept the selected workbook in Protected View. No editable workbook was returned. Review the selected workbook in Excel before continuing."
+                        : "Excel returned no editable workbook and the current Protected View state is unknown. Inspect the selected workbook before continuing.");
+                }
+                editableWorkbookReturned = true;
                 ReplaceSecurityWorkbook(book, ref editable);
             }
             catch (Exception ex)
             {
+                if (ex is WorkbookSecurityCompletionUnconfirmedException)
+                {
+                    failure = ex;
+                    throw;
+                }
                 failure = editingStarted
-                    ? new WorkbookSecurityCompletionUnconfirmedException(editingCompleted
-                        ? "Excel left Protected View, but updating the retained workbook failed. Inspect Excel and discover the selected workbook again; no changes were rolled back."
+                    ? new WorkbookSecurityCompletionUnconfirmedException(editableWorkbookReturned
+                        ? "Excel returned a workbook for editing, but updating the retained workbook failed. Inspect Excel and discover the selected workbook again; no changes were rolled back."
                         : "Enabling editing failed and Excel's current Protected View state is unknown. Inspect the selected workbook before retrying; no changes were rolled back.", ex)
                     : new InvalidOperationException("Enabling editing did not start because setting VBA opening protection failed.", ex);
                 throw failure;
