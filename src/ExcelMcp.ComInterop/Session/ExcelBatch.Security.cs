@@ -269,16 +269,14 @@ internal sealed partial class ExcelBatch
         try
         {
             _excel.DisplayAlerts = true;
-            ExcelShutdownService.CloseSavedWorkbookForReopen(book);
-            if (ExcelShutdownService.IsWorkbookOpen(_excel, book))
-                throw new InvalidOperationException("Excel did not close the selected workbook. It was not reopened.");
+            ExcelShutdownService.CloseSavedWorkbookForReopen(_excel, book);
+            _securityReopenFailure = "The original saved workbook closed, but reopening with macros has not completed. Nothing was saved or discarded by this action. Inspect Excel before continuing.";
             _workbooks!.Clear();
             _approvedConnectionWorkbooks.Remove(book);
             _disabledMacroWorkbooks.Remove(book);
             _workbook = null;
             _context = null;
             InvalidateLocationSnapshot();
-            _securityReopenFailure = "The original saved workbook closed, but reopening with macros has not completed. Nothing was saved or discarded by this action. Inspect Excel before continuing.";
             Excel.Workbook? closed = book;
             ComUtilities.Release(ref closed);
             _excel.AutomationSecurity = (Office.MsoAutomationSecurity)SelectAutomationSecurity(macrosApproved: true);
