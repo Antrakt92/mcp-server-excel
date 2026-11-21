@@ -1522,10 +1522,14 @@ public sealed class SessionManager : IDisposable
                 return false;
             }
 
-            if (!allowTimedOutOperation && batch.HasTimedOutOperation)
+            var excelAlive = batch.IsExcelProcessAlive();
+            if (excelAlive && !allowTimedOutOperation && batch.HasTimedOutOperation)
             {
                 var refreshState = GetRefreshState(batch);
-                if (refreshState != WorkbookRefreshState.Ready)
+                // A dead Excel instance cannot report readiness. Confirm whether it
+                // exited during the scan before treating the previous wait as pending.
+                excelAlive = batch.IsExcelProcessAlive();
+                if (excelAlive && refreshState != WorkbookRefreshState.Ready)
                 {
                     errorMessage = $"A previous wait on session '{sessionId}' expired. " +
                                    "The workbook remains open; execution or readiness verification is still pending.";
@@ -1537,7 +1541,7 @@ public sealed class SessionManager : IDisposable
                 }
             }
 
-            if (!batch.IsExcelProcessAlive())
+            if (!excelAlive)
             {
                 _logger?.LogWarning("Session {SessionId} has dead Excel process, auto-cleaning up", sessionId);
                 CleanupDeadSession(sessionId, batch);

@@ -87,8 +87,10 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Equal(17u, native.GetProperty("exitCode").GetUInt32());
     }
 
-    [Fact]
-    public async Task ProcessAsync_ExcelExitedBeforeVbaInvoke_ReportsExitWithoutSubmittingTheMacro()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessAsync_ExcelExitedBeforeVbaInvoke_ReportsExitWithoutSubmittingTheMacro(bool previousWaitExpired)
     {
         using var service = new ExcelMcpService();
         var identity = new ExcelProcessIdentity(123, 456);
@@ -102,6 +104,7 @@ public sealed partial class ExcelMcpServiceErrorTests
         const string sessionId = "native-exit-before-vba-invoke";
         RegisterSession(service, sessionId, batch);
         Assert.Same(batch.ExecuteException, Assert.Throws<InvalidOperationException>(() => batch.Execute(static (_, _) => { })));
+        batch.HasTimedOutOperation = previousWaitExpired;
 
         var response = await service.ProcessAsync(new ServiceRequest
         {
