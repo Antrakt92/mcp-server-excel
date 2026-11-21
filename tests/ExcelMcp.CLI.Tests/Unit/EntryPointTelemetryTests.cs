@@ -121,6 +121,33 @@ public sealed class EntryPointTelemetryTests : IDisposable
     }
 
     [Fact]
+    public async Task RunEntryPointAsync_BatchCancellationReachesInputBeforeServiceDispatch()
+    {
+        var reporter = new UsageTelemetry("ExcelMcp.Test", TelemetryUserIdentityStore.CreateProcessOnly);
+        using var scope = CliTelemetry.UseReporterForTesting(reporter);
+        using var cancellation = new CancellationTokenSource();
+        using var input = new CancelingBatchReader(cancellation);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var runtime = new CliCommandRuntime(new FailingClientFactory(), input, output, error, isOutputRedirected: true);
+
+        var exitCode = await Program.RunEntryPointAsync(["--quiet", "batch"], runtime, cancellation.Token);
+
+        Assert.Equal(1, exitCode);
+        Assert.Empty(output.ToString());
+        Assert.Equal($"Batch canceled before any commands were sent.{Environment.NewLine}", error.ToString());
+    }
+
+    private sealed class CancelingBatchReader(CancellationTokenSource cancellation) : StringReader("""{"command":"diag.ping"}""")
+    {
+        public override Task<string> ReadToEndAsync(CancellationToken cancellationToken)
+        {
+            cancellation.Cancel();
+            return base.ReadToEndAsync(cancellationToken);
+        }
+    }
+
+    [Fact]
     public async Task DaemonPipe_RecordsEachOperationOnce_WithoutReportingInProcessCallsOrReadinessPings()
     {
         var logs = new List<LogRecord>();

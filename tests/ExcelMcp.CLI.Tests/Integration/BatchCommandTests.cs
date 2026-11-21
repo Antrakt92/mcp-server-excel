@@ -128,13 +128,88 @@ public sealed class BatchCommandTests : IDisposable
         Assert.Equal("later", last.RootElement.GetProperty("data").GetProperty("message").GetString());
     }
 
-    private sealed class FlushRecordingWriter : StringWriter
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Batch_CanceledBeforeNextDispatch_ReportsOnlyTheFirstResult(bool cancelDuringProgress)
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var output = new FlushRecordingWriter(_ =>
+        {
+            if (!cancelDuringProgress)
+                cancellation.Cancel();
+        });
+        using var error = new FlushRecordingWriter(count =>
+        {
+            if (cancelDuringProgress && count == 2)
+                cancellation.Cancel();
+        });
+        var client = new DeferredBatchClient();
+        client.Finish.SetResult(new ServiceResponse { Success = true, Result = """{"message":"later"}""" });
+        var runtime = new CliCommandRuntime(client,
+            new StringReader("""[{"command":"diag.ping"},{"command":"diag.echo","args":{"message":"later"}}]"""),
+            output, error, isOutputRedirected: true);
+
+        var exitCode = await Program.RunAsync(["--quiet", "batch"], runtime, cancellationToken: cancellation.Token);
+
+        Assert.False(client.SecondStarted.Task.IsCompleted);
+        Assert.Equal(1, exitCode);
+        Assert.Equal(1, output.Flushes);
+        using var first = JsonDocument.Parse(output.ToString());
+        Assert.True(first.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal(0, first.RootElement.GetProperty("index").GetInt32());
+        Assert.Equal(
+            $"Batch 1/2: diag.ping started.{Environment.NewLine}" +
+            $"Batch 1/2: diag.ping completed.{Environment.NewLine}" +
+            (cancelDuringProgress ? $"Batch 2/2: diag.echo started.{Environment.NewLine}" : string.Empty) +
+            $"Batch canceled before command 2/2 was sent.{Environment.NewLine}", error.ToString());
+    }
+
+    [Fact]
+    public async Task Batch_CanceledInFlight_ReportsUnknownCompletionAndStopsTheBatch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var output = new FlushRecordingWriter();
+        using var error = new StringWriter();
+        var client = new DeferredBatchClient();
+        var runtime = new CliCommandRuntime(client,
+            new StringReader("""[{"command":"diag.ping"},{"command":"diag.echo","args":{"message":"later"}},{"command":"diag.ping"}]"""),
+            output, error, isOutputRedirected: true);
+        var execution = Program.RunAsync(["--quiet", "batch"], runtime, cancellationToken: cancellation.Token);
+
+        try
+        {
+            await client.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cancellation.Cancel();
+
+            Assert.Equal(1, await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(2, output.Flushes);
+            var lines = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+            Assert.Equal(2, lines.Length);
+            using var first = JsonDocument.Parse(lines[0]);
+            Assert.True(first.RootElement.GetProperty("success").GetBoolean());
+            using var second = JsonDocument.Parse(lines[1]);
+            Assert.Equal(1, second.RootElement.GetProperty("index").GetInt32());
+            Assert.False(second.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal("Cancelled", second.RootElement.GetProperty("error").GetProperty("category").GetString());
+            Assert.Equal("unknown", second.RootElement.GetProperty("partialState").GetProperty("outcome").GetString());
+            Assert.DoesNotContain("Batch 3/3", error.ToString());
+        }
+        finally
+        {
+            client.Finish.TrySetResult(new ServiceResponse { Success = true, Result = """{"message":"later"}""" });
+            await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    private sealed class FlushRecordingWriter(Action<int>? onFlush = null) : StringWriter
     {
         internal int Flushes { get; private set; }
 
         public override Task FlushAsync(CancellationToken cancellationToken)
         {
             Flushes++;
+            onFlush?.Invoke(Flushes);
             return base.FlushAsync(cancellationToken);
         }
     }
@@ -153,7 +228,7 @@ public sealed class BatchCommandTests : IDisposable
             if (++_calls == 1)
                 return Task.FromResult(new ServiceResponse { Success = true, Result = """{"message":"pong"}""" });
             SecondStarted.SetResult();
-            return Finish.Task;
+            return Finish.Task.WaitAsync(cancellationToken);
         }
 
         public void Dispose() { }
