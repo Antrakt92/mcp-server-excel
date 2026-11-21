@@ -83,7 +83,6 @@ public partial class RangeCommands
                             {
                                 SpecialCellKind.Formulas => Excel.XlCellType.xlCellTypeFormulas,
                                 SpecialCellKind.Constants => Excel.XlCellType.xlCellTypeConstants,
-                                SpecialCellKind.Blanks => Excel.XlCellType.xlCellTypeBlanks,
                                 SpecialCellKind.Visible => Excel.XlCellType.xlCellTypeVisible,
                                 _ => throw new ArgumentOutOfRangeException(nameof(cellKind))
                             };
@@ -288,11 +287,6 @@ public partial class RangeCommands
                     try
                     {
                         cell = cells[row, column];
-                        if (formulaErrors.HasValue
-                            && Convert.ToBoolean((object)cell.HasFormula, CultureInfo.InvariantCulture) != formulaErrors.Value)
-                        {
-                            continue;
-                        }
                         if (MatchesCell(cell, cellKind))
                         {
                             return true;
