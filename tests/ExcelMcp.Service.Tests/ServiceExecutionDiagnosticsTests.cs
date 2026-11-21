@@ -43,6 +43,31 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Equal(mustStop, outcome.CompletionUnconfirmed);
     }
 
+    [Fact]
+    public async Task ProcessAsync_WorkbookOpeningSettingsFailureStopsBatchWithAllCauses()
+    {
+        using var service = new ExcelMcpService();
+        var security = CreateDiagnosticSnapshotFailure(unchecked((int)0x800A03EC), "Synthetic AutomationSecurity restoration failure.");
+        var alerts = CreateDiagnosticSnapshotFailure(unchecked((int)0x80070005), "Synthetic DisplayAlerts restoration failure.");
+        var failure = new WorkbookSecurityCompletionUnconfirmedException("Excel opening settings are unconfirmed.",
+            new AggregateException(security, alerts));
+        const string sessionId = "opening-settings-diagnostics";
+        const string command = "sheet.list";
+        RegisterSession(service, sessionId, new FakeBatch { ExecuteException = failure });
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = command, SessionId = sessionId });
+
+        Assert.False(response.Success);
+        Assert.Equal("ComInterop", response.ErrorCategory);
+        Assert.Contains(security.Message, response.InnerError);
+        Assert.Contains(alerts.Message, response.InnerError);
+        var outcome = ResultJson.Read(response.Result, command, response.Success,
+            response.ErrorMessage, response.ErrorCategory, response.SessionId, response.ExceptionType,
+            response.HResult, response.InnerError, response.PartialState);
+        Assert.True(outcome.CompletionUnconfirmed);
+        Assert.Equal("unknown", outcome.PartialState?["outcome"]?.GetValue<string>());
+    }
+
     [Theory]
     [InlineData(unchecked((int)0x800A03EC), "ComInterop")]
     [InlineData(unchecked((int)0x80010108), "ExcelDisconnected")]
@@ -275,10 +300,10 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Single(execution.EnumerateObject());
     }
 
-    private static COMException CreateDiagnosticSnapshotFailure(int hresult)
+    private static COMException CreateDiagnosticSnapshotFailure(int hresult, string message = "Synthetic snapshot failure.")
     {
 #pragma warning disable CA2201 // Synthetic HRESULT exercises Service transport; no native Excel is used.
-        return new COMException("Synthetic snapshot failure.", hresult);
+        return new COMException(message, hresult);
 #pragma warning restore CA2201
     }
 

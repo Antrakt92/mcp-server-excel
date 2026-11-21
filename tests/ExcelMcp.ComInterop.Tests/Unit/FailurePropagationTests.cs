@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop.Formatting;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Excel = Microsoft.Office.Interop.Excel;
+using Office = Microsoft.Office.Core;
 using Xunit;
 
 namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
@@ -108,6 +109,83 @@ public sealed class FailurePropagationTests
         Assert.Contains("did not close", response.Message, StringComparison.Ordinal);
         Assert.Equal(1, workbookProxy.CloseCalls);
         Assert.Equal(1, ((ApplicationProxy)(object)application).WorkbooksReads);
+    }
+
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    public void OpeningSettingsRestoration_PreservesEveryFailureAndMarksStateUnconfirmed(
+        bool primaryFailed, bool restoreAlerts, bool failSecurity)
+    {
+        var app = DispatchProxy.Create<Excel.Application, OpeningSettingsProxy>();
+        var proxy = (OpeningSettingsProxy)(object)app;
+        var securityFailure = new COMException("Synthetic AutomationSecurity restoration failure.");
+        var alertsFailure = new COMException("Synthetic DisplayAlerts restoration failure.");
+        var primary = primaryFailed ? new InvalidOperationException("Synthetic prior operation failure.") : null;
+        if (failSecurity)
+            proxy.SecurityFailure = securityFailure;
+        proxy.AlertsFailure = alertsFailure;
+
+        var response = Assert.Throws<WorkbookSecurityCompletionUnconfirmedException>(() =>
+            ExcelBatch.RestoreOpeningSettings(app, Office.MsoAutomationSecurity.msoAutomationSecurityByUI,
+                restoreAlerts ? false : null, primary));
+
+        var failures = Assert.IsType<AggregateException>(response.InnerException).InnerExceptions;
+        List<Exception> expected = [];
+        if (primary is not null)
+            expected.Add(primary);
+        if (failSecurity)
+            expected.Add(securityFailure);
+        if (restoreAlerts)
+            expected.Add(alertsFailure);
+        Assert.Equal(expected, failures);
+        Assert.Equal(1, proxy.SecurityWrites);
+        Assert.Equal(restoreAlerts ? 1 : 0, proxy.AlertsWrites);
+    }
+
+    [Fact]
+    public void OpeningSettingsRestoration_SuccessDoesNotRaiseCompletionFailure()
+    {
+        var app = DispatchProxy.Create<Excel.Application, OpeningSettingsProxy>();
+        var proxy = (OpeningSettingsProxy)(object)app;
+
+        ExcelBatch.RestoreOpeningSettings(app, Office.MsoAutomationSecurity.msoAutomationSecurityByUI, false, null);
+
+        Assert.Equal(Office.MsoAutomationSecurity.msoAutomationSecurityByUI, proxy.Security);
+        Assert.False(proxy.Alerts);
+    }
+
+    public class OpeningSettingsProxy : DispatchProxy
+    {
+        public Exception? SecurityFailure { get; set; }
+        public Exception? AlertsFailure { get; set; }
+        public int SecurityWrites { get; private set; }
+        public int AlertsWrites { get; private set; }
+        public Office.MsoAutomationSecurity? Security { get; private set; }
+        public bool Alerts { get; private set; } = true;
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            switch (targetMethod?.Name)
+            {
+                case "set_AutomationSecurity":
+                    SecurityWrites++;
+                    if (SecurityFailure is not null)
+                        throw SecurityFailure;
+                    Security = (Office.MsoAutomationSecurity)args![0]!;
+                    return null;
+                case "set_DisplayAlerts":
+                    AlertsWrites++;
+                    if (AlertsFailure is not null)
+                        throw AlertsFailure;
+                    Alerts = (bool)args![0]!;
+                    return null;
+                default:
+                    throw new NotSupportedException(targetMethod?.Name);
+            }
+        }
     }
 
     [Fact]
