@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.Core.Commands.Calculation;
@@ -423,21 +424,25 @@ public sealed class PersistentServiceRangeOverwritePolicyTests(
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData(null)]
-    public async Task EmptyOrNullPolicy_NeverDisablesProtection(string? overwritePolicy)
+    [InlineData("", "InvalidInput")]
+    [InlineData(null, "Conflict")]
+    public async Task ExplicitEmptyPolicyIsInvalid_NullRetainsProtection(string? overwritePolicy, string expectedCategory)
     {
         var batch = _fixture.BatchToken;
         var sheetName = _fixture.CreateTestSheet(batch);
         Assert.True(_commands.SetValues(batch, sheetName, "A1", [[42]]).Success);
-        var rejected = await _fixture.SendForFailureAsync("range.set-values", new
+        // Preserve the explicit JSON null, which the fixture's default serializer omits.
+        var args = JsonSerializer.SerializeToElement(new
         {
             sheetName,
             rangeAddress = "A1",
             values = SingleValue(1),
             overwritePolicy
         });
-        Assert.Equal("Conflict", rejected.ErrorCategory);
+        var rejected = await _fixture.SendForFailureAsync("range.set-values", args);
+        Assert.Equal(expectedCategory, rejected.ErrorCategory);
+        Assert.Contains(overwritePolicy is null ? "$A$1" : "overwritePolicy",
+            rejected.ErrorMessage, StringComparison.Ordinal);
         AssertNumericRow(sheetName, "A1", 42);
     }
 
