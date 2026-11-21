@@ -44,24 +44,38 @@ internal sealed class WorkerRegistry
         var registrations = new List<WorkerRegistration>();
         foreach (var path in Directory.EnumerateFiles(_directory, "*.json"))
         {
-            var registration = ReadRecord(path);
+            var registration = ReadRetainedRecord(path);
             if (registration is null)
                 continue;
-            if (registration.ReleaseConfirmed ? IsAliveOrUnconfirmed(registration.Controller)
-                : IsAliveOrUnconfirmed(registration.Worker)
-                || registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
-            {
-                if (registrations.Count == 128)
-                    throw new InvalidOperationException("Too many retained Excel workers. Inspect the retained processes before retrying.");
-                registrations.Add(registration);
-            }
-            // Only the owning controller can acknowledge a completed record while it is alive.
-            // The worker may have replaced this file with its final status after we opened it.
-            else if (!IsAliveOrUnconfirmed(registration.Controller))
-                File.Delete(path);
+            if (registrations.Count == 128)
+                throw new InvalidOperationException("Too many retained Excel workers. Inspect the retained processes before retrying.");
+            registrations.Add(registration);
         }
         return registrations;
     }
+
+    private WorkerRegistration? ReadRetainedRecord(string path)
+    {
+        var registration = ReadRecord(path);
+        if (registration is null || IsRetained(registration))
+            return registration;
+
+        // Both writers must be gone before the read that authorizes pruning.
+        // An atomic replacement may have occurred while the first file was open.
+        bool writersStopped = !IsAliveOrUnconfirmed(registration.Controller) && !IsAliveOrUnconfirmed(registration.Worker);
+        var latest = ReadRecord(path);
+        if (latest != registration)
+            return latest is not null && IsRetained(latest) ? latest : null;
+        if (writersStopped)
+            File.Delete(path);
+        return null;
+    }
+
+    private static bool IsRetained(WorkerRegistration registration) =>
+        registration.ReleaseConfirmed
+            ? IsAliveOrUnconfirmed(registration.Controller)
+            : IsAliveOrUnconfirmed(registration.Worker) ||
+              registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel);
 
     private static bool IsAliveOrUnconfirmed(WorkerProcess process)
     {
