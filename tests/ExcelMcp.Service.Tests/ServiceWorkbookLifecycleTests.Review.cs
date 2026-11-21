@@ -1460,8 +1460,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
     {
         await RunWithCleanupAsync(async (service, directory, sessions) =>
         {
-            var ownedId = await CreateSessionAsync(service, Path.Join(directory, "unconfirmed-normal-exit.xlsx"));
+            var path = Path.Join(directory, "unconfirmed-normal-exit.xlsx");
+            var ownedId = await CreateSessionAsync(service, path);
             sessions[ownedId] = 0;
+            await WriteMarkerAsync(service, ownedId, "discarded before exit confirmation");
             var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
             var identity = Assert.IsType<ExcelProcessIdentity>(owned.ProcessIdentity);
             using var process = System.Diagnostics.Process.GetProcessById(identity.ProcessId);
@@ -1508,11 +1510,19 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     // save the already-closed workbook on this retry.
                     Args = """{"save":true}"""
                 });
-                RequireSuccess(retried);
+                Assert.False(retried.Success);
+                Assert.Equal("SessionUnavailable", retried.ErrorCategory);
+                Assert.Contains("saving its workbook could not be confirmed", retried.ErrorMessage,
+                    StringComparison.OrdinalIgnoreCase);
                 sessions.TryRemove(ownedId, out _);
                 Assert.DoesNotContain(identity, SessionManager.GetTrackedExcelProcesses());
                 Assert.DoesNotContain(ownedId, service.SessionManager.ActiveSessionIds);
                 Assert.False(service.SessionManager.TryGetFilePath(ownedId, out _));
+
+                await CloseSessionAsync(service, ownedId, save: false);
+                var reopenedId = await OpenSessionAsync(service, path);
+                sessions[reopenedId] = 0;
+                Assert.Null(await ReadMarkerAsync(service, reopenedId));
             }
             finally
             {
