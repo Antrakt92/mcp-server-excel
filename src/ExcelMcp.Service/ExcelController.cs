@@ -417,10 +417,10 @@ internal sealed class ExcelController : IDisposable
                 _closedSessions[savedSession] = SessionEnd.SavedAndClosed;
             }
             if (execution.Accepted && request.Command == "workbook.save-as" && reservedPaths.Count > 0
-                && response.ErrorCategory is "Timeout" or "Cancelled" && response.PartialState is not null)
+                && CanReconcileSaveAsClaim(response))
             {
-                // The reply may precede native completion. Do not reconcile against snapshots
-                // from before this request reached the worker.
+                // A dialog, pending native work, or a failed status capture can defer reconciliation.
+                // Wait for a settled snapshot at or after this reply before dropping the claim.
                 lock (_shutdownLock)
                     reservation.SaveAsReplyRevision = execution.Snapshot.Revision;
             }
@@ -537,6 +537,20 @@ internal sealed class ExcelController : IDisposable
         snapshot.PendingOperation is not null
         || JsonNode.Parse(snapshot.SessionList.Result!)!["sessions"]!.AsArray()
             .Any(session => session?["operationPending"]?.GetValue<bool>() == true);
+
+    private static bool CanReconcileSaveAsClaim(ServiceResponse response)
+    {
+        if (response.Success || response.PartialState is null || response.ErrorCategory is "Timeout" or "Cancelled")
+            return true;
+
+        // Input or readiness checks can fail before the new callback starts. Only
+        // legacy wait diagnostics from a finished callback may accompany that failure.
+        return response.ErrorCategory is "Busy" or "InvalidInput"
+            && JsonNode.Parse(response.PartialState) is JsonObject { Count: 1 } state
+            && state["operation"] is JsonObject operation
+            && operation["waitExpired"] is JsonValue expired && expired.TryGetValue<bool>(out var wasExpired) && wasExpired
+            && operation["executionPending"] is JsonValue pending && pending.TryGetValue<bool>(out var isPending) && !isPending;
+    }
 
     private static HashSet<string> RecordedPaths(WorkerSnapshot snapshot, string sessionId) =>
         snapshot.OwnershipKeys[sessionId].ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -678,16 +692,18 @@ internal sealed class ExcelController : IDisposable
             {
                 if (_newWorkers.ContainsKey(snapshot.Registration.PipeName))
                     _sessions[session.SessionId] = worker;
-                if (settled && !string.IsNullOrWhiteSpace(session.FilePath))
+                if (settled)
                 {
                     var currentPaths = RecordedPaths(snapshot, session.SessionId);
-                    foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker
-                        && entry.Value.Workbook.SessionId == session.SessionId
-                        && !currentPaths.Any(key => WorkbookLocation.MatchesReportedLocation(key,
-                            entry.Value.Workbook.Location))))
-                        _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = session.FilePath });
+                    var hasCurrentPath = !string.IsNullOrWhiteSpace(session.FilePath);
+                    if (hasCurrentPath)
+                        foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker
+                            && entry.Value.Workbook.SessionId == session.SessionId
+                            && !currentPaths.Any(key => WorkbookLocation.MatchesReportedLocation(key,
+                                entry.Value.Workbook.Location))))
+                            _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = session.FilePath });
                     foreach (var old in _paths.Where(entry => entry.Value.SessionId == session.SessionId
-                        && (entry.Value.Token == "recorded"
+                        && (hasCurrentPath && entry.Value.Token == "recorded"
                             || entry.Value.SaveAsReplyRevision is { } revision && snapshot.Revision >= revision)
                         && !currentPaths.Contains(entry.Key)))
                         _paths.TryRemove(old);
