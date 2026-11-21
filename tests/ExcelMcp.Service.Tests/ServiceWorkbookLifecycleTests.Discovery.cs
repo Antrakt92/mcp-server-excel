@@ -1470,6 +1470,25 @@ public sealed partial class ServiceWorkbookLifecycleTests
         });
     }
 
+    private static async Task<ServiceResponse> DiscoverFixtureExcelAsync(
+        ExcelProcessIdentity identity, Func<ServiceRequest, Task<ServiceResponse>> discover)
+    {
+        var previousFind = RunningExcelWindows.FindHookForTests;
+        var nativeWindows = RunningExcelWindows.Find();
+        // An unrelated desktop Excel window can make a machine-wide discovery incomplete.
+        RunningExcelWindows.FindHookForTests = () => new RunningExcelWindows.Discovery(
+            nativeWindows.Windows.Where(window => window.Process == identity).ToArray(),
+            nativeWindows.Errors.Where(error => error.ProcessId is null || error.ProcessId == identity.ProcessId).ToArray());
+        try
+        {
+            return await discover(new ServiceRequest { Command = "session.discover" });
+        }
+        finally
+        {
+            RunningExcelWindows.FindHookForTests = previousFind;
+        }
+    }
+
     private static Task CloseDiscoveredWorkbooksAsync(
         ExcelMcpService service,
         ConcurrentDictionary<string, byte> sessions,
