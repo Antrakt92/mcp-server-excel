@@ -114,7 +114,7 @@ public partial class VbaCommands
                     try
                     {
                         component = vbComponents.Item(i);
-                        if (component.Name == moduleName)
+                        if (string.Equals(component.Name, moduleName, StringComparison.OrdinalIgnoreCase))
                         {
                             targetComponent = component;
                             component = null; // Don't release - we're keeping it

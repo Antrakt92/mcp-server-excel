@@ -199,8 +199,10 @@ End Sub";
         Assert.Equal("replacement-run-ok", cellResult.Values[0][0]?.ToString());
     }
 
-    [Fact]
-    public void ScriptCommands_Delete_WithTrustEnabled_WorksCorrectly()
+    [Theory]
+    [InlineData("TestModule")]
+    [InlineData("testmodule")]
+    public void ScriptCommands_Delete_WithTrustEnabled_MatchesModuleNameRegardlessOfCase(string moduleName)
     {
         // Arrange
         // Import a module first
@@ -212,11 +214,12 @@ End Sub";
         var retained = RequireSuccess(_scriptCommands.View(batch, "RetainedModule")).Code;
 
         // Act - Delete the module
-        Delete(batch, "TestModule");
+        RequireSuccess(_scriptCommands.Delete(batch, moduleName));
+        _fixture.ForgetVbaModule("TestModule");
 
         // Verify module is gone
         var listResult = RequireSuccess(_scriptCommands.List(batch));
-        Assert.DoesNotContain(listResult.Scripts, s => s.Name == "TestModule");
+        Assert.DoesNotContain(listResult.Scripts, s => string.Equals(s.Name, "TestModule", StringComparison.OrdinalIgnoreCase));
         Assert.Single(listResult.Scripts, s => s.Name == "RetainedModule");
         Assert.Equal(retained, RequireSuccess(_scriptCommands.View(batch, "RetainedModule")).Code);
     }
