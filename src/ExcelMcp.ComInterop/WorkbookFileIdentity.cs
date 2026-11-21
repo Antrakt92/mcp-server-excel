@@ -71,11 +71,20 @@ internal sealed record WorkbookFileIdentity(string Path, string? FileKey)
 
     private static string ReadFinalPath(SafeFileHandle handle, uint flags)
     {
-        var buffer = new char[32768];
-        var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, flags);
-        if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (length >= buffer.Length) throw new IOException("The resolved workbook path exceeds the Windows path limit.");
-        return new string(buffer, 0, (int)length);
+        const int maximumPathCapacity = 32768;
+        var buffer = new char[260];
+        for (var attempt = 0; ; attempt++)
+        {
+            var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, flags);
+            if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (length < buffer.Length) return new string(buffer, 0, (int)length);
+            if (length > maximumPathCapacity || buffer.Length == maximumPathCapacity)
+                throw new IOException("The resolved workbook path exceeds the Windows path limit.");
+
+            // The required size includes the terminator. Allow one last read at
+            // full capacity if the path grows between attempts.
+            buffer = new char[attempt == 0 ? (int)length : maximumPathCapacity];
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

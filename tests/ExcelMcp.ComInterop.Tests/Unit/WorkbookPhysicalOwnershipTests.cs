@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 
@@ -11,8 +12,63 @@ namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 [Trait("Layer", "ComInterop")]
 [Trait("RequiresExcel", "false")]
 [Trait("Speed", "Fast")]
-public sealed class WorkbookPhysicalOwnershipTests
+public sealed class WorkbookPhysicalOwnershipTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void Reservations_RepublishingLocalClaimsDoesNotAllocateMaximumPathBuffers()
+    {
+        WithDirectory((_, actual, _) =>
+        {
+            var claims = new WorkbookPathReservations<string>();
+            var paths = Enumerable.Range(0, 32).Select(i => Path.Combine(actual, $"book-{i}.xlsx")).ToArray();
+            foreach (var path in paths)
+            {
+                File.WriteAllText(path, "synthetic");
+                Assert.True(claims.TryAdd(path, path));
+            }
+
+            foreach (var path in paths)
+                Assert.True(claims.TryPublish(path, path, static _ => false));
+
+            var start = GC.GetAllocatedBytesForCurrentThread();
+            foreach (var path in paths)
+                Assert.True(claims.TryPublish(path, path, static _ => false));
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - start;
+
+            output.WriteLine($"Re-publishing 32 local paths allocated {allocated:N0} bytes.");
+            Assert.True(allocated < 16 * 1024 * 1024,
+                $"Re-publishing 32 local paths allocated {allocated:N0} bytes.");
+        });
+    }
+
+    [Fact]
+    public void OwnershipAliases_LongPhysicalPathThroughShortJunctionUsesTheSameFileIdentity()
+    {
+        WithDirectory((root, actual, _) =>
+        {
+            var deep = Path.Combine(actual, new string('a', 120), new string('b', 120));
+            var junction = Path.Combine(root, "deep-junction");
+            var linked = Path.Combine(root, "linked.xlsx");
+            Directory.CreateDirectory(deep);
+            CreateJunction(junction, deep);
+            try
+            {
+                var target = Path.Combine(junction, "source.xlsx");
+                File.WriteAllText(target, "synthetic");
+                Link(linked, target);
+
+                var identity = WorkbookFileIdentity.Read(target);
+                Assert.Equal(Path.Combine(deep, "source.xlsx"), identity.Path, ignoreCase: true);
+                Assert.NotNull(identity.FileKey);
+                Assert.Equal(identity.FileKey, WorkbookFileIdentity.Read(linked).FileKey);
+            }
+            finally
+            {
+                Directory.Delete(junction);
+            }
+        });
+    }
+
     [Fact]
     public void Reservations_HardLinksCannotAcquireSeparateOwners()
     {
