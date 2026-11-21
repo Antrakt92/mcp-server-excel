@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.7.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.0) | 2026-11-21 | MCP shutdown diagnostics, Excel recovery and safer workbook edits |
 | [5.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.6.0) | 2026-11-19 | Literal text writes, VBA label warnings and workbook timings |
 | [5.5.2](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.2) | 2026-11-19 | VeryHidden worksheet deletion and NuGet updates |
 | [5.5.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.1) | 2026-11-19 | VBA return values, timeout tests and workbook inspection guidance |
@@ -30,6 +31,28 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.7.0 — 2026-11-21
+
+Set `EXCELMCP_STDIO_DIAGNOSTICS=1` to record why the MCP server stopped. The optional stderr line gives the first observed reason and the exit code, which helps distinguish closed input, a failed output write, and a parent process exit. Standard output stays reserved for MCP messages.
+
+### Excel recovery
+
+- If Excel exits during a callback, before a new command, or during a readiness check after a timeout, the service can return the observed process identity and exit code. It reports the original COM error when Excel is still running.
+- Workbook discovery keeps a worker's newest registration when an earlier registration becomes stale. The CLI daemon handles lost startup connections without treating an incomplete startup as a usable session.
+
+### Workbook operations
+
+- Range and table writes reject JSON numbers that overflow to infinity, as well as nonfinite values, before writing cells or resizing a table. Matrix inputs reject null rows and requests that supply both a nonempty inline matrix and a file. Empty inline arrays still allow file input.
+- Regular PivotTable and table slicers apply matching names from a mixed list. If no names match, the existing filter stays in place and the call returns an error. Empty lists still clear filters. Table slicers report the actual number of selected items.
+- Screenshot capture accepts one rectangle at a time, including when the range comes from a defined name. A disjoint range is rejected before the active sheet, selection or viewport changes.
+- Special Cells skips the per-cell visibility scan when Excel confirms a single row or column is hidden. Workbook path checks use smaller buffers for ordinary paths and still handle long paths.
+
+### Dependencies
+
+This release incorporates upstream **2.6.13**. The portable builds pick up OpenTelemetry PersistentStorage Abstractions and FileSystem **1.1.3 → 1.2.0**, Azure.Core **1.64.0 → 1.65.0**, Polly Core, Extensions and RateLimiting **8.9.0 → 8.9.1**, Nerdbank.MessagePack **1.4.95 → 1.4.104**, Microsoft.NET.StringTools **18.11.0 → 18.12.2**, and System.ClientModel **1.16.0 → 1.17.0**. The affected Microsoft.Bcl and System libraries move from **10.0.14 to 10.0.15**, including System.Text.Json and System.Threading.RateLimiting. Test tooling moves to xunit.analyzers **2.3.0** and coverlet.collector **10.1.1**. The upstream evaluation lockfile was also refreshed.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.6.0...v5.7.0) · [Upstream 2.6.13](https://github.com/sbroenne/mcp-server-excel/releases/tag/v2.6.13)
 
 ## 5.6.0 — 2026-11-19
 
