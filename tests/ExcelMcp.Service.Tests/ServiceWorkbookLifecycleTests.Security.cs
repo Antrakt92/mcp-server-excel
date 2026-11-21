@@ -184,6 +184,8 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 Assert.True(discoveryJson.RootElement.GetProperty("complete").GetBoolean(), discovery.Result);
                 var selection = Assert.Single(discoveryJson.RootElement.GetProperty("workbooks").EnumerateArray(),
                     item => item.GetProperty("name").GetString() == Path.GetFileName(protectedPath)).Clone();
+                Assert.Equal(Path.GetFullPath(protectedPath), selection.GetProperty("location").GetString(),
+                    ignoreCase: true);
                 Assert.True(selection.GetProperty("protectedView").GetBoolean());
                 var attachedId = await AttachReviewWorkbookAsync(service, selection);
                 sessions[attachedId] = 0;
@@ -226,47 +228,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     batch.Execute((ctx, _) => ctx.App.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityLow);
                     var enabled = await SendSecurityAsync(service, attachedId, "enable-editing",
                         new { approved = true, allowRememberedTrust = true });
-                    RequireSuccess(enabled);
-                    using (var json = JsonDocument.Parse(enabled.Result!))
-                    {
-                        var security = json.RootElement.GetProperty("security");
-                        Assert.True(security.GetProperty("changed").GetBoolean());
-                        Assert.True(security.GetProperty("trustMayBeRemembered").GetBoolean());
-                        Assert.False(security.GetProperty("reopened").GetBoolean());
-                    }
-                    var after = await SendSecurityAsync(service, attachedId, "notices");
-                    RequireSuccess(after);
-                    using (var json = JsonDocument.Parse(after.Result!))
-                    {
-                        var notices = json.RootElement.GetProperty("notices");
-                        Assert.False(notices.GetProperty("protectedView").GetBoolean());
-                        Assert.False(notices.GetProperty("readOnly").GetBoolean());
-                        Assert.Equal("disabledAtOpen", notices.GetProperty("vbaState").GetString());
-                        if (hasMacros)
-                        {
-                            var messages = notices.GetProperty("messages").EnumerateArray()
-                                .Select(message => message.GetString()!).ToArray();
-                            Assert.Contains(messages, message => message.Contains("Use Excel", StringComparison.Ordinal));
-                            Assert.DoesNotContain(messages, message => message.Contains("requires a separately approved reopen", StringComparison.Ordinal));
-                        }
-                    }
-                    if (hasMacros)
-                    {
-                        Assert.Equal("not-run", await ReadMarkerAsync(service, attachedId));
-                        var blockedRun = await service.ProcessAsync(new ServiceRequest
-                        {
-                            Command = "vba.run",
-                            SessionId = attachedId,
-                            Args = """{"procedureName":"ThisWorkbook.SecurityMarker"}"""
-                        });
-                        Assert.False(blockedRun.Success);
-                        Assert.Contains("Use Excel", blockedRun.ErrorMessage!, StringComparison.Ordinal);
-                        Assert.Contains("already open", blockedRun.ErrorMessage!, StringComparison.Ordinal);
-                        Assert.DoesNotContain("allow_reopen", blockedRun.ErrorMessage!, StringComparison.Ordinal);
-                        Assert.Equal("not-run", await ReadMarkerAsync(service, attachedId));
-                        await WriteMarkerAsync(service, attachedId, "editing allowed");
-                        Assert.Equal("editing allowed", await ReadMarkerAsync(service, attachedId));
-                    }
+                    if (enabled.Success)
+                        await AssertProtectedViewEditSucceededAsync(service, attachedId, hasMacros, enabled);
+                    else
+                        await AssertProtectedViewEditRefusedAsync(service, attachedId, selection, enabled);
                     Assert.Equal("preserve neighbor", await ReadMarkerAsync(service, id));
                     Assert.False(batch.Execute((ctx, _) => ctx.Book.Saved));
                     Assert.Equal(Office.MsoAutomationSecurity.msoAutomationSecurityLow,
@@ -286,6 +251,81 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     trusted!.DeleteValue(name, throwOnMissingValue: true);
             }
         });
+    }
+
+    private static async Task AssertProtectedViewEditSucceededAsync(
+        ExcelMcpService service, string attachedId, bool hasMacros, ServiceResponse enabled)
+    {
+        RequireSuccess(enabled);
+        using (var json = JsonDocument.Parse(enabled.Result!))
+        {
+            var security = json.RootElement.GetProperty("security");
+            Assert.True(security.GetProperty("changed").GetBoolean());
+            Assert.True(security.GetProperty("trustMayBeRemembered").GetBoolean());
+            Assert.False(security.GetProperty("reopened").GetBoolean());
+        }
+        var after = await SendSecurityAsync(service, attachedId, "notices");
+        RequireSuccess(after);
+        using (var json = JsonDocument.Parse(after.Result!))
+        {
+            var notices = json.RootElement.GetProperty("notices");
+            Assert.False(notices.GetProperty("protectedView").GetBoolean());
+            Assert.False(notices.GetProperty("readOnly").GetBoolean());
+            Assert.Equal("disabledAtOpen", notices.GetProperty("vbaState").GetString());
+            if (hasMacros)
+            {
+                var messages = notices.GetProperty("messages").EnumerateArray()
+                    .Select(message => message.GetString()!).ToArray();
+                Assert.Contains(messages, message => message.Contains("Use Excel", StringComparison.Ordinal));
+                Assert.DoesNotContain(messages, message => message.Contains("requires a separately approved reopen", StringComparison.Ordinal));
+            }
+        }
+        if (hasMacros)
+        {
+            Assert.Equal("not-run", await ReadMarkerAsync(service, attachedId));
+            var blockedRun = await service.ProcessAsync(new ServiceRequest
+            {
+                Command = "vba.run",
+                SessionId = attachedId,
+                Args = """{"procedureName":"ThisWorkbook.SecurityMarker"}"""
+            });
+            Assert.False(blockedRun.Success);
+            Assert.Contains("Use Excel", blockedRun.ErrorMessage!, StringComparison.Ordinal);
+            Assert.Contains("already open", blockedRun.ErrorMessage!, StringComparison.Ordinal);
+            Assert.DoesNotContain("allow_reopen", blockedRun.ErrorMessage!, StringComparison.Ordinal);
+            Assert.Equal("not-run", await ReadMarkerAsync(service, attachedId));
+            await WriteMarkerAsync(service, attachedId, "editing allowed");
+            Assert.Equal("editing allowed", await ReadMarkerAsync(service, attachedId));
+        }
+    }
+
+    private static async Task AssertProtectedViewEditRefusedAsync(
+        ExcelMcpService service, string attachedId, JsonElement originalSelection, ServiceResponse enabled)
+    {
+        Assert.Equal(nameof(WorkbookSecurityCompletionUnconfirmedException), enabled.ExceptionType);
+        Assert.Contains("kept the selected workbook in Protected View", enabled.ErrorMessage ?? string.Empty,
+            StringComparison.Ordinal);
+        using (var receipt = JsonDocument.Parse(enabled.PartialState!))
+            Assert.Equal("unknown", receipt.RootElement.GetProperty("outcome").GetString());
+
+        var discovery = await service.ProcessAsync(new ServiceRequest { Command = "session.discover" });
+        RequireSuccess(discovery);
+        using (var rediscovered = JsonDocument.Parse(discovery.Result!))
+        {
+            Assert.True(rediscovered.RootElement.GetProperty("complete").GetBoolean(), discovery.Result);
+            var selected = Assert.Single(rediscovered.RootElement.GetProperty("workbooks").EnumerateArray(),
+                item => item.GetProperty("processId").GetInt32() == originalSelection.GetProperty("processId").GetInt32()
+                    && string.Equals(item.GetProperty("location").GetString(), originalSelection.GetProperty("location").GetString(),
+                        StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(attachedId, selected.GetProperty("sessionId").GetString());
+            Assert.Equal(originalSelection.GetProperty("workbookId").GetString(), selected.GetProperty("workbookId").GetString());
+            Assert.True(selected.GetProperty("protectedView").GetBoolean());
+        }
+        var after = await SendSecurityAsync(service, attachedId, "notices");
+        RequireSuccess(after);
+        using var notice = JsonDocument.Parse(after.Result!);
+        Assert.True(notice.RootElement.GetProperty("notices").GetProperty("protectedView").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, notice.RootElement.GetProperty("notices").GetProperty("hasVbaProject").ValueKind);
     }
 
     private static string[] SyntheticTrustNames(RegistryKey? key, string path) =>
