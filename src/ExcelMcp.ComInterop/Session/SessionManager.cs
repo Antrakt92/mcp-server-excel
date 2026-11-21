@@ -1465,12 +1465,22 @@ public sealed class SessionManager : IDisposable
         [NotNullWhen(true)] out IExcelBatch? batch,
         [NotNullWhen(false)] out string? errorMessage,
         out SessionOperationError error,
-        bool allowTimedOutOperation = false)
+        bool allowTimedOutOperation = false) =>
+        TryBeginOperation(sessionId, out batch, out errorMessage, out error, out _, allowTimedOutOperation);
+
+    internal bool TryBeginOperation(
+        string sessionId,
+        [NotNullWhen(true)] out IExcelBatch? batch,
+        [NotNullWhen(false)] out string? errorMessage,
+        out SessionOperationError error,
+        out ExcelNativeProcessObservation? exitObservation,
+        bool allowTimedOutOperation)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         batch = null;
         error = SessionOperationError.None;
+        exitObservation = null;
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -1531,6 +1541,9 @@ public sealed class SessionManager : IDisposable
             {
                 _logger?.LogWarning("Session {SessionId} has dead Excel process, auto-cleaning up", sessionId);
                 CleanupDeadSession(sessionId, batch);
+                if ((batch as IExcelBatchProcessObservation)?.ProcessObservation is
+                    { State: ExcelNativeProcessState.Exited } observedExit)
+                    exitObservation = observedExit;
                 batch = null;
                 errorMessage = $"Excel process for session '{sessionId}' has died. Session has been closed. Please create a new session.";
                 error = SessionOperationError.ExcelProcessDied;

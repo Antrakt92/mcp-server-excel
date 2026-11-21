@@ -1780,6 +1780,7 @@ public sealed class ExcelMcpService : IDisposable
             out batch,
             out var errorMessage,
             out var sessionError,
+            out var exitObservation,
             allowTimedOutOperation))
         {
             return new ServiceResponse
@@ -1795,7 +1796,8 @@ public sealed class ExcelMcpService : IDisposable
                     SessionOperationError.ExcelProcessDied => "ExcelProcessDied",
                     _ => null
                 },
-                ErrorMessage = errorMessage
+                ErrorMessage = errorMessage,
+                PartialState = MergeNativeProcessDiagnostics(null, exitObservation)
             };
         }
 

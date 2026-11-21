@@ -88,6 +88,42 @@ public sealed partial class ExcelMcpServiceErrorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_ExcelExitedBeforeVbaInvoke_ReportsExitWithoutSubmittingTheMacro()
+    {
+        using var service = new ExcelMcpService();
+        var identity = new ExcelProcessIdentity(123, 456);
+        var batch = new FakeBatch
+        {
+            WorkbookPath = Path.Combine(Path.GetTempPath(), "synthetic-dead-preflight.xlsm"),
+            ExecuteException = new InvalidOperationException("Synthetic process exit after earlier work."),
+            IsAliveAfterExecuteException = false,
+            ProcessObservationAfterDeathCheck = new(identity, ExcelNativeProcessState.Exited, 17, null)
+        };
+        const string sessionId = "native-exit-before-vba-invoke";
+        RegisterSession(service, sessionId, batch);
+        Assert.Same(batch.ExecuteException, Assert.Throws<InvalidOperationException>(() => batch.Execute(static (_, _) => { })));
+
+        var response = await service.ProcessAsync(new ServiceRequest
+        {
+            Command = "vba.invoke",
+            SessionId = sessionId,
+            Args = """{"procedureName":"SyntheticProbe.Callback"}"""
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("ExcelProcessDied", response.ErrorCategory);
+        Assert.Equal("vba.invoke", response.Command);
+        Assert.Equal(sessionId, response.SessionId);
+        Assert.Null(response.HResult);
+        Assert.Equal(1, batch.ExecuteCalls);
+        Assert.Equal(1, batch.DisposeCalls);
+        Assert.DoesNotContain(sessionId, service.SessionManager.ActiveSessionIds);
+        using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        var native = AssertNativeDiagnosticsIdentity(state, "Exited");
+        Assert.Equal(17u, native.GetProperty("exitCode").GetUInt32());
+    }
+
+    [Fact]
     public void NativeDiagnostics_NoObservationPreservesExistingBytesAndNull()
     {
         const string original = " { \"phase\": \"verifying\", \"diagnostics\": { \"execution\": { \"complete\": false } } } ";
