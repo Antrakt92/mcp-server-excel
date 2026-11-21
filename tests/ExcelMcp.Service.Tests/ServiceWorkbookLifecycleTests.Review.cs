@@ -1286,13 +1286,14 @@ public sealed partial class ServiceWorkbookLifecycleTests
             sessions[ownedId] = 0;
             await WriteMarkerAsync(service, ownedId, "keep neighboring unsaved edits");
             var owned = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(ownedId));
+            var identity = Assert.IsType<ExcelProcessIdentity>(owned.ProcessIdentity);
             var name = owned.Execute((context, _) => AddReviewWorkbook(context.App, "persist selected edits"));
             var targetPath = Path.Join(directory, "saved-unsaved-attachment.xlsx");
             Exception? failure = null;
             try
             {
                 var attachedId = await AttachReviewWorkbookAsync(service,
-                    await DiscoverReviewWorkbookAsync(service, name));
+                    await DiscoverReviewWorkbookAsync(service, name, identity));
                 sessions[attachedId] = 0;
                 var attached = Assert.IsType<AttachedWorkbookBatch>(service.SessionManager.GetSession(attachedId));
                 Assert.Null(attached.FilePath);
@@ -1334,7 +1335,8 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 try
                 {
                     await CloseDiscoveredWorkbooksAsync(service, sessions,
-                        owned.ExcelProcessId!.Value, (targetPath, null), (null, name));
+                        () => DiscoverFixtureExcelAsync(identity, service.ProcessAsync),
+                        identity.ProcessId, (targetPath, null), (null, name));
                 }
                 catch (Exception error)
                 {
@@ -2550,11 +2552,16 @@ public sealed partial class ServiceWorkbookLifecycleTests
         }
     }
 
-    private static async Task<JsonElement> DiscoverReviewWorkbookAsync(ExcelMcpService service, string name)
+    private static async Task<JsonElement> DiscoverReviewWorkbookAsync(
+        ExcelMcpService service, string name, ExcelProcessIdentity? identity = null)
     {
-        var response = await service.ProcessAsync(new ServiceRequest { Command = "session.discover" });
+        var response = identity is { } process
+            ? await DiscoverFixtureExcelAsync(process, service.ProcessAsync)
+            : await service.ProcessAsync(new ServiceRequest { Command = "session.discover" });
         RequireSuccess(response);
         using var result = JsonDocument.Parse(response.Result!);
+        if (identity is not null)
+            Assert.True(result.RootElement.GetProperty("complete").GetBoolean(), response.Result);
         return Assert.Single(result.RootElement.GetProperty("workbooks").EnumerateArray(),
             item => item.GetProperty("name").GetString() == name).Clone();
     }

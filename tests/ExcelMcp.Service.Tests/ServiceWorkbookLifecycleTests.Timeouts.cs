@@ -1212,12 +1212,14 @@ public sealed partial class ServiceWorkbookLifecycleTests
             var failure = await Record.ExceptionAsync(async () =>
             {
                 await worker.InitializeAsync();
-                var discovered = await controller.ProcessAsync(new ServiceRequest { Command = "session.discover" });
+                var discovered = await DiscoverFixtureExcelAsync(identity,
+                    request => controller.ProcessAsync(request));
                 RequireSuccess(discovered);
                 using var discovery = JsonDocument.Parse(discovered.Result!);
                 Assert.True(discovery.RootElement.GetProperty("complete").GetBoolean(), discovered.Result);
                 var selected = Assert.Single(discovery.RootElement.GetProperty("workbooks").EnumerateArray(),
                     item => item.GetProperty("location").GetString() == path);
+                Assert.Equal(identity.ProcessId, selected.GetProperty("processId").GetInt32());
                 var neighborSelection = neighborName is null ? null
                     : Assert.Single(discovery.RootElement.GetProperty("workbooks").EnumerateArray(),
                         item => item.GetProperty("location").GetString() == neighborPath)
