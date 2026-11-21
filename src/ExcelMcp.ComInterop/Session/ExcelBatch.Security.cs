@@ -179,11 +179,11 @@ internal sealed partial class ExcelBatch
             }
             catch (Exception ex)
             {
-                failure = new InvalidOperationException(editingCompleted
-                    ? "Excel left Protected View, but updating the retained workbook failed. Inspect Excel and discover the selected workbook again; no changes were rolled back."
-                    : editingStarted
-                        ? "Enabling editing failed and Excel's current Protected View state is unknown. Inspect the selected workbook before retrying; no changes were rolled back."
-                        : "Enabling editing did not start because setting VBA opening protection failed.", ex);
+                failure = editingStarted
+                    ? new WorkbookSecurityCompletionUnconfirmedException(editingCompleted
+                        ? "Excel left Protected View, but updating the retained workbook failed. Inspect Excel and discover the selected workbook again; no changes were rolled back."
+                        : "Enabling editing failed and Excel's current Protected View state is unknown. Inspect the selected workbook before retrying; no changes were rolled back.", ex)
+                    : new InvalidOperationException("Enabling editing did not start because setting VBA opening protection failed.", ex);
                 throw failure;
             }
             finally
@@ -218,7 +218,7 @@ internal sealed partial class ExcelBatch
             }
             catch (COMException ex)
             {
-                throw new InvalidOperationException(
+                throw new WorkbookSecurityCompletionUnconfirmedException(
                     "Connection enabling failed. Some connections may already be enabled or refreshing; the current state is unknown. Inspect the selected workbook before retrying. No changes were rolled back.", ex);
             }
             _approvedConnectionWorkbooks.Add(book);
@@ -269,16 +269,14 @@ internal sealed partial class ExcelBatch
         try
         {
             _excel.DisplayAlerts = true;
-            ExcelShutdownService.CloseSavedWorkbookForReopen(book);
-            if (ExcelShutdownService.IsWorkbookOpen(_excel, book))
-                throw new InvalidOperationException("Excel did not close the selected workbook. It was not reopened.");
+            ExcelShutdownService.CloseSavedWorkbookForReopen(_excel, book);
+            _securityReopenFailure = "The original saved workbook closed, but reopening with macros has not completed. Nothing was saved or discarded by this action. Inspect Excel before continuing.";
             _workbooks!.Clear();
             _approvedConnectionWorkbooks.Remove(book);
             _disabledMacroWorkbooks.Remove(book);
             _workbook = null;
             _context = null;
             InvalidateLocationSnapshot();
-            _securityReopenFailure = "The original saved workbook closed, but reopening with macros has not completed. Nothing was saved or discarded by this action. Inspect Excel before continuing.";
             Excel.Workbook? closed = book;
             ComUtilities.Release(ref closed);
             _excel.AutomationSecurity = (Office.MsoAutomationSecurity)SelectAutomationSecurity(macrosApproved: true);
@@ -311,7 +309,7 @@ internal sealed partial class ExcelBatch
                 _securityReopenFailure =
                     $"The workbook location changed during opening code from '{path}' to '{reopenedPath}'. " +
                     "The reopened workbook remains in Excel with its changes. Inspect it directly before continuing.";
-                failure = new InvalidOperationException(_securityReopenFailure);
+                failure = new WorkbookSecurityCompletionUnconfirmedException(_securityReopenFailure);
                 throw failure;
             }
             _context = new ExcelContext(reopenedPath, _excel, _workbook) { ProcessIdentity = _excelProcessIdentity };
@@ -329,7 +327,7 @@ internal sealed partial class ExcelBatch
                     RevealForRecovery();
                 if (ReferenceEquals(ex, failure))
                     throw;
-                failure = new InvalidOperationException(partialState, ex);
+                failure = new WorkbookSecurityCompletionUnconfirmedException(partialState, ex);
                 throw failure;
             }
             failure = ex;

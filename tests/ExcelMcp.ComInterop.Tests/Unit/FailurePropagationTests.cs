@@ -53,6 +53,64 @@ public sealed class FailurePropagationTests
     }
 
     [Fact]
+    public void MacroReopenClose_RefusesUnsavedWorkbookBeforeCallingClose()
+    {
+        var application = DispatchProxy.Create<Excel.Application, ApplicationProxy>();
+        var workbook = DispatchProxy.Create<Excel.Workbook, CloseWorkbookProxy>();
+
+        var response = Assert.Throws<InvalidOperationException>(() =>
+            ExcelShutdownService.CloseSavedWorkbookForReopen(application, workbook));
+
+        Assert.Contains("unsaved changes", response.Message, StringComparison.Ordinal);
+        Assert.Equal(0, ((CloseWorkbookProxy)(object)workbook).CloseCalls);
+        Assert.Equal(0, ((ApplicationProxy)(object)application).WorkbooksReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MacroReopenClose_ReportsUncertaintyAfterNativeDispatch(bool closeReturns)
+    {
+        var cause = new COMException("Synthetic close or readback failure.", unchecked((int)0x800A03EC));
+        var application = DispatchProxy.Create<Excel.Application, ApplicationProxy>();
+        var applicationProxy = (ApplicationProxy)(object)application;
+        var workbook = DispatchProxy.Create<Excel.Workbook, CloseWorkbookProxy>();
+        var workbookProxy = (CloseWorkbookProxy)(object)workbook;
+        workbookProxy.Saved = true;
+        if (closeReturns)
+            applicationProxy.Error = cause;
+        else
+            workbookProxy.CloseError = cause;
+
+        var response = Assert.Throws<WorkbookSecurityCompletionUnconfirmedException>(() =>
+            ExcelShutdownService.CloseSavedWorkbookForReopen(application, workbook));
+
+        Assert.Same(cause, response.InnerException);
+        Assert.Equal(1, workbookProxy.CloseCalls);
+        Assert.Equal(closeReturns ? 1 : 0, applicationProxy.WorkbooksReads);
+    }
+
+    [Fact]
+    public void MacroReopenClose_ConfirmedStillOpenIsAnOrdinaryRefusal()
+    {
+        var application = DispatchProxy.Create<Excel.Application, ApplicationProxy>();
+        var workbook = DispatchProxy.Create<Excel.Workbook, CloseWorkbookProxy>();
+        var workbookProxy = (CloseWorkbookProxy)(object)workbook;
+        workbookProxy.Saved = true;
+        var workbooks = DispatchProxy.Create<Excel.Workbooks, WorkbooksProxy>();
+        ((WorkbooksProxy)(object)workbooks).Workbook = workbook;
+        Assert.Same(workbook, workbooks[1]);
+        ((ApplicationProxy)(object)application).Workbooks = workbooks;
+
+        var response = Assert.Throws<InvalidOperationException>(() =>
+            ExcelShutdownService.CloseSavedWorkbookForReopen(application, workbook));
+
+        Assert.Contains("did not close", response.Message, StringComparison.Ordinal);
+        Assert.Equal(1, workbookProxy.CloseCalls);
+        Assert.Equal(1, ((ApplicationProxy)(object)application).WorkbooksReads);
+    }
+
+    [Fact]
     public void WriteGuard_FailedCapture_PropagatesAndDoesNotLeakNesting()
     {
         var error = new COMException("Cannot read ScreenUpdating", unchecked((int)0x80070005));
@@ -62,7 +120,7 @@ public sealed class FailurePropagationTests
 
         Assert.Same(error, Assert.Throws<COMException>(() => new ExcelWriteGuard(application)));
         proxy.Error = null;
-        proxy.Workbooks = DispatchProxy.Create<Excel.Workbooks, EmptyWorkbooksProxy>();
+        proxy.Workbooks = DispatchProxy.Create<Excel.Workbooks, WorkbooksProxy>();
         Assert.Equal(0, proxy.Workbooks.Count);
         using (var guard = new ExcelWriteGuard(application))
             Assert.False(proxy.ScreenUpdating);
@@ -74,9 +132,12 @@ public sealed class FailurePropagationTests
         public Exception? Error { get; set; }
         public bool ScreenUpdating { get; private set; } = true;
         public Excel.Workbooks? Workbooks { get; set; }
+        public int WorkbooksReads { get; private set; }
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
+            if (targetMethod?.Name == "get_Workbooks")
+                WorkbooksReads++;
             if (Error != null)
                 throw Error;
             return targetMethod?.Name switch
@@ -97,9 +158,34 @@ public sealed class FailurePropagationTests
         }
     }
 
-    public class EmptyWorkbooksProxy : DispatchProxy
+    public class CloseWorkbookProxy : DispatchProxy
     {
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
-            targetMethod?.Name == "get_Count" ? 0 : throw new NotSupportedException(targetMethod?.Name);
+        public bool Saved { get; set; }
+        public Exception? CloseError { get; set; }
+        public int CloseCalls { get; private set; }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == "get_Saved")
+                return Saved;
+            if (targetMethod?.Name != "Close")
+                throw new NotSupportedException(targetMethod?.Name);
+            CloseCalls++;
+            if (CloseError != null)
+                throw CloseError;
+            return null;
+        }
+    }
+
+    public class WorkbooksProxy : DispatchProxy
+    {
+        public Excel.Workbook? Workbook { get; set; }
+
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
+        {
+            "get_Count" => Workbook is null ? 0 : 1,
+            "get__Default" when args is [1] => Workbook,
+            _ => throw new NotSupportedException(targetMethod?.Name)
+        };
     }
 }

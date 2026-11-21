@@ -1686,7 +1686,8 @@ public sealed class ExcelMcpService : IDisposable
 
     private static string? MarkUnconfirmedCompletion(Exception error, string? partialState)
     {
-        if (FindOperationException<OperationCompletionUnconfirmedException>(error) is null)
+        if (FindOperationException<OperationCompletionUnconfirmedException>(error) is null &&
+            FindOperationException<WorkbookSecurityCompletionUnconfirmedException>(error) is null)
             return partialState;
 
         var state = partialState is null

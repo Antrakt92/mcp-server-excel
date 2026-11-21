@@ -18,12 +18,25 @@ public static class ExcelShutdownService
     internal static Action? BeforeQuitHookForTests { get; set; }
     internal static Action? BeforeSaveHookForTests { get; set; }
 
-    internal static void CloseSavedWorkbookForReopen(Excel.Workbook workbook)
+    internal static void CloseSavedWorkbookForReopen(Excel.Application excel, Excel.Workbook workbook)
     {
         if (!workbook.Saved)
             throw new InvalidOperationException("The workbook has unsaved changes. Nothing was closed.");
-        // Keep Excel's save prompt if a user edit races the saved-state check.
-        workbook.Close();
+
+        bool stillOpen;
+        try
+        {
+            // Keep Excel's save prompt if a user edit races the saved-state check.
+            workbook.Close();
+            stillOpen = IsWorkbookOpen(excel, workbook);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidComObjectException)
+        {
+            throw new WorkbookSecurityCompletionUnconfirmedException(
+                "Excel did not confirm whether the original workbook closed. No reopen was attempted. Inspect Excel before continuing.", ex);
+        }
+        if (stillOpen)
+            throw new InvalidOperationException("Excel did not close the selected workbook. It was not reopened.");
     }
 
     internal static void CloseProtectedViewWindow(Excel.ProtectedViewWindow window) => window.Close();
