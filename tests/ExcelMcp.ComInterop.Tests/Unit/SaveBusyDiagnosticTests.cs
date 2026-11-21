@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging.Abstractions;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
 
@@ -11,6 +12,53 @@ namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 [Trait("Speed", "Fast")]
 public sealed class SaveBusyDiagnosticTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ObservedSuccessfulSave_PreservesNativeFailureWithoutRetrying(bool saveCallFails)
+    {
+        Action<bool>? afterSave = null;
+        var nativeFailure = Assert.IsType<COMException>(Marshal.GetExceptionForHR(unchecked((int)0x800AC472)));
+        int saveAttempts = 0;
+        int readAttempts = 0;
+
+        var failure = Assert.Throws<WorkbookSaveIncompleteException>(() => ExcelShutdownService.SaveAndObserve(
+            handler => afterSave = handler,
+            () => afterSave = null,
+            () =>
+            {
+                saveAttempts++;
+                afterSave!(true);
+                if (saveCallFails)
+                    throw nativeFailure;
+            },
+            () =>
+            {
+                readAttempts++;
+                throw nativeFailure;
+            }, "fixture.xlsx", NullLogger.Instance));
+
+        Assert.Same(nativeFailure, failure.InnerException);
+        Assert.True(failure.ExcelReportedSaveSucceeded);
+        Assert.Null(failure.HasUnsavedChanges);
+        Assert.Equal(1, saveAttempts);
+        Assert.Equal(saveCallFails ? 0 : 1, readAttempts);
+        Assert.Null(afterSave);
+    }
+
+    [Fact]
+    public void UnobservedSaveFailure_PropagatesAsNativeFailureForExistingRetryPolicy()
+    {
+        var nativeFailure = Assert.IsType<COMException>(Marshal.GetExceptionForHR(unchecked((int)0x800AC472)));
+
+        var failure = Assert.Throws<COMException>(() => ExcelShutdownService.SaveAndObserve(
+            _ => { }, () => { }, () => throw nativeFailure,
+            () => throw new InvalidOperationException("Saved must not be read after a failed save."),
+            "fixture.xlsx", NullLogger.Instance));
+
+        Assert.Same(nativeFailure, failure);
+    }
+
     [Fact]
     public void FinalSaveBusy_PreservesTypedRefusalAndInnerComHResult()
     {

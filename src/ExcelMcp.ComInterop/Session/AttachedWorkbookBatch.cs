@@ -96,7 +96,9 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
             return 0;
         }, cancellationToken);
 
-    public void Save(CancellationToken cancellationToken = default)
+    public void Save(CancellationToken cancellationToken = default) => Save(cancellationToken, observeSave: false);
+
+    internal void Save(CancellationToken cancellationToken, bool observeSave)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_detached, this);
@@ -106,7 +108,7 @@ internal sealed class AttachedWorkbookBatch(ExcelBatch owner, OpenWorkbookInfo w
             ExcelBusyException.ThrowIfNotReady(
                 WorkbookRefreshProbe.Read(context.App, context.Book), "save");
             ExcelShutdownService.SaveWorkbookWithTimeout(
-                context.Book, context.Book.Name, Logger, token);
+                context.Book, context.Book.Name, Logger, token, observeSave);
         }, cancellationToken);
     }
 

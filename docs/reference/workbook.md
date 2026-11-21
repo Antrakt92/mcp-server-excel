@@ -470,6 +470,18 @@ Save the current workbook in place with `excelcli session save -s <sessionId>`
 or MCP `file(action: 'save', workbook_session_id: sessionId)`. Saving after an
 expired wait remains a caller decision, not automatic recovery.
 
+If a save returns `partialState.save`, `hasUnsavedChanges: true` means Excel
+still reports changes in the open workbook. `null` means the call failed and
+Excel's saved state could not be read. `excelReportedSaveSucceeded`
+records what the target workbook's `AfterSave` event reported during the call,
+including a save from a nested Excel callback. `true` records a success report,
+`false` records an unsuccessful report with no observed success, and `null`
+means no result was observed. An interoperability failure after a success report
+is returned without retrying the save. This event reports Excel's view of a save. Check
+the actual saved file before retrying when its contents matter. A successful
+response with `saved: true` continues to report that Excel marked the workbook
+as saved after the call.
+
 Power BI/MSOLAP (OLAP) connections always refresh synchronously. Their unsupported
 background setting is reported as false; enabling it is rejected before changing
 other properties. An empty last-refresh date is reported as unknown, not as proof

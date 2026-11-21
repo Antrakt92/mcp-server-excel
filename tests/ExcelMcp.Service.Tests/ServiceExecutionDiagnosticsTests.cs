@@ -10,6 +10,59 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelMcpServiceErrorTests
 {
     [Theory]
+    [InlineData(true, true, null)]
+    [InlineData(false, true, null)]
+    [InlineData(null, true, "Could not observe the Excel save event.")]
+    [InlineData(true, null, null)]
+    public async Task ProcessAsync_SaveSeparatesReportedWriteFromUnsavedChanges(
+        bool? excelReportedSaveSucceeded, bool? hasUnsavedChanges, string? observationError)
+    {
+        using var service = new ExcelMcpService();
+        var nativeFailure = hasUnsavedChanges is null
+            ? Assert.IsType<COMException>(Marshal.GetExceptionForHR(unchecked((int)0x800AC472))) : null;
+        var failure = new WorkbookSaveIncompleteException("fixture.xlsx",
+            excelReportedSaveSucceeded, observationError, hasUnsavedChanges, nativeFailure);
+        var batch = new FakeBatch { SaveException = failure };
+        const string sessionId = "save-with-unsaved-changes";
+        const string command = "session.save";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = command, SessionId = sessionId });
+        var result = ResultJson.Read(response.Result, command, response.Success, response.ErrorMessage,
+            response.ErrorCategory, response.SessionId, response.ExceptionType, response.HResult,
+            response.InnerError, response.PartialState);
+
+        Assert.False(result.Success);
+        Assert.Equal(1, batch.SaveCalls);
+        Assert.Same(batch, service.SessionManager.GetSession(sessionId));
+        Assert.Contains(failure.Message, response.ErrorMessage, StringComparison.Ordinal);
+        using var partial = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        var save = partial.RootElement.GetProperty("save");
+        var dirty = save.GetProperty("hasUnsavedChanges");
+        if (hasUnsavedChanges is { } remainingChanges)
+            Assert.Equal(remainingChanges, dirty.GetBoolean());
+        else
+        {
+            Assert.Equal(JsonValueKind.Null, dirty.ValueKind);
+            Assert.Equal("Busy", response.ErrorCategory);
+            Assert.Equal("0x800AC472", response.HResult);
+            Assert.Contains(nativeFailure!.Message, response.InnerError, StringComparison.Ordinal);
+        }
+        var reported = save.GetProperty("excelReportedSaveSucceeded");
+        if (excelReportedSaveSucceeded is { } succeeded)
+            Assert.Equal(succeeded, reported.GetBoolean());
+        else
+            Assert.Equal(JsonValueKind.Null, reported.ValueKind);
+        Assert.Equal(observationError, save.TryGetProperty("observationError", out var error) ? error.GetString() : null);
+        foreach (var output in new[] { result.ToToolJson(), result.ToCliJson(command, 0) })
+        {
+            using var envelope = JsonDocument.Parse(output);
+            var serializedSave = envelope.RootElement.GetProperty("partialState").GetProperty("save");
+            Assert.Equal(save.GetRawText(), serializedSave.GetRawText());
+        }
+    }
+
+    [Theory]
     [InlineData(false, unchecked((int)0x800A03EC), "ComInterop", false)]
     [InlineData(true, unchecked((int)0x800A03EC), "ComInterop", true)]
     [InlineData(true, unchecked((int)0x80010108), "ExcelDisconnected", true)]
