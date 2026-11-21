@@ -59,6 +59,50 @@ public sealed partial class PersistentServiceRangeValuesTests
             value => Assert.Null(value));
     }
 
+    [Theory]
+    [InlineData("[[101,202],[303,1e309]]", false, "must use finite numbers")]
+    [InlineData("[[101,202],null]", false, "values[1] must be an array of cells")]
+    [InlineData("[[101,202],[303,404]]", true, "Provide either values or valuesFile, not both")]
+    public async Task SetValues_MatrixInputRejected_PreservesExistingCells(
+        string matrixJson, bool includeFile, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:C2",
+            [["Retained", null, null], [100, "Other", "Keep adjacent"]]));
+        RequireSuccess(_commands.SetFormulas(batch, sheetName, "B1", [["=100+23"]]));
+        RequireSuccess(_commands.SetNumberFormat(batch, sheetName, "A2", "0.0"));
+        var before = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:C2"));
+        Assert.Equal("Retained", before.Values[0][0]);
+        Assert.Equal("Keep adjacent", before.Values[1][2]);
+        Assert.Equal("=100+23", before.Formulas[0][1]);
+        var formats = RequireSuccess(_commands.GetNumberFormats(batch, sheetName, "A1:C2")).Formats;
+        var calculation = _fixture.ExecuteRawVerification((context, _) => context.App.Calculation);
+
+        // Retain the original JSON token so the Service receives 1e309 as a number.
+        using var matrix = JsonDocument.Parse(matrixJson);
+        var valuesFile = includeFile
+            ? _fixture.CreateInputFile(".json", "[[505,606],[707,808]]")
+            : null;
+        var failure = await _fixture.SendForFailureAsync("range.set-values", new
+        {
+            sheetName,
+            rangeAddress = "A1:B2",
+            values = matrix.RootElement,
+            valuesFile,
+            overwritePolicy = "allow"
+        });
+
+        Assert.Equal("InvalidInput", failure.ErrorCategory);
+        Assert.Contains(expectedError, failure.ErrorMessage, StringComparison.Ordinal);
+        var after = RequireSuccess(_commands.GetFormulas(batch, sheetName, "A1:C2"));
+        Assert.Equal(before.Values.SelectMany(row => row), after.Values.SelectMany(row => row));
+        Assert.Equal(before.Formulas.SelectMany(row => row), after.Formulas.SelectMany(row => row));
+        Assert.Equal(formats.SelectMany(row => row),
+            RequireSuccess(_commands.GetNumberFormats(batch, sheetName, "A1:C2")).Formats.SelectMany(row => row));
+        Assert.Equal(calculation, _fixture.ExecuteRawVerification((context, _) => context.App.Calculation));
+    }
+
     [Fact]
     public async Task SetValues_QuotedCsvPreservesCellsAndRejectsMalformedInputBeforeWrite()
     {
