@@ -985,7 +985,8 @@ public sealed partial class ExcelMcpServiceErrorTests
         public bool IsAlive { get; private set; } = true;
         public bool IsAliveAfterSaveException { get; init; } = true;
         public bool IsAliveAfterExecuteException { get; init; } = true;
-        public ExcelNativeProcessObservation? ProcessObservation { get; init; }
+        public ExcelNativeProcessObservation? ProcessObservation { get; set; }
+        public ExcelNativeProcessObservation? ProcessObservationAfterDeathCheck { get; init; }
         public Exception? ExecuteException { get; init; }
         public Exception? SaveException { get; init; }
         public int ExecuteCalls { get; private set; }
@@ -1033,7 +1034,12 @@ public sealed partial class ExcelMcpServiceErrorTests
             }
         }
 
-        public bool IsExcelProcessAlive() => IsAlive;
+        public bool IsExcelProcessAlive()
+        {
+            if (!IsAlive && ProcessObservationAfterDeathCheck is { } exit)
+                ProcessObservation = exit;
+            return IsAlive;
+        }
 
         public void Dispose()
         {

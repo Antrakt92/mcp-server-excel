@@ -53,6 +53,40 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Equal(JsonValueKind.Null, native.GetProperty("nativeError").ValueKind);
     }
 
+    [Theory]
+    [InlineData("sheet.list", null)]
+    [InlineData("vba.invoke", """{"procedureName":"SyntheticProbe.Callback"}""")]
+    public async Task ProcessAsync_ExcelExitsDuringDisconnectCheck_ReportsTheObservedExit(string command, string? args)
+    {
+        using var service = new ExcelMcpService();
+#pragma warning disable CA2201 // Simulates a COM disconnect followed by exit during the native liveness check.
+        var error = new COMException("Synthetic disconnect.", unchecked((int)0x800706BE));
+#pragma warning restore CA2201
+        var identity = new ExcelProcessIdentity(123, 456);
+        var batch = new FakeBatch
+        {
+            WorkbookPath = Path.Combine(Path.GetTempPath(), "synthetic-disconnect.xlsm"),
+            ExecuteException = error,
+            IsAliveAfterExecuteException = false,
+            ProcessObservation = new(identity, ExcelNativeProcessState.Alive, null, null),
+            ProcessObservationAfterDeathCheck = new(identity, ExcelNativeProcessState.Exited, 17, null)
+        };
+        const string sessionId = "exit-during-disconnect-check";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = command, SessionId = sessionId, Args = args });
+
+        Assert.False(response.Success);
+        Assert.Equal("ExcelProcessDied", response.ErrorCategory);
+        Assert.Equal("0x800706BE", response.HResult);
+        Assert.Equal(command, response.Command);
+        Assert.Equal(sessionId, response.SessionId);
+        Assert.DoesNotContain(sessionId, service.SessionManager.ActiveSessionIds);
+        using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        var native = AssertNativeDiagnosticsIdentity(state, "Exited");
+        Assert.Equal(17u, native.GetProperty("exitCode").GetUInt32());
+    }
+
     [Fact]
     public void NativeDiagnostics_NoObservationPreservesExistingBytesAndNull()
     {
