@@ -645,7 +645,7 @@ public sealed class ExcelMcpService : IDisposable
         }).GetAwaiter().GetResult();
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "Only confirmed fatal Excel disconnections reach this handler; CreateExcelDisconnectedResponse reports failure and the original COM error after dead-session cleanup.")]
+        Justification = "Preserve failure and native evidence from the original batch on fatal disconnection or an unconfirmed close readiness check.")]
     private ServiceResponse HandleSessionClose(ServiceRequest request)
     {
         var shouldSave = RequestsCloseSave(request);
@@ -672,6 +672,11 @@ public sealed class ExcelMcpService : IDisposable
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
             return HandleExcelDisconnect(request.SessionId, ex, closingBatch);
+        }
+        catch (ExcelBusyException ex) when (ex.CloseOutcomeUnconfirmed)
+        {
+            return CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null,
+                includeOperationStatus: true, closeObservation: GetNativeProcessObservation(closingBatch));
         }
 
         if (closed)
@@ -1362,6 +1367,19 @@ public sealed class ExcelMcpService : IDisposable
         FindOperationException<TableAppendException>(error) is { } append ? SerializeTableAppendState(append.PartialState, "unknown") :
         MarkUnconfirmedCompletion(error, null);
 
+    private static string? MergeUnconfirmedCloseDiagnostics(
+        string? partialState, bool closeOutcomeUnconfirmed, ExcelNativeProcessObservation? observation)
+    {
+        if (!closeOutcomeUnconfirmed)
+            return partialState;
+
+        var state = partialState is null
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+        state["outcome"] = "unknown";
+        return MergeNativeProcessDiagnostics(state.ToJsonString(ServiceProtocol.JsonOptions), observation);
+    }
+
     private static string SerializeRangePatchState(RangePatchResult patch, string? outcome = null) =>
         JsonSerializer.Serialize(new
         {
@@ -1531,7 +1549,8 @@ public sealed class ExcelMcpService : IDisposable
 
     private ServiceResponse CreateErrorResponseCore(
         Exception ex, string? command, string? sessionId,
-        IReadOnlyList<string>? retainedFiles, Exception? recoveryFailure, bool includeOperationStatus)
+        IReadOnlyList<string>? retainedFiles, Exception? recoveryFailure, bool includeOperationStatus,
+        ExcelNativeProcessObservation? closeObservation = null)
     {
         if (ex is SessionStartupPendingException pending)
         {
@@ -1548,6 +1567,12 @@ public sealed class ExcelMcpService : IDisposable
         string? innerError = null;
         var errorCategory = OperationFailureClassifier.Classify(ex);
         var errorMessage = $"{exceptionType}: {ex.Message}";
+        var closeOutcomeUnconfirmed = command == "session.close" && ex is ExcelBusyException { CloseOutcomeUnconfirmed: true };
+        if (closeOutcomeUnconfirmed)
+        {
+            errorMessage += " Check the current session with CLI 'session list' or MCP 'file_read' action 'list'. " +
+                "If the session is absent, inspect open workbooks with CLI 'session discover' or MCP 'file_read' action 'discover' before continuing.";
+        }
         if (includeOperationStatus && errorCategory == "Busy" && sessionId is not null &&
             !errorMessage.Contains(ExcelBusyException.DialogGuidance, StringComparison.Ordinal))
         {
@@ -1676,10 +1701,12 @@ public sealed class ExcelMcpService : IDisposable
                 ExceptionType = exceptionType,
                 HResult = hresult,
                 InnerError = innerError,
-                PartialState = MergeExecutionDiagnostics(MarkUnconfirmedCompletion(ex,
-                    SerializeStartupFailureState(ex, SerializePartialState(null,
-                    operation,
-                    sessionId, retainedFiles))), ex)
+                PartialState = MergeUnconfirmedCloseDiagnostics(
+                    MergeExecutionDiagnostics(MarkUnconfirmedCompletion(ex,
+                        SerializeStartupFailureState(ex, SerializePartialState(null,
+                        operation,
+                        sessionId, retainedFiles))), ex),
+                    closeOutcomeUnconfirmed, closeObservation)
             }
         };
     }
