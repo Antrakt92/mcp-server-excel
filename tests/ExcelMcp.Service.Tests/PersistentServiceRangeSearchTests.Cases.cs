@@ -180,6 +180,7 @@ public sealed partial class PersistentServiceRangeSearchTests
 
     [Theory]
     [InlineData(true, false, "=1+1", 1)]
+    [InlineData(true, true, "=1+1", 1)]
     [InlineData(false, true, "2", 2)]
     [InlineData(true, true, "2", 2)]
     public void Find_LimitedSearch_PreservesFormulaAndValueSelection(
@@ -203,10 +204,28 @@ public sealed partial class PersistentServiceRangeSearchTests
         Assert.Equal(1, cell.Column);
         Assert.Equal($"$A${cell.Row}", cell.Address);
         Assert.Equal(2, cell.Value);
-        if (searchFormulas && !searchValues)
+        if (searchValue == "=1+1")
         {
             Assert.Equal(1, cell.Row);
         }
+    }
+
+    [Fact]
+    public void Find_DefaultSources_DeduplicatesFormulaAndValueMatchesBeforeApplyingPreviewLimit()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var setup = _commands.SetFormulas(batch, sheetName, "A1:A3", [["=1+1"], ["=2"], ["=2*2"]]);
+        Assert.True(setup.Success, setup.ErrorMessage);
+
+        var preview = _commands.Find(batch, sheetName, "A1:A3", "2", maxMatches: 2);
+        AssertFindCoverage(preview, 3, 2);
+        Assert.Equal(["$A$1", "$A$2"], preview.MatchingCells.Select(cell => cell.Address).Order());
+
+        var complete = _commands.Find(batch, sheetName, "A1:A3", "2");
+        AssertFindCoverage(complete, 3, 3);
+        Assert.Equal("$A$3", complete.MatchingCells[2].Address);
+        Assert.Equal(4, complete.MatchingCells[2].Value);
     }
 
     private static void AssertFindCoverage(RangeFindResult result, long totalCount, int returnedCount)

@@ -38,23 +38,25 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                HashSet<string>? commentAddresses = null;
+                List<Excel.XlFindLookIn> lookIns = [];
                 if (findOptions.SearchComments)
                 {
-                    commentAddresses = new(StringComparer.Ordinal);
-                    AddFindMatches(range, result, findOptions, maxMatches,
-                        Excel.XlFindLookIn.xlComments, ct, commentAddresses, readingComments: true);
-                    AddFindMatches(range, result, findOptions, maxMatches,
-                        Excel.XlFindLookIn.xlCommentsThreaded, ct, commentAddresses, readingComments: true);
+                    lookIns.Add(Excel.XlFindLookIn.xlComments);
+                    lookIns.Add(Excel.XlFindLookIn.xlCommentsThreaded);
                 }
 
-                if (findOptions.SearchFormulas || findOptions.SearchValues || !findOptions.SearchComments)
+                // Keep the values fallback when no search source was selected.
+                if (findOptions.SearchValues || (!findOptions.SearchFormulas && !findOptions.SearchComments))
+                    lookIns.Add(Excel.XlFindLookIn.xlValues);
+                if (findOptions.SearchFormulas)
+                    lookIns.Add(Excel.XlFindLookIn.xlFormulas);
+
+                HashSet<string>? matchedAddresses = lookIns.Count > 1 ? new(StringComparer.Ordinal) : null;
+                for (int index = 0; index < lookIns.Count; index++)
                 {
-                    var lookIn = findOptions.SearchFormulas && !findOptions.SearchValues
-                        ? Excel.XlFindLookIn.xlFormulas
-                        : Excel.XlFindLookIn.xlValues;
-                    AddFindMatches(range, result, findOptions, maxMatches, lookIn, ct, commentAddresses,
-                        readingComments: false);
+                    // The final pass only checks earlier addresses; its new matches need no storage.
+                    AddFindMatches(range, result, findOptions, maxMatches, lookIns[index], ct, matchedAddresses,
+                        recordMatches: index < lookIns.Count - 1);
                 }
 
                 ct.ThrowIfCancellationRequested();
@@ -69,7 +71,7 @@ public partial class RangeCommands
     }
 
     private static void AddFindMatches(Excel.Range range, RangeFindResult result, FindOptions options, int maxMatches,
-        Excel.XlFindLookIn lookIn, CancellationToken ct, HashSet<string>? commentAddresses, bool readingComments)
+        Excel.XlFindLookIn lookIn, CancellationToken ct, HashSet<string>? matchedAddresses, bool recordMatches)
     {
         Excel.Range? foundCell = null;
         Excel.Range? nextCell = null;
@@ -95,8 +97,8 @@ public partial class RangeCommands
                     break;
                 firstAddress ??= address;
 
-                bool newMatch = commentAddresses is null ||
-                    (readingComments ? commentAddresses.Add(address) : !commentAddresses.Contains(address));
+                bool newMatch = matchedAddresses is null ||
+                    (recordMatches ? matchedAddresses.Add(address) : !matchedAddresses.Contains(address));
                 if (newMatch)
                 {
                     result.TotalCount++;
