@@ -129,6 +129,7 @@ public sealed partial class PersistentServiceRangeSearchTests
 
     [Theory]
     [InlineData("cat", "c?t", "literal")]
+    [InlineData("dog", "c?t", "literal")]
     [InlineData(123, "12", "matchEntireCell")]
     public void Replace_FirstOccurrence_RejectsUnsupportedPartialMatchBeforeWriting(
         object value, string pattern, string expectedError)
@@ -137,7 +138,7 @@ public sealed partial class PersistentServiceRangeSearchTests
         var sheet = _fixture.CreateTestSheet(batch);
         Assert.True(_commands.SetValues(batch, sheet, "A1:A2", [[value], [value]]).Success);
 
-        var error = Assert.ThrowsAny<Exception>(() =>
+        var error = Assert.Throws<ArgumentException>(() =>
             _commands.Replace(batch, sheet, "A1:A2", pattern, "bird", new ReplaceOptions { ReplaceAll = false }));
 
         Assert.Contains(expectedError, error.Message, StringComparison.OrdinalIgnoreCase);

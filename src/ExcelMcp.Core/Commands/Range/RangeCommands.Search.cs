@@ -128,6 +128,14 @@ public partial class RangeCommands
     /// <inheritdoc />
     public OperationResult Replace(IExcelBatch batch, string sheetName, string rangeAddress, string findValue, string replaceValue, ReplaceOptions replaceOptions)
     {
+        string? firstLiteral = null;
+        if (!replaceOptions.ReplaceAll)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(findValue);
+            if (!replaceOptions.MatchEntireCell)
+                firstLiteral = DecodeFirstReplacementLiteral(findValue);
+        }
+
         return batch.Execute((ctx, ct) =>
         {
             Excel.Range? range = null;
@@ -151,7 +159,7 @@ public partial class RangeCommands
                 }
                 else
                 {
-                    ReplaceFirst(ctx, range, findValue, replaceValue, replaceOptions, ct);
+                    ReplaceFirst(ctx, range, findValue, replaceValue, firstLiteral, replaceOptions, ct);
                 }
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
