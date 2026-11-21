@@ -11,9 +11,17 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelControllerTests
 {
     [Theory(Timeout = 15000)]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Controller_ReleasesUnchangedSaveAsDestinationAfterWorkerSettles(bool statusUnavailable)
+    [InlineData("Timeout", false, false, false, false)]
+    [InlineData("Timeout", true, false, false, false)]
+    [InlineData("Timeout", false, false, true, false)]
+    [InlineData("Busy", false, true, false, false)]
+    [InlineData("Busy", false, true, true, false)]
+    [InlineData("Busy", false, true, false, true)]
+    [InlineData("InvalidInput", true, false, false, false)]
+    [InlineData("InvalidInput", true, false, false, true)]
+    [InlineData("ExcelDisconnected", false, false, false, true)]
+    public async Task Controller_ReconcilesSaveAsDestinationWithoutLosingUncertainOutcomes(
+        string errorCategory, bool statusUnavailable, bool dialogOpen, bool unsaved, bool priorWaitExpired)
     {
         const string sessionId = "save-as-session";
         var directory = Directory.CreateTempSubdirectory("excelmcp-save-as-reservation-");
@@ -28,22 +36,29 @@ public sealed partial class ExcelControllerTests
             var current = WorkerProcess.Current;
             var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", current, current,
                 generation, WorkerRegistry.Build, Excel: null);
-            var original = Path.Join(directory.FullName, "original.xlsx");
+            var original = unsaved ? null : Path.Join(directory.FullName, "original.xlsx");
             var destination = Path.Join(directory.FullName, "destination.xlsx");
 
-            WorkerSnapshot Snapshot(string path, long revision, string? statusError = null) =>
+            WorkerSnapshot Snapshot(string? path, long revision, string? statusError = null, bool operationPending = false) =>
                 new(registration, [new SessionDescriptor(sessionId, path)], new ServiceResponse
                 {
                     Success = true,
-                    Result = JsonSerializer.Serialize(new { sessions = new[] { new { sessionId, filePath = path } } },
+                    Result = JsonSerializer.Serialize(new { sessions = new[] { new { sessionId, filePath = path, operationPending } } },
                         ServiceProtocol.JsonOptions)
-                }, null, null, new Dictionary<string, IReadOnlyList<string>> { [sessionId] = [path] },
+                }, null, null, new Dictionary<string, IReadOnlyList<string>> { [sessionId] = path is null ? [] : [path] },
                     StatusError: statusError, Revision: revision);
 
             var before = Snapshot(original, 1);
-            var timeout = Snapshot(original, 3, statusUnavailable ? "Excel status could not be refreshed." : null);
+            var failure = Snapshot(original, 3, statusUnavailable ? "Excel status could not be refreshed." : null, dialogOpen);
             var completed = Snapshot(destination, 5);
-            var target = new SaveAsReservationWorker(timeout, completed);
+            const string settledWait = """{"operation":{"state":"completed","waitExpired":true,"executionPending":false}}""";
+            var partialState = errorCategory switch
+            {
+                "ExcelDisconnected" => """{"outcome":"unknown","operation":{"state":"completed","waitExpired":true,"executionPending":false}}""",
+                "Timeout" => """{"operation":{"waitExpired":true}}""",
+                _ => priorWaitExpired ? settledWait : null
+            };
+            var target = new SaveAsReservationWorker(errorCategory, partialState, failure, completed);
             using var host = new DaemonHost(registration.PipeName, pipe => new JsonRpc(pipe, pipe, target),
                 maximumConnections: 8);
             var listener = host.RunAsync(registration.PipeName);
@@ -80,10 +95,19 @@ public sealed partial class ExcelControllerTests
                     target.Release.TrySetResult();
                 }
 
-                var expired = await save;
-                Assert.False(expired.Success);
-                Assert.Equal("Timeout", expired.ErrorCategory);
-                if (statusUnavailable)
+                var failed = await save;
+                Assert.False(failed.Success);
+                Assert.Equal(errorCategory, failed.ErrorCategory);
+                Assert.Equal(partialState, failed.PartialState);
+                if (errorCategory == "ExcelDisconnected")
+                {
+                    worker.RecordSnapshot(Snapshot(original, 4));
+                    apply.Invoke(controller, [worker]);
+                    Assert.Equal("Conflict", (await SaveAsAsync()).ErrorCategory);
+                    Assert.Equal(1, target.Calls);
+                    return;
+                }
+                if (statusUnavailable || dialogOpen)
                 {
                     Assert.Equal("Conflict", (await SaveAsAsync()).ErrorCategory);
                     Assert.Equal(1, target.Calls);
@@ -112,7 +136,8 @@ public sealed partial class ExcelControllerTests
         }
     }
 
-    private sealed class SaveAsReservationWorker(WorkerSnapshot timeout, WorkerSnapshot completed) : IExcelWorkerRpc
+    private sealed class SaveAsReservationWorker(
+        string errorCategory, string? partialState, WorkerSnapshot failure, WorkerSnapshot completed) : IExcelWorkerRpc
     {
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -129,15 +154,15 @@ public sealed partial class ExcelControllerTests
                 return new(new ServiceResponse
                 {
                     Success = false,
-                    ErrorCategory = "Timeout",
-                    PartialState = """{"operation":{"waitExpired":true}}"""
-                }, Accepted: true, timeout);
+                    ErrorCategory = errorCategory,
+                    PartialState = partialState
+                }, Accepted: true, failure);
             }
             return new(new ServiceResponse { Success = true }, Accepted: true, completed);
         }
 
         public Task<WorkerSnapshot> ClaimAsync(WorkerClaim claim, CancellationToken cancellationToken = default) =>
-            Task.FromResult(timeout);
+            Task.FromResult(failure);
 
         public Task<WorkerSnapshot> SnapshotAsync(string generation, CancellationToken cancellationToken = default) =>
             Task.FromResult(completed);
