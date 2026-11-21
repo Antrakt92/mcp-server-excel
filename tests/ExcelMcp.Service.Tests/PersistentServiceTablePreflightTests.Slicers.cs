@@ -236,8 +236,13 @@ public sealed partial class PersistentServiceTablePreflightTests
             batch, "ReplaceSoleItemSlicer", [initial], clearFirst: true), initialTotal, initial);
         AssertTableSlicerState(_tableCommands.SetTableSlicerSelection(
             batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: false), 350, "North", "South");
-        AssertTableSlicerState(_tableCommands.SetTableSlicerSelection(
-            batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: true), replacementTotal, replacement);
+        var beforeUnknown = _tableCommands.SetTableSlicerSelection(
+            batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: true);
+        AssertTableSlicerState(beforeUnknown, replacementTotal, replacement);
+        var unknown = Assert.Throws<ArgumentException>(() => _tableCommands.SetTableSlicerSelection(
+            batch, "ReplaceSoleItemSlicer", ["missing"], clearFirst: true));
+        Assert.Contains("availableItems", unknown.Message, StringComparison.Ordinal);
+        AssertTableSlicerState(beforeUnknown, replacementTotal, replacement);
         AssertTableSlicerState(_tableCommands.SetTableSlicerSelection(
             batch, "ReplaceSoleItemSlicer", [initial.ToLowerInvariant(), initial, "missing"],
             clearFirst: true), initialTotal, initial);

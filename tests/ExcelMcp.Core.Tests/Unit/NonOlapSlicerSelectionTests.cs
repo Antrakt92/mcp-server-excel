@@ -13,42 +13,38 @@ namespace Sbroenne.ExcelMcp.Core.Tests.Unit;
 public sealed class NonOlapSlicerSelectionTests
 {
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(false, false)]
-    public void UnknownNativeName_FailsBeforeAnySelectionWrite(bool clearFirst, bool includeValidName)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void NoMatchingNativeNames_FailsBeforeAnySelectionWrite(bool clearFirst)
     {
         var writes = new List<(string Name, bool Selected)>();
         var cache = CreateCache(writes);
-        List<string> requested = includeValidName ? ["south", "missing"] : ["missing"];
-
         var error = Assert.Throws<ArgumentException>(() =>
-            SlicerSelection.SetNonOlapSelection(cache, requested, clearFirst, CancellationToken.None));
+            SlicerSelection.SetNonOlapSelection(cache, ["missing", "unknown"], clearFirst, CancellationToken.None));
 
         Assert.Equal("selectedItems", error.ParamName);
-        Assert.Contains("missing", error.Message);
+        Assert.Contains("None of the requested slicer items were found", error.Message);
         Assert.Empty(writes);
     }
 
     [Fact]
-    public void ReplaceSelection_MatchesNativeNamesAndSelectsBeforeDeselecting()
+    public void ReplaceSelection_IgnoresUnknownNamesAndSelectsBeforeDeselecting()
     {
         var writes = new List<(string Name, bool Selected)>();
         var cache = CreateCache(writes);
 
-        SlicerSelection.SetNonOlapSelection(cache, ["south", "SOUTH"], clearFirst: true, CancellationToken.None);
+        SlicerSelection.SetNonOlapSelection(cache, ["missing", "south", "SOUTH"], clearFirst: true, CancellationToken.None);
 
         Assert.Equal([("South", true), ("North", false)], writes);
     }
 
     [Fact]
-    public void AddSelection_LeavesOtherMembersSelected()
+    public void AddSelection_IgnoresUnknownNamesAndLeavesOtherMembersSelected()
     {
         var writes = new List<(string Name, bool Selected)>();
         var cache = CreateCache(writes);
 
-        SlicerSelection.SetNonOlapSelection(cache, ["south"], clearFirst: false, CancellationToken.None);
+        SlicerSelection.SetNonOlapSelection(cache, ["missing", "south"], clearFirst: false, CancellationToken.None);
 
         Assert.Equal([("South", true)], writes);
     }
