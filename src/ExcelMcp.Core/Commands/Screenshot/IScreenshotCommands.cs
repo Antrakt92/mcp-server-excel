@@ -72,7 +72,7 @@ public class ScreenshotResult : OperationResult
 /// </summary>
 [ServiceCategory("Screenshot")]
 [McpTool("screenshot", Title = "Screenshot", Destructive = false, ReadOnly = true, Category = "visualization",
-    Description = "Capture Excel worksheet content as images for visual verification. Photographs the live Excel window, so the image shows exactly what Excel displays (formatting, charts, conditional formatting). Works on protected sheets and leaves the workbook and clipboard untouched, but requires an interactive desktop session. capture: specific range (rangeAddress defaults to A1:Z30). capture-sheet: used cell area of worksheet plus embedded charts. Very large areas are truncated to the top-left portion, which the returned text reports. Returns the image directly as MCP image content. quality: Medium (default, JPEG 75% scale), High (PNG full scale), Low (JPEG 50% scale).")]
+    Description = "Capture Excel worksheet content as images for visual verification. Photographs the live Excel window, so the image shows exactly what Excel displays (formatting, charts, conditional formatting). Works on protected sheets and leaves the workbook and clipboard untouched, but requires an interactive desktop session. capture: one rectangular range (rangeAddress defaults to A1:Z30). capture-sheet: used cell area of worksheet plus embedded charts. Very large areas are truncated to the top-left portion, which the returned text reports. Returns the image directly as MCP image content. quality: Medium (default, JPEG 75% scale), High (PNG full scale), Low (JPEG 50% scale).")]
 public interface IScreenshotCommands
 {
     /// <summary>
@@ -81,7 +81,7 @@ public interface IScreenshotCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name (null for active sheet)</param>
-    /// <param name="rangeAddress">Range to capture (e.g., "A1:F20"); defaults to A1:Z30. Only valid for capture.</param>
+    /// <param name="rangeAddress">One rectangular range to capture (e.g., "A1:F20"); defaults to A1:Z30. Capture disjoint areas separately. Only valid for capture.</param>
     /// <param name="quality">Image quality: Medium (default, JPEG 75% scale), High (PNG full scale), Low (JPEG 50% scale)</param>
     /// <returns>Screenshot result with base64 image data</returns>
     [ServiceAction("capture")]
