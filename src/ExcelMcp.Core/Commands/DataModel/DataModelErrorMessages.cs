@@ -76,22 +76,4 @@ public static class DataModelErrorMessages
 
         return message;
     }
-
-    /// <summary>
-    /// Error message when MSOLAP provider is not installed or the provider class is not registered.
-    /// This occurs when trying to execute DAX queries via ADOConnection.
-    /// </summary>
-    public static string MsolapProviderNotInstalled()
-    {
-        return MsolapClassNotRegistered(null);
-    }
-
-    /// <summary>
-    /// Error message when ADO connection to Data Model fails
-    /// </summary>
-    public static string AdoConnectionFailed(string details)
-    {
-        return $"Failed to connect to Data Model for DAX query execution: {details}. " +
-               "Ensure Power Pivot is enabled in Excel (File > Options > Add-ins > COM Add-ins > Microsoft Power Pivot for Excel).";
-    }
 }
