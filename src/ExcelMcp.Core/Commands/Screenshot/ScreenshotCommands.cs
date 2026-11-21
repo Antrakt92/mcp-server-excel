@@ -37,12 +37,17 @@ public partial class ScreenshotCommands : IScreenshotCommands
         {
             Excel.Worksheet? sheet = null;
             Excel.Range? range = null;
+            Excel.Areas? areas = null;
             try
             {
                 sheet = Utilities.WorksheetLookup.Get(ctx.Book,
                     string.IsNullOrWhiteSpace(sheetName) ? null : sheetName);
 
                 range = sheet.Range[rangeAddress];
+                areas = range.Areas;
+                if (areas.Count != 1)
+                    throw new ArgumentException("Screenshot capture requires one rectangular range. Capture disjoint areas separately.", nameof(rangeAddress));
+
                 string actualSheet = sheet.Name?.ToString() ?? "Sheet1";
                 string actualRange = range.Address?.ToString() ?? rangeAddress;
 
@@ -50,6 +55,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
             }
             finally
             {
+                ComUtilities.Release(ref areas);
                 ComUtilities.Release(ref range);
                 ComUtilities.Release(ref sheet);
             }
