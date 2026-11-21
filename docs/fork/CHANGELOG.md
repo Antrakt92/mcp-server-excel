@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.7.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.1) | 2026-11-21 | Safer workbook access changes and fixes for worksheet, formatting, VBA and CLI commands |
 | [5.7.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.0) | 2026-11-21 | MCP shutdown diagnostics, Excel recovery and safer workbook edits |
 | [5.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.6.0) | 2026-11-19 | Literal text writes, VBA label warnings and workbook timings |
 | [5.5.2](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.5.2) | 2026-11-19 | VeryHidden worksheet deletion and NuGet updates |
@@ -31,6 +32,26 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.7.1 — 2026-11-21
+
+### Workbook access
+
+- If Excel keeps the selected workbook in Protected View after an approved edit request, MCP reports that state and keeps the existing session attached.
+- MCP and CLI batches stop when Excel cannot confirm an editing, connection or macro-reopen operation. They also stop if Excel fails to restore its opening settings, even when the workbook operation itself completed. The error preserves the original cause and any restoration failures for inspection before the next command.
+
+### Worksheet, VBA and CLI fixes
+
+- Moving a sheet honors `afterSheet` when `beforeSheet` is blank.
+- Writing a matrix of number formats requires one rectangular range. A disjoint selection is rejected before any formatting changes. A single format can still be applied to disjoint ranges.
+- VBA module deletion matches names case-insensitively, like module reads.
+- CLI batches return a shutdown warning in `partialState.shutdownWarning` when the service stops with a warning. The warning no longer causes the batch response to fail JSON parsing.
+
+### Regression coverage
+
+Desktop Excel tests now check that rejected range and table inputs preserve workbook contents, locked files reopen after the lock is released, and closing without saving cannot produce a save receipt on retry. Dependency versions are unchanged.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.7.0...v5.7.1)
 
 ## 5.7.0 — 2026-11-21
 
