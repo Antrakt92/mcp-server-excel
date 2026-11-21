@@ -30,6 +30,7 @@ public sealed class ServiceSessionRecoveryTests : IDisposable
         File.Copy(
             Path.Combine(AppContext.BaseDirectory, "TestFiles", "batch-test-static.xlsx"),
             workbookPath);
+        var originalBytes = File.ReadAllBytes(workbookPath);
 
         var service = new ExcelMcpService();
         using var statusReadFinished = new ManualResetEventSlim(true);
@@ -47,16 +48,16 @@ public sealed class ServiceSessionRecoveryTests : IDisposable
                 var lockedResponse = await OpenAsync(service, workbookPath);
 
                 Assert.False(lockedResponse.Success, "Opening the locked workbook unexpectedly succeeded.");
-                Assert.Contains("already open", lockedResponse.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("close the file", lockedResponse.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("exclusive access", lockedResponse.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-                Assert.False(string.IsNullOrWhiteSpace(lockedResponse.ExceptionType),
-                    "The locked-workbook error did not identify its exception type.");
+                Assert.Null(lockedResponse.SessionId);
+                Assert.Equal("ComInterop", lockedResponse.ErrorCategory);
+                Assert.NotNull(lockedResponse.HResult);
+                Assert.Contains(lockedResponse.HResult, lockedResponse.InnerError, StringComparison.OrdinalIgnoreCase);
 
                 using var emptyList = ParseSuccessfulResult(
                     await service.ProcessAsync(new ServiceRequest { Command = "session.list" }));
                 Assert.Empty(emptyList.RootElement.GetProperty("sessions").EnumerateArray());
             }
+            Assert.Equal(originalBytes, File.ReadAllBytes(workbookPath));
 
             var openResponse = await OpenAsync(service, workbookPath);
             using var openResult = ParseSuccessfulResult(openResponse);

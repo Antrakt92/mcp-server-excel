@@ -1604,7 +1604,7 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
     [Fact]
     [Trait("Category", "Integration")]
     [Trait("Feature", "FileLocking")]
-    public void Constructor_FileLockedByAnotherProcess_ThrowsInvalidOperationException()
+    public void Constructor_ExclusiveFileLock_PreservesExcelOpenFailureAndAllowsReopen()
     {
         // Arrange - Create a separate test file for locking test
         var lockedTestFile = Path.Join(Path.GetTempPath(), $"batch-test-locked-{Guid.NewGuid():N}.xlsx");
@@ -1620,20 +1620,11 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                 FileAccess.ReadWrite,
                 FileShare.None);
 
-            // Act & Assert - Attempting to create ExcelBatch should fail immediately
-            var ex = Assert.Throws<InvalidOperationException>(() =>
+            // Excel owns the open attempt and reports the native failure.
+            Assert.Throws<COMException>(() =>
             {
-                var batch = ExcelSession.BeginBatch(lockedTestFile);
-                batch.Dispose();
+                using var batch = ExcelSession.BeginBatch(lockedTestFile);
             });
-
-            // Verify error message is clear and actionable
-            Assert.Contains("already open", ex.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("close the file", ex.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("exclusive access", ex.Message, StringComparison.OrdinalIgnoreCase);
-
-            _output.WriteLine($"✓ File locking detected successfully");
-            _output.WriteLine($"Error message: {ex.Message}");
         }
         Assert.Equal(originalBytes, File.ReadAllBytes(lockedTestFile));
         using var recovered = ExcelSession.BeginBatch(lockedTestFile);
@@ -1644,7 +1635,7 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
     [Fact]
     [Trait("Category", "Integration")]
     [Trait("Feature", "FileLocking")]
-    public void Constructor_FileLockedByAnotherProcess_DoesNotLeakExcelProcess()
+    public void Constructor_ExclusiveFileLock_ClosesExcelAfterFailedOpen()
     {
         var lockedTestFile = Path.Join(Path.GetTempPath(), $"batch-test-locked-leak-{Guid.NewGuid():N}.xlsx");
         _temporaryFiles.Add(lockedTestFile);
@@ -1660,15 +1651,13 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                 FileAccess.ReadWrite,
                 FileShare.None);
 
-            var ex = Assert.Throws<InvalidOperationException>(() =>
+            var failure = Record.Exception(() =>
             {
                 using var batch = ExcelSession.BeginBatch(lockedTestFile);
             });
 
-            Assert.Contains("already open", ex.Message, StringComparison.OrdinalIgnoreCase);
-
-            Assert.Empty(owned.Identities);
-            owned.AssertAllExited(expectProcess: false);
+            owned.AssertAllExited();
+            Assert.IsType<COMException>(failure);
         }
         Assert.Equal(originalBytes, File.ReadAllBytes(lockedTestFile));
     }
