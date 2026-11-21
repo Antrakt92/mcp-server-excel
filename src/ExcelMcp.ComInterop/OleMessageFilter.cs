@@ -190,11 +190,6 @@ public sealed partial class OleMessageFilter : IOleMessageFilter
     public static bool IsRegistered => _isRegistered;
 
     /// <summary>
-    /// Gets whether the filter is currently in a long operation on this thread.
-    /// </summary>
-    public static bool IsInLongOperation => _isInLongOperation;
-
-    /// <summary>
     /// Marks the beginning of a long-running COM operation (e.g., connection.Refresh()).
     /// While in a long operation, inbound COM callbacks are rejected with SERVERCALL_RETRYLATER
     /// instead of being dispatched, preventing CPU spin from re-entrant COM calls.

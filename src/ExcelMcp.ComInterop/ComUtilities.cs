@@ -94,117 +94,6 @@ public static class ComUtilities
     }
 
     /// <summary>
-    /// Finds a Power Query by name in the workbook
-    /// </summary>
-    /// <param name="workbook">Excel workbook COM object</param>
-    /// <param name="queryName">Name of the query to find</param>
-    /// <returns>The query COM object if found, null otherwise</returns>
-    /// <remarks>
-    /// CRITICAL: Caller is responsible for releasing the returned COM object.
-    /// Use ComUtilities.Release(ref query) when done with the object.
-    /// </remarks>
-    public static Excel.WorkbookQuery? FindQuery(Excel.Workbook workbook, string queryName)
-    {
-        Excel.Queries? queriesCollection = null;
-        try
-        {
-            queriesCollection = workbook.Queries;
-            int count = queriesCollection.Count;
-            for (int i = 1; i <= count; i++)
-            {
-                Excel.WorkbookQuery? query = null;
-                try
-                {
-                    query = queriesCollection.Item(i);
-                    string currentName = query.Name ?? string.Empty;
-
-                    if (currentName == queryName)
-                    {
-                        // Found match - return it (caller owns it now)
-                        var result = query;
-                        query = null; // Prevent cleanup in finally block
-                        return result;
-                    }
-                }
-                finally
-                {
-                    // Only release if not returning (query will be null if we're returning it)
-                    if (query != null)
-                    {
-                        Release(ref query);
-                    }
-                }
-            }
-
-            return null; // Not found
-        }
-        catch (Exception ex)
-        {
-            // Log or rethrow - don't silently swallow
-            throw new InvalidOperationException($"Failed to search for Power Query '{queryName}'.", ex);
-        }
-        finally
-        {
-            Release(ref queriesCollection);
-        }
-    }
-
-    /// <summary>
-    /// Finds a named range by name in the workbook
-    /// </summary>
-    /// <param name="workbook">Excel workbook COM object</param>
-    /// <param name="name">Name of the named range to find</param>
-    /// <returns>The named range COM object if found, null otherwise</returns>
-    /// <remarks>
-    /// CRITICAL: Caller is responsible for releasing the returned COM object.
-    /// Use ComUtilities.Release(ref nameObj) when done with the object.
-    /// </remarks>
-    public static Excel.Name? FindName(Excel.Workbook workbook, string name)
-    {
-        Excel.Names? namesCollection = null;
-        try
-        {
-            namesCollection = workbook.Names;
-            int count = namesCollection.Count;
-            for (int i = 1; i <= count; i++)
-            {
-                Excel.Name? nameObj = null;
-                try
-                {
-                    nameObj = (Excel.Name)namesCollection.Item(i);
-                    string currentName = nameObj.Name;
-
-                    if (currentName == name)
-                    {
-                        // Found match - return it (caller owns it now)
-                        var result = nameObj;
-                        nameObj = null; // Prevent cleanup in finally block
-                        return result;
-                    }
-                }
-                finally
-                {
-                    // Only release if not returning
-                    if (nameObj != null)
-                    {
-                        Release(ref nameObj);
-                    }
-                }
-            }
-
-            return null; // Not found
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"Failed to search for named range '{name}'.", ex);
-        }
-        finally
-        {
-            Release(ref namesCollection);
-        }
-    }
-
-    /// <summary>
     /// Finds a worksheet by name in the workbook
     /// </summary>
     /// <param name="workbook">Excel workbook COM object</param>
@@ -260,61 +149,6 @@ public static class ComUtilities
     }
 
     /// <summary>
-    /// Finds a connection in the workbook by name (case-insensitive)
-    /// </summary>
-    /// <param name="workbook">Excel workbook COM object</param>
-    /// <param name="connectionName">Name of the connection to find</param>
-    /// <returns>Connection object if found, null otherwise</returns>
-    /// <remarks>
-    /// CRITICAL: Caller is responsible for releasing the returned COM object.
-    /// Use ComUtilities.Release(ref connection) when done with the object.
-    /// </remarks>
-    public static Excel.WorkbookConnection? FindConnection(Excel.Workbook workbook, string connectionName)
-    {
-        Excel.Connections? connections = null;
-        Excel.WorkbookConnection? conn = null;
-
-        try
-        {
-            connections = workbook.Connections;
-
-            for (int i = 1; i <= connections.Count; i++)
-            {
-                conn = connections.Item(i);
-                string name = conn.Name ?? "";
-
-                // Match exact name or "Query - Name" pattern (Power Query connections)
-                if (name.Equals(connectionName, StringComparison.OrdinalIgnoreCase) ||
-                    name.Equals($"Query - {connectionName}", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Found match - return it (caller owns it now)
-                    var result = conn;
-                    conn = null; // Prevent cleanup in finally block
-                    return result;
-                }
-
-                // Not a match - release before next iteration
-                Release(ref conn);
-            }
-
-            return null; // Not found
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"Failed to search for connection '{connectionName}'.", ex);
-        }
-        finally
-        {
-            // Clean up any unreleased connection from last iteration
-            if (conn != null)
-            {
-                Release(ref conn);
-            }
-            Release(ref connections);
-        }
-    }
-
-    /// <summary>
     /// Safely iterates through all columns in a model table with automatic COM cleanup
     /// </summary>
     /// <param name="table">Model table COM object</param>
@@ -322,8 +156,8 @@ public static class ComUtilities
     /// <remarks>
     /// The column is passed as <see cref="object"/> rather than <c>Excel.ModelTableColumn</c> on purpose:
     /// the Excel interop types are embedded (EmbedInteropTypes), and an embedded interop type cannot be used
-    /// as a generic type argument across assembly boundaries (compiler error CS1769). Callers access the
-    /// column late-bound, so an untyped object is sufficient.
+    /// as a generic type argument across assembly boundaries (compiler error CS1769). Callers cast the
+    /// object to <c>Excel.ModelTableColumn</c> before reading its properties.
     /// </remarks>
     public static void ForEachColumn(Excel.ModelTable table, Action<object, int> action)
     {

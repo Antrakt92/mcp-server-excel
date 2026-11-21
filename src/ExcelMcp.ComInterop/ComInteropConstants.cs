@@ -21,12 +21,6 @@ public static class ComInteropConstants
     public static readonly TimeSpan StaThreadJoinTimeout = ExcelQuitTimeout + TimeSpan.FromSeconds(15);
 
     /// <summary>
-    /// Timeout for save operations (5 minutes).
-    /// Large files with Power Query or Data Model may take longer to save.
-    /// </summary>
-    public static readonly TimeSpan SaveOperationTimeout = TimeSpan.FromMinutes(5);
-
-    /// <summary>
     /// Default timeout for individual Excel operations (2 minutes).
     /// Most operations complete in under 30 seconds, but this provides buffer for slow machines.
     /// Can be overridden when creating a session via timeoutSeconds parameter.
@@ -39,25 +33,6 @@ public static class ComInteropConstants
     /// Heavy workloads (Folder.Files, multi-query, large OLEDB) can take 10+ minutes.
     /// </summary>
     public static readonly TimeSpan DataOperationTimeout = TimeSpan.FromMinutes(30);
-
-    /// <summary>
-    /// Maximum wait time for session creation file lock acquisition (5 seconds).
-    /// </summary>
-    public static readonly TimeSpan SessionFileLockTimeout = TimeSpan.FromSeconds(5);
-
-    #endregion
-
-    #region Sleep Intervals
-
-    /// <summary>
-    /// Delay between file lock acquisition retries (100ms).
-    /// </summary>
-    public const int FileLockRetryDelayMs = 100;
-
-    /// <summary>
-    /// Delay between session lock acquisition retries (200ms).
-    /// </summary>
-    public const int SessionLockRetryDelayMs = 200;
 
     #endregion
 

@@ -82,6 +82,7 @@ public sealed class PowerQueryEvaluateReadBoundsTests
             "set_DisplayAlerts" => null,
             _ => throw new NotSupportedException(method.Name)
         }, typeof(ExcelContext).Assembly);
+        // The proxy must implement the embedded Workbook interface that declares Queries.
         var book = ExcelInterfaceProxy.Create<Excel.Workbook>((method, _) => method.Name switch
         {
             "get_Queries" => queries,
@@ -89,7 +90,7 @@ public sealed class PowerQueryEvaluateReadBoundsTests
             "get_Worksheets" => sheets,
             "get_Connections" => connections,
             _ => throw new NotSupportedException(method.Name)
-        }, typeof(ExcelContext).Assembly);
+        }, typeof(PowerQueryCommands).Assembly);
         var context = new ExcelContext("fixture.xlsx", app, book);
         using var batch = ExcelInterfaceProxy.Create<IExcelBatch>((method, args) => method.Name switch
         {
