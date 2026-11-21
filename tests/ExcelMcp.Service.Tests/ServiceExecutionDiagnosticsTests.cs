@@ -10,6 +10,40 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelMcpServiceErrorTests
 {
     [Theory]
+    [InlineData(false, unchecked((int)0x800A03EC), "ComInterop", false)]
+    [InlineData(true, unchecked((int)0x800A03EC), "ComInterop", true)]
+    [InlineData(true, unchecked((int)0x80010108), "ExcelDisconnected", true)]
+    public async Task ProcessAsync_WorkbookSecurityUncertaintyControlsBatchContinuation(
+        bool postDispatch, int hresult, string expectedCategory, bool mustStop)
+    {
+        using var service = new ExcelMcpService();
+        var cause = CreateDiagnosticSnapshotFailure(hresult);
+        const string message = "Synthetic workbook security transition failure.";
+        var batch = new FakeBatch
+        {
+            ExecuteException = postDispatch
+                ? new WorkbookSecurityCompletionUnconfirmedException(message, cause)
+                : new InvalidOperationException(message, cause)
+        };
+        const string sessionId = "security-outcome-diagnostics";
+        RegisterSession(service, sessionId, batch);
+
+        // Feed a typed exception into the shared service error boundary without a live workbook.
+        const string command = "sheet.list";
+        var response = await service.ProcessAsync(new ServiceRequest { Command = command, SessionId = sessionId });
+        var outcome = ResultJson.Read(response.Result, command, response.Success,
+            response.ErrorMessage, response.ErrorCategory, response.SessionId, response.ExceptionType,
+            response.HResult, response.InnerError, response.PartialState);
+
+        Assert.False(response.Success);
+        Assert.Equal(expectedCategory, response.ErrorCategory);
+        Assert.Equal($"0x{hresult:X8}", response.HResult);
+        Assert.Contains(cause.Message, response.InnerError);
+        Assert.Equal(mustStop ? "unknown" : null, outcome.PartialState?["outcome"]?.GetValue<string>());
+        Assert.Equal(mustStop, outcome.CompletionUnconfirmed);
+    }
+
+    [Theory]
     [InlineData(unchecked((int)0x800A03EC), "ComInterop")]
     [InlineData(unchecked((int)0x80010108), "ExcelDisconnected")]
     public async Task ProcessAsync_PostMutationFailureRetainsUnknownOutcomeAndNativeCause(int hresult, string expectedCategory)
