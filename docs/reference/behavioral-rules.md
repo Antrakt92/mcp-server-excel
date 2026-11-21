@@ -72,9 +72,9 @@ See [window management](window.md#visibility-and-placement).
 - Report what actually succeeded, the saved file when relevant, and any remaining
   failure. Do not present an attempted action as a completed result.
 
-For an append or save that must be recoverable after a timeout, put a fresh UUID
-in the batch entry's `operationId`, beside `command` and `sessionId`. Use it only
-once. The two tracked commands are `table.append` and `session.save`.
+To track the outcome of `table.append`, `session.save`, or `vba.invoke`, put a
+fresh UUID in the batch entry's `operationId`, beside `command` and `sessionId`.
+Use it only once.
 
 After losing a reply, look up the same UUID and session with MCP `file_read`
 action `operation-result` (`operation_id`, `workbook_session_id`) or
@@ -84,7 +84,10 @@ A receipt is `pending` while the host waits for the original operation,
 failed after its table expansion was verified, or `failed` when the operation
 returned another error. Failure can leave workbook changes. `unknown` means the host has no
 confirmed result. Inspect the affected workbook before sending a replacement
-command. A completed append can still require a separate save.
+command. A completed append can still require a separate save. A completed
+VBA invocation confirms the result of the macro call. Verify the intended
+workbook effects separately. If the formatted result exceeds 8 KiB, the receipt
+omits `result` and retains the completion state.
 
 Up to 128 receipts live in the original host's memory for 15 minutes after completion.
 The host rejects a duplicate UUID while it is retained. After a restart or

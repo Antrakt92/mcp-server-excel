@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Commands.Table;
 using Sbroenne.ExcelMcp.Core.Models;
 using Xunit;
@@ -146,6 +148,112 @@ public sealed class OperationReceiptsTests
         Assert.Equal(7, append.GetProperty("expectedRowCount").GetInt32());
         Assert.Equal(expansionVerified, append.GetProperty("expansionVerified").GetBoolean());
         Assert.False(append.GetProperty("valueWriteAttempted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task LateVbaInvokeRetainsTheOriginalTypedResult()
+    {
+        const string session = "target";
+        using var service = new ExcelMcpService();
+        var completion = new TaskCompletionSource<VbaInvokeResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var request = new ServiceRequest
+        {
+            Command = "vba.invoke",
+            SessionId = session,
+            LateNativeCompletion = completion.Task
+        };
+        var receipts = new OperationReceipts();
+        var id = Guid.NewGuid();
+        Assert.Equal(OperationReceipts.Admission.Accepted,
+            receipts.TryBegin(id, request.Command, session, out var operation));
+        var response = service.ResolveLateNativeResponseAsync(request);
+        Assert.False(response.IsCompleted);
+        Assert.Equal("pending", Lookup(receipts, id, session).GetProperty("state").GetString());
+
+        completion.SetResult(new VbaInvokeResult
+        {
+            Success = true,
+            Action = "invoke",
+            ReturnKind = "array",
+            Values = [[false, 0], ["sample", null]]
+        });
+        receipts.Complete(operation, Assert.IsType<ServiceResponse>(await response));
+
+        var receipt = Lookup(receipts, id, session);
+        Assert.Equal("completed", receipt.GetProperty("state").GetString());
+        Assert.Equal("vba.invoke", receipt.GetProperty("command").GetString());
+        var result = receipt.GetProperty("result");
+        Assert.Equal("array", result.GetProperty("returnKind").GetString());
+        var values = result.GetProperty("values");
+        Assert.False(values[0][0].GetBoolean());
+        Assert.Equal(0, values[0][1].GetInt32());
+        Assert.Equal("sample", values[1][0].GetString());
+        Assert.Equal(JsonValueKind.Null, values[1][1].ValueKind);
+        Assert.Equal("unknown", Lookup(receipts, id, "different-session").GetProperty("state").GetString());
+        Assert.Equal(OperationReceipts.Admission.Duplicate,
+            receipts.TryBegin(id, request.Command, session, out _));
+    }
+
+    [Fact]
+    public async Task LateVbaDisconnectLeavesTheReceiptUnknown()
+    {
+        const string session = "target";
+        using var service = new ExcelMcpService();
+        var request = new ServiceRequest
+        {
+            Command = "vba.invoke",
+            SessionId = session,
+            LateNativeCompletion = Task.FromException<VbaInvokeResult>(
+                Marshal.GetExceptionForHR(ResiliencePipelines.RPC_E_CALL_FAILED, new IntPtr(-1))!)
+        };
+        var receipts = new OperationReceipts();
+        var id = Guid.NewGuid();
+        Assert.Equal(OperationReceipts.Admission.Accepted,
+            receipts.TryBegin(id, request.Command, session, out var operation));
+
+        var response = Assert.IsType<ServiceResponse>(await service.ResolveLateNativeResponseAsync(request));
+        receipts.Complete(operation, response);
+
+        var receipt = Lookup(receipts, id, session);
+        Assert.Equal("unknown", receipt.GetProperty("state").GetString());
+        var result = receipt.GetProperty("result");
+        Assert.False(result.GetProperty("success").GetBoolean());
+        Assert.Equal("ExcelDisconnected", result.GetProperty("errorCategory").GetString());
+        Assert.Equal("0x800706BE", result.GetProperty("hresult").GetString());
+    }
+
+    [Fact]
+    public async Task LateVbaInvokeKeepsCompletionWhenTheReturnExceedsTheReceiptBudget()
+    {
+        const string session = "target";
+        using var service = new ExcelMcpService();
+        var value = new string('\u00E9', 5000);
+        var request = new ServiceRequest
+        {
+            Command = "vba.invoke",
+            SessionId = session,
+            LateNativeCompletion = Task.FromResult(new VbaInvokeResult
+            {
+                Success = true,
+                Action = "invoke",
+                ReturnKind = "string",
+                Value = value
+            })
+        };
+        var receipts = new OperationReceipts();
+        var id = Guid.NewGuid();
+        Assert.Equal(OperationReceipts.Admission.Accepted,
+            receipts.TryBegin(id, request.Command, session, out var operation));
+        var response = Assert.IsType<ServiceResponse>(await service.ResolveLateNativeResponseAsync(request));
+        using var payload = JsonDocument.Parse(response.Result!);
+        Assert.Equal(value, payload.RootElement.GetProperty("value").GetString());
+
+        receipts.Complete(operation, response);
+
+        var receipt = Lookup(receipts, id, session);
+        Assert.Equal("completed", receipt.GetProperty("state").GetString());
+        Assert.False(receipt.TryGetProperty("result", out _));
+        Assert.DoesNotContain(value, receipt.GetRawText(), StringComparison.Ordinal);
     }
 
     private static JsonElement Lookup(OperationReceipts receipts, Guid id, string sessionId)

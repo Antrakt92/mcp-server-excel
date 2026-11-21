@@ -454,6 +454,8 @@ public sealed class ExcelMcpService : IDisposable
             // Only these commands execute one native callback after the write-access preflight.
             if (request.Command == "table.append" && request.LateNativeCompletion is Task<OperationResult> append)
                 return WrapResult(JsonSerializer.Serialize(await append.ConfigureAwait(false), ServiceProtocol.JsonOptions));
+            if (request.Command == "vba.invoke" && request.LateNativeCompletion is Task<VbaInvokeResult> invoke)
+                return WrapResult(JsonSerializer.Serialize(await invoke.ConfigureAwait(false), ServiceProtocol.JsonOptions));
             if (request.Command == "session.save" && request.LateNativeCompletion is Task<int> save)
             {
                 await save.ConfigureAwait(false);
@@ -495,7 +497,7 @@ public sealed class ExcelMcpService : IDisposable
         ["approved"] = "true only after explicit approval of this action on the selected workbook",
         ["allowRememberedTrust"] = "true only after approval that Excel can remember this file as trusted",
         ["allowReopen"] = "true only after separate approval to close and reopen the saved workbook; opening macros can run",
-        ["operationId"] = "UUID from a tracked table.append or session.save request",
+        ["operationId"] = "UUID from a tracked table.append, session.save, or vba.invoke request",
     };
 
     internal static void ValidateSessionActionArguments(string action, string? argsJson)

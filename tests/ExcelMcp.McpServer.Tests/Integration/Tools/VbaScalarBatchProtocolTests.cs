@@ -12,12 +12,26 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Integration.Tools;
 public sealed class VbaScalarBatchProtocolTests(RecordingProgramTransportFixture fixture)
 {
     [Fact]
+    public async Task Discovery_AdvertisesVbaInvokeReceipts()
+    {
+        var tools = await fixture.ListToolsAsync();
+        var batch = Assert.Single(tools, tool => tool.Name == "batch");
+        var receipt = batch.JsonSchema.GetProperty("properties").GetProperty("commands")
+            .GetProperty("items").GetProperty("properties").GetProperty("operationId");
+        Assert.Contains("vba.invoke", receipt.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("vba.invoke", batch.Description, StringComparison.Ordinal);
+        var lookup = Assert.Single(tools, tool => tool.Name == "file_read");
+        Assert.Contains("vba.invoke", lookup.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Run_InvokePreservesNativeJsonScalarKindsAndFalseReturn()
     {
         using var commands = JsonDocument.Parse(
             """
             [{
               "command":"vba.invoke",
+              "operationId":"8e0069aa-50b3-4f53-9ced-afde748da73f",
               "args":{
                 "procedureName":"ScalarProbe",
                 "arguments":[
@@ -46,6 +60,7 @@ public sealed class VbaScalarBatchProtocolTests(RecordingProgramTransportFixture
             """
             {"procedureName":"ScalarProbe","arguments":[{"type":"number","value":-12.5},{"type":"boolean","value":false},{"type":"string","value":"=literal"},{"type":"null","value":null},{"type":"missing"}]}
             """);
+        Assert.Equal("8e0069aa-50b3-4f53-9ced-afde748da73f", Assert.Single(call.Requests).OperationId);
 
         Assert.False(call.Result.IsError == true);
         using var output = JsonDocument.Parse(

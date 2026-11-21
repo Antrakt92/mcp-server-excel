@@ -95,7 +95,7 @@ internal sealed class ExcelController : IDisposable
 
         if (!OperationReceipts.IsValidSessionId(request.SessionId))
             return ExcelWorkerHost.Failure(request, "InvalidInput",
-                "operationId requires a session and command table.append or session.save.");
+                "operationId requires a session and one of table.append, session.save, or vba.invoke.");
         Guid id;
         try
         {

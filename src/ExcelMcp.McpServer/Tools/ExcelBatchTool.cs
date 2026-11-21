@@ -34,9 +34,9 @@ public sealed class BatchCommandEntry
     [Description("Optional session override for this entry, outside args.")]
     public string? SessionId { get; init; }
 
-    /// <summary>Optional UUID for a table.append or session.save operation receipt.</summary>
+    /// <summary>Optional UUID for the receipt of a table.append, session.save, or vba.invoke operation.</summary>
     [JsonPropertyName("operationId")]
-    [Description("Optional caller-generated UUID for table.append or session.save. Query file_read operation-result for its outcome if the reply is lost. Use only once.")]
+    [Description("Optional caller-generated UUID for table.append, session.save, or vba.invoke. Query file_read operation-result for its outcome if the reply is lost. Use only once.")]
     public string? OperationId { get; init; }
 
     /// <summary>Command arguments using Service camelCase keys, not MCP snake_case inputs or CLI flags.</summary>
@@ -64,7 +64,7 @@ public static partial class ExcelBatchTool
     /// Other returned values are not substituted. Use individual tools when later steps need inspection.
     /// Continues after errors by default; set stop_on_error:true for dependent steps.
     /// Timeouts, cancellation, and reported unknown completion always stop further commands, because Excel work may still be running.
-    /// For table.append or session.save, supply a caller-generated operationId outside args to track its outcome.
+    /// For table.append, session.save, or vba.invoke, supply a caller-generated operationId outside args to track its outcome.
     /// After an uncertain response, query file_read operation-result with that UUID and the same workbook session.
     /// After 8 MiB of result JSON, the batch keeps the last result intact and stops before another command.
     /// If commands remain, the reply reports stopReason:result-budget. Inspect the returned results before continuing.

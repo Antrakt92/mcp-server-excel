@@ -16,7 +16,7 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly Dictionary<Guid, Operation> _entries = [];
 
-    internal static bool Supports(string command) => command is "table.append" or "session.save";
+    internal static bool Supports(string command) => command is "table.append" or "session.save" or "vba.invoke";
 
     internal static bool IsValidSessionId(string? sessionId) =>
         sessionId is { Length: <= 128 } && !string.IsNullOrWhiteSpace(sessionId);
@@ -24,7 +24,7 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
     internal static Guid ValidateTracking(string command, string id)
     {
         if (!Supports(command))
-            throw new ArgumentException("operationId is supported for table.append and session.save.");
+            throw new ArgumentException("operationId is supported for table.append, session.save, and vba.invoke.");
         return ParseId(id);
     }
 

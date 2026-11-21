@@ -98,7 +98,7 @@ public static partial class ExcelFileTool
     /// URLs report unavailable local file details without opening Excel; use open to check access.
     /// Remote existence, size and IRM protection cannot be established by local preflight;
     /// false exists/isIrmProtected values do not prove absence or lack of protection.
-    /// operation-result looks up a tracked table.append or session.save command without calling Excel.
+    /// operation-result looks up a tracked table.append, session.save, or vba.invoke command without calling Excel.
     /// Results are pending, completed, partially-applied, failed, or unknown. Receipts are retained in the same host for 15 minutes after completion.
     /// If the result is unknown, inspect the workbook before repeating the command.
     /// compare-packages compares two saved XLSX/XLSM files without opening Excel.

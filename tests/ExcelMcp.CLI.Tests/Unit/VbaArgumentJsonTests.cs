@@ -13,6 +13,35 @@ namespace Sbroenne.ExcelMcp.CLI.Tests.Unit;
 [Collection("Sequential")]
 public sealed class VbaArgumentJsonTests
 {
+    [Fact]
+    public async Task BatchInvoke_ForwardsReceiptIdOutsideTheVbaArguments()
+    {
+        const string id = "8e0069aa-50b3-4f53-9ced-afde748da73f";
+        var requests = new List<ServiceRequest>();
+        var result = await InProcessCliHelper.RunAsync(["batch", "--session", "owned"], request =>
+        {
+            requests.Add(request);
+            return new ServiceResponse
+            {
+                Success = true,
+                Result = """{"success":true,"returnKind":"boolean","value":false}"""
+            };
+        }, $$$"""
+            {"command":"vba.invoke","operationId":"{{{id}}}","args":{"procedureName":"Probe.Check"}}
+            """);
+
+        Assert.Equal(0, result.ExitCode);
+        var sent = Assert.Single(requests);
+        Assert.Equal("vba.invoke", sent.Command);
+        Assert.Equal("owned", sent.SessionId);
+        Assert.Equal(id, sent.OperationId);
+        using var args = JsonDocument.Parse(sent.Args!);
+        Assert.Equal("Probe.Check", args.RootElement.GetProperty("procedureName").GetString());
+        Assert.False(args.RootElement.TryGetProperty("operationId", out _));
+        using var output = JsonDocument.Parse(result.Stdout);
+        Assert.False(output.RootElement.GetProperty("data").GetProperty("value").GetBoolean());
+    }
+
     [Theory]
     [InlineData("type", "value")]
     [InlineData("Type", "Value")]
