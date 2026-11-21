@@ -982,7 +982,7 @@ public sealed partial class ExcelMcpServiceErrorTests
                 IsAlive = false;
             if (RefreshException is { } error)
                 throw error;
-            return HasTimedOutOperation ? WorkbookRefreshState.Busy : WorkbookRefreshState.Ready;
+            return RefreshState ?? (HasTimedOutOperation ? WorkbookRefreshState.Busy : WorkbookRefreshState.Ready);
         }
         public string WorkbookPath { get; init; } = Path.Combine(Path.GetTempPath(), $"fake-batch-{Guid.NewGuid():N}.xlsx");
         public Microsoft.Extensions.Logging.ILogger Logger { get; } = NullLogger.Instance;
@@ -992,6 +992,7 @@ public sealed partial class ExcelMcpServiceErrorTests
         public bool IsAliveAfterSaveException { get; init; } = true;
         public bool IsAliveAfterExecuteException { get; init; } = true;
         public bool ExitDuringRefresh { get; init; }
+        public WorkbookRefreshState? RefreshState { get; init; }
         public ExcelNativeProcessObservation? ProcessObservation { get; set; }
         public ExcelNativeProcessObservation? ProcessObservationAfterDeathCheck { get; init; }
         public Exception? ExecuteException { get; init; }

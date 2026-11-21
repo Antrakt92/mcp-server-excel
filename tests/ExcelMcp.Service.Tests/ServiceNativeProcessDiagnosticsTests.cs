@@ -263,6 +263,57 @@ public sealed partial class ExcelMcpServiceErrorTests
         Assert.Equal(17u, native.GetProperty("exitCode").GetUInt32());
     }
 
+    [Theory]
+    [InlineData("Alive")]
+    [InlineData("Exited")]
+    [InlineData("Indeterminate")]
+    [InlineData(null)]
+    public async Task ProcessAsync_CloseWithUnknownReadiness_ReportsUnconfirmedOutcome(string? stateName)
+    {
+        using var service = new ExcelMcpService();
+        var batch = new FakeBatch
+        {
+            RefreshState = WorkbookRefreshState.Unknown,
+            ExitDuringRefresh = stateName == "Exited",
+            ProcessObservation = stateName is null ? null : new(
+                new(123, 456), Enum.Parse<ExcelNativeProcessState>(stateName),
+                stateName == "Exited" ? 17u : null, stateName == "Indeterminate" ? 5 : null)
+        };
+        const string sessionId = "close-with-unknown-readiness";
+        RegisterSession(service, sessionId, batch);
+
+        var response = await service.ProcessAsync(new ServiceRequest
+        {
+            Command = "session.close",
+            SessionId = sessionId,
+            Args = """{"save":true}"""
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal("Busy", response.ErrorCategory);
+        Assert.Equal("ExcelBusyException", response.ExceptionType);
+        Assert.Equal("session.close", response.Command);
+        Assert.Equal(sessionId, response.SessionId);
+        Assert.Contains("refresh state could not be confirmed", response.ErrorMessage);
+        Assert.DoesNotContain("workbook remains open", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("session list", response.ErrorMessage);
+        Assert.Contains("file_read", response.ErrorMessage);
+        Assert.Equal(0, batch.SaveCalls);
+        Assert.Equal(0, batch.DisposeCalls);
+        Assert.Contains(sessionId, service.SessionManager.ActiveSessionIds);
+
+        using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+        Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+        if (stateName is null)
+        {
+            Assert.False(state.RootElement.TryGetProperty("diagnostics", out _));
+            return;
+        }
+        var native = AssertNativeDiagnosticsIdentity(state, stateName);
+        Assert.Equal(stateName == "Exited" ? 17u : (uint?)null, native.GetProperty("exitCode").Deserialize<uint?>());
+        Assert.Equal(stateName == "Indeterminate" ? 5 : (int?)null, native.GetProperty("nativeError").Deserialize<int?>());
+    }
+
 #pragma warning disable CA2201 // Simulates a COM error from the readiness scan without starting Excel.
     private static COMException NewReadinessComError() =>
         new("Synthetic readiness scan COM error.", unchecked((int)0x800706BE));

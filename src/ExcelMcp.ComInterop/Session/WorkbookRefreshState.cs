@@ -17,6 +17,8 @@ internal interface IExcelBatchRefreshState
 internal sealed class ExcelBusyException(string message, Exception? innerException = null)
     : InvalidOperationException(message, innerException)
 {
+    internal bool CloseOutcomeUnconfirmed { get; init; }
+
     internal const string DialogGuidance =
         "Excel is waiting for input in a dialog. Check the Excel window and ask the user to respond there. " +
         "ExcelMcp does not identify the dialog type, answer, or dismiss it.";
@@ -45,6 +47,13 @@ internal sealed class ExcelBusyException(string message, Exception? innerExcepti
             WorkbookRefreshState.DialogOpen => GetDialogGuidance(windowControl),
             _ => "Excel's refresh state could not be confirmed."
         };
+        if (state == WorkbookRefreshState.Unknown && operation == "close")
+        {
+            throw new ExcelBusyException($"Cannot close: {reason} The workbook and save state are unconfirmed.")
+            {
+                CloseOutcomeUnconfirmed = true
+            };
+        }
         throw new ExcelBusyException(
             $"Cannot {operation}: {reason} Changes have not been saved or discarded; the workbook remains open. " +
             "Check the session again after the dialog or operation finishes, then retry.");
