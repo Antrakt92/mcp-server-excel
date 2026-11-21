@@ -23,7 +23,7 @@ internal static class BatchHelp
                 command    Required group.action, for example "range.set-values".
                 args       Object required when the action needs arguments.
                 sessionId  Optional session override for this entry, outside args.
-                operationId  Optional fresh UUID for table.append or session.save, outside args.
+                operationId  Optional fresh UUID for table.append, session.save, or vba.invoke, outside args.
               Argument names are case-sensitive: use sheetName and rangeAddress,
               not the CLI aliases sheet and range. Supply arrays and objects as
               JSON values, not strings containing JSON. For exact keys, run:

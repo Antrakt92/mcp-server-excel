@@ -88,9 +88,9 @@ or macro. Follow the recovery checks below while the operation is uncertain.
 
 Cancellation and timeout stop waiting; Excel's work may continue. Check the Excel window and discover/list sessions before retrying. Do not assume the operation failed, undo partial changes automatically, or close a workbook as cleanup. If the host exits, unsaved workbooks may remain open and visible and attached workbooks stay untouched, following upstream 2.6.0 ownership rules. Pending work can remain in a retained worker; inspect its reported state using the matching build before retrying. Changing binaries does not finish, reverse or authorize cleanup of that work. AutoSave may already have saved changes independently.
 
-After a VBA timeout, check `operationPending` in `file_read list`. Once Excel
-is ready again, read back the expected workbook effects before deciding whether
-to rerun. `operation-result` receipts cover `table.append` and `session.save`.
+After a VBA timeout, look up the receipt if `vba.invoke` was sent with a batch
+`operationId`. Check `operationPending` in `file_read list`. Once Excel is ready
+again, read back the expected workbook effects before deciding whether to rerun.
 Forced cleanup fails a native test run. Use the macro result and workbook
 read-back to verify successful execution.
 
