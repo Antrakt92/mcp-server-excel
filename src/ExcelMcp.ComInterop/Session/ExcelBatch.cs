@@ -1750,7 +1750,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         }
     }
 
-    public void Save(CancellationToken cancellationToken = default)
+    public void Save(CancellationToken cancellationToken = default) => Save(cancellationToken, observeSave: false);
+
+    internal void Save(CancellationToken cancellationToken, bool observeSave)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
@@ -1782,7 +1784,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 _workbook!,
                 Path.GetFileName(_workbookPath),
                 _logger,
-                ct);
+                ct,
+                observeSave);
             return 0;
         }, cancellationToken);
     }

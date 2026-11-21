@@ -65,13 +65,17 @@ public static class ExcelShutdownService
     /// <exception cref="OperationCanceledException">Cancellation was requested before save started</exception>
     /// <exception cref="ExcelBusyException">Excel rejected the final save because it is busy</exception>
     /// <exception cref="InvalidOperationException">Save failed due to unexpected error</exception>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "Only bounded retries consume Excel's generic save error. Exhaustion reaches the enclosing COM catch, which throws with the original COM exception; no save failure becomes success.")]
     public static void SaveWorkbookWithTimeout(
         Excel.Workbook workbook,
         string? fileName = null,
         ILogger? logger = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        SaveWorkbookWithTimeout(workbook, fileName, logger, cancellationToken, observeSave: false);
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Only bounded retries consume Excel's generic save error. Exhaustion reaches the enclosing COM catch, which throws with the original COM exception; no save failure becomes success.")]
+    internal static void SaveWorkbookWithTimeout(
+        Excel.Workbook workbook, string? fileName, ILogger? logger, CancellationToken cancellationToken, bool observeSave)
     {
         logger ??= NullLogger.Instance;
         fileName ??= "unknown";
@@ -117,12 +121,19 @@ public static class ExcelShutdownService
                         ComUtilities.Release(ref application);
                     }
                     BeforeSaveHookForTests?.Invoke();
-                    workbook.Save();
-                    if (!workbook.Saved)
+                    if (observeSave)
                     {
-                        throw new InvalidOperationException(
-                            $"Workbook '{fileName}' was not saved. Excel cancelled the save or left unsaved changes. " +
-                            "Changes remain in the open workbook; inspect its state before retrying.");
+                        SaveAndObserve(workbook, fileName, logger);
+                    }
+                    else
+                    {
+                        workbook.Save();
+                        if (!workbook.Saved)
+                        {
+                            throw new InvalidOperationException(
+                                $"Workbook '{fileName}' was not saved. Excel cancelled the save or left unsaved changes. " +
+                                "Changes remain in the open workbook; inspect its state before retrying.");
+                        }
                     }
                     logger.LogDebug("Workbook {FileName} saved successfully", fileName);
                     return; // Success — exit method
@@ -146,6 +157,83 @@ public static class ExcelShutdownService
             throw CreateSaveFailureException(ex, fileName);
         }
         // All other exceptions propagate; no generic catch block.
+    }
+
+    private static void SaveAndObserve(Excel.Workbook workbook, string fileName, ILogger logger)
+    {
+        Excel.WorkbookEvents_AfterSaveEventHandler? afterSave = null;
+        SaveAndObserve(callback =>
+        {
+            afterSave = new Excel.WorkbookEvents_AfterSaveEventHandler(callback);
+            workbook.AfterSave += afterSave;
+        }, () => workbook.AfterSave -= afterSave, () => workbook.Save(), () => workbook.Saved, fileName, logger);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "The optional AfterSave event sink can fail to attach or detach. Report that diagnostic separately, retain the existing Save and Saved checks, and let every workbook operation failure propagate.")]
+    internal static void SaveAndObserve(
+        Action<Action<bool>> subscribe, Action unsubscribe,
+        Action save, Func<bool> readSaved, string fileName, ILogger logger)
+    {
+        bool? reported = null;
+        string? observationError = null;
+        var observing = false;
+        var subscribed = false;
+        bool? saved = null;
+        Exception? failureAfterReportedSave = null;
+        // This workbook's event can report a save in a nested native callback too.
+        try
+        {
+            try
+            {
+                subscribe(success =>
+                {
+                    if (observing)
+                        reported = success || reported == true;
+                });
+                subscribed = true;
+            }
+            catch (Exception ex) when (ex is COMException or InvalidComObjectException or InvalidCastException or NotSupportedException)
+            {
+                observationError = ReportSaveObservationError(logger, "attach", ex);
+            }
+            observing = subscribed;
+            save();
+            observing = false;
+            saved = readSaved();
+        }
+        catch (Exception ex) when (reported == true && ex is COMException or InvalidComObjectException)
+        {
+            // The write may already have happened. Keep the native error and bypass the save retry loop.
+            failureAfterReportedSave = ex;
+        }
+        finally
+        {
+            observing = false;
+            if (subscribed)
+            {
+                try
+                {
+                    unsubscribe();
+                }
+                catch (Exception ex) when (ex is COMException or InvalidComObjectException or InvalidCastException or NotSupportedException)
+                {
+                    observationError = ReportSaveObservationError(logger, "detach", ex);
+                }
+            }
+        }
+        if (saved != true)
+        {
+            throw new WorkbookSaveIncompleteException(fileName, reported, observationError,
+                hasUnsavedChanges: saved == false ? true : null, innerException: failureAfterReportedSave);
+        }
+    }
+
+    private static string ReportSaveObservationError(ILogger logger, string verb, Exception error)
+    {
+        var message = $"Could not {verb} the native AfterSave observer ({error.GetType().Name}, 0x{error.HResult:X8}).";
+        logger.LogWarning("{AfterSaveObservationError}", message);
+        return message;
     }
 
     internal static Exception CreateSaveFailureException(COMException exception, string fileName)

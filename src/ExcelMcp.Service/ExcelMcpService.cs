@@ -435,7 +435,12 @@ public sealed class ExcelMcpService : IDisposable
     private ServiceResponse HandleSessionSave(ServiceRequest request) =>
         WithSessionAsync(request, batch =>
         {
-            batch.Save();
+            if (batch is ExcelBatch owned)
+                owned.Save(default, observeSave: true);
+            else if (batch is AttachedWorkbookBatch attached)
+                attached.Save(default, observeSave: true);
+            else
+                batch.Save();
             return SavedResponse(request.SessionId);
         }).GetAwaiter().GetResult();
 
@@ -1380,12 +1385,29 @@ public sealed class ExcelMcpService : IDisposable
     private static string? MergeExecutionDiagnostics(string? partialState, Exception error)
     {
         var found = ExcelExecutionFailureContext.TryFind(error, out var context, out var complete);
-        if (!found && complete)
+        var save = FindOperationException<WorkbookSaveIncompleteException>(error);
+        if (!found && complete && save is null)
             return partialState;
 
         var state = partialState is null
             ? new System.Text.Json.Nodes.JsonObject()
             : System.Text.Json.Nodes.JsonNode.Parse(partialState)!.AsObject();
+        if (save is not null)
+        {
+            var saveEvidence = new System.Text.Json.Nodes.JsonObject
+            {
+                ["hasUnsavedChanges"] = save.HasUnsavedChanges is { } dirty
+                    ? System.Text.Json.Nodes.JsonValue.Create(dirty) : null,
+                ["excelReportedSaveSucceeded"] = save.ExcelReportedSaveSucceeded is { } reported
+                    ? System.Text.Json.Nodes.JsonValue.Create(reported) : null
+            };
+            if (save.ObservationError is not null)
+                saveEvidence["observationError"] = save.ObservationError;
+            state["save"] = saveEvidence;
+        }
+        if (!found && complete)
+            return state.ToJsonString(ServiceProtocol.JsonOptions);
+
         var diagnostics = state["diagnostics"] as System.Text.Json.Nodes.JsonObject;
         if (diagnostics is null)
         {
