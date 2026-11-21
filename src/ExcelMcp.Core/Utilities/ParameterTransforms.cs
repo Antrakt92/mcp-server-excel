@@ -150,7 +150,7 @@ public static class ParameterTransforms
     // === Options Object Construction ===
 
     /// <summary>
-    /// Resolves values from either an inline 2D array or a file path.
+    /// Resolves values from either a nonempty inline 2D array or a file path.
     /// Supports JSON files (2D array format) and CSV files (rows/columns).
     /// File format is auto-detected from extension (.json → JSON, anything else → CSV).
     /// </summary>
@@ -158,12 +158,15 @@ public static class ParameterTransforms
     /// <param name="valuesFile">Path to JSON or CSV file containing values</param>
     /// <param name="parameterName">Parameter name for error messages</param>
     /// <returns>Resolved 2D array of values</returns>
-    /// <exception cref="ArgumentException">Neither values nor valuesFile provided</exception>
+    /// <exception cref="ArgumentException">Conflicting sources, missing input, or invalid rows</exception>
     /// <exception cref="FileNotFoundException">File not found</exception>
     public static List<List<object?>> ResolveValuesOrFile(List<List<object?>>? values, string? valuesFile, string parameterName = "values")
     {
-        if (values != null && values.Count > 0)
-            return values;
+        if (values is { Count: > 0 })
+        {
+            RejectFileForInlineInput(valuesFile, parameterName);
+            return ValidateMatrixRows(values, parameterName);
+        }
 
         if (string.IsNullOrWhiteSpace(valuesFile))
             throw new ArgumentException($"Either {parameterName} or {parameterName}File must be provided for set-values action", parameterName);
@@ -178,7 +181,9 @@ public static class ParameterTransforms
             try
             {
                 var parsed = JsonSerializer.Deserialize<List<List<object?>>>(content, s_jsonOptions);
-                return parsed ?? throw new ArgumentException($"JSON file '{valuesFile}' deserialized to null");
+                return ValidateMatrixRows(
+                    parsed ?? throw new ArgumentException($"JSON file '{valuesFile}' deserialized to null"),
+                    parameterName);
             }
             catch (JsonException ex)
             {
@@ -205,8 +210,11 @@ public static class ParameterTransforms
     /// <returns>Resolved 2D array of formulas</returns>
     public static List<List<string>> ResolveFormulasOrFile(List<List<string>>? formulas, string? formulasFile, string parameterName = "formulas")
     {
-        if (formulas != null && formulas.Count > 0)
-            return formulas;
+        if (formulas is { Count: > 0 })
+        {
+            RejectFileForInlineInput(formulasFile, parameterName);
+            return ValidateMatrixRows(formulas, parameterName);
+        }
 
         if (string.IsNullOrWhiteSpace(formulasFile))
             throw new ArgumentException($"Either {parameterName} or {parameterName}File must be provided for set-formulas action", parameterName);
@@ -218,7 +226,9 @@ public static class ParameterTransforms
         try
         {
             var parsed = JsonSerializer.Deserialize<List<List<string>>>(content, s_jsonOptions);
-            return parsed ?? throw new ArgumentException($"JSON file '{formulasFile}' deserialized to null");
+            return ValidateMatrixRows(
+                parsed ?? throw new ArgumentException($"JSON file '{formulasFile}' deserialized to null"),
+                parameterName);
         }
         catch (JsonException ex)
         {
@@ -238,12 +248,15 @@ public static class ParameterTransforms
     /// <param name="formulasFile">Path to JSON file containing formula cells</param>
     /// <param name="parameterName">Parameter name for error messages</param>
     /// <returns>Resolved 2D array of formula text</returns>
-    /// <exception cref="ArgumentException">Neither input provided, invalid JSON, or an unsupported cell</exception>
+    /// <exception cref="ArgumentException">Conflicting sources, missing input, invalid JSON, or an unsupported cell</exception>
     /// <exception cref="FileNotFoundException">File not found</exception>
     public static List<List<string>> ResolveFormulaCellsOrFile(List<List<object?>>? formulas, string? formulasFile, string parameterName = "formulas")
     {
-        if (formulas != null && formulas.Count > 0)
+        if (formulas is { Count: > 0 })
+        {
+            RejectFileForInlineInput(formulasFile, parameterName);
             return NormalizeFormulaCells(formulas, parameterName);
+        }
 
         if (string.IsNullOrWhiteSpace(formulasFile))
             throw new ArgumentException($"Either {parameterName} or {parameterName}File must be provided", parameterName);
@@ -267,6 +280,16 @@ public static class ParameterTransforms
         return NormalizeFormulaCells(
             parsed ?? throw new ArgumentException($"JSON file '{formulasFile}' deserialized to null", parameterName),
             parameterName);
+    }
+
+    private static List<List<T>> ValidateMatrixRows<T>(List<List<T>> rows, string parameterName)
+    {
+        for (int row = 0; row < rows.Count; row++)
+        {
+            if (rows[row] is null)
+                throw new ArgumentException($"{parameterName}[{row}] must be an array of cells, not null.", parameterName);
+        }
+        return rows;
     }
 
     private static List<List<string>> NormalizeFormulaCells(List<List<object?>> rows, string parameterName)
@@ -359,8 +382,13 @@ public static class ParameterTransforms
         string? filePath,
         string parameterName)
     {
-        if (!string.IsNullOrWhiteSpace(directValue) &&
-            !string.IsNullOrWhiteSpace(filePath))
+        if (!string.IsNullOrWhiteSpace(directValue))
+            RejectFileForInlineInput(filePath, parameterName);
+    }
+
+    private static void RejectFileForInlineInput(string? filePath, string parameterName)
+    {
+        if (!string.IsNullOrWhiteSpace(filePath))
         {
             throw new ArgumentException(
                 $"Provide either {parameterName} or {parameterName}File, not both.",

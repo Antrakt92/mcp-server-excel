@@ -38,7 +38,7 @@ public sealed class ParameterTransformsFileTests : IDisposable
         return path;
     }
 
-    // === ResolveValuesOrFile: Inline values take priority ===
+    // === ResolveValuesOrFile: Inline values and file selection ===
 
     [Fact]
     public void ResolveValuesOrFile_InlineValues_ReturnsInlineDirectly()
@@ -50,13 +50,16 @@ public sealed class ParameterTransformsFileTests : IDisposable
     }
 
     [Fact]
-    public void ResolveValuesOrFile_InlineValues_IgnoresFile()
+    public void ResolveValuesOrFile_InlineAndFile_RejectsBeforeReadingFile()
     {
         var inline = new List<List<object?>> { new() { "A" } };
-        // File doesn't even exist — should not matter
-        var result = ParameterTransforms.ResolveValuesOrFile(inline, @"C:\nonexistent\file.json");
+        var missingPath = Path.Combine(_tempDir, "missing.json");
 
-        Assert.Same(inline, result);
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveValuesOrFile(inline, missingPath, "rows"));
+
+        Assert.Equal("rows", error.ParamName);
+        Assert.Contains("rowsFile, not both", error.Message);
     }
 
     // === ResolveValuesOrFile: Neither provided ===
@@ -96,12 +99,14 @@ public sealed class ParameterTransformsFileTests : IDisposable
 
     // === ResolveValuesOrFile: JSON file ===
 
-    [Fact]
-    public void ResolveValuesOrFile_JsonFile_Parses2DArray()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveValuesOrFile_JsonFile_Parses2DArray(bool useEmptyInline)
     {
         var path = CreateTempFile("data.json", "[[1,2,3],[4,5,6]]");
 
-        var result = ParameterTransforms.ResolveValuesOrFile(null, path);
+        var result = ParameterTransforms.ResolveValuesOrFile(useEmptyInline ? [] : null, path);
 
         Assert.Equal(2, result.Count);
         Assert.Equal(3, result[0].Count);
@@ -131,6 +136,21 @@ public sealed class ParameterTransformsFileTests : IDisposable
         Assert.Null(result[0][1]);
         Assert.Null(result[1][0]);
         Assert.Null(result[1][2]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveValuesOrFile_NullRow_ReportsPosition(bool fromFile)
+    {
+        var path = fromFile ? CreateTempFile("null-row.json", "[[1],null]") : null;
+        List<List<object?>>? inline = fromFile ? null : [[1], null!];
+
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveValuesOrFile(inline, path, "rows"));
+
+        Assert.Equal("rows", error.ParamName);
+        Assert.Contains("rows[1] must be an array", error.Message);
     }
 
     [Fact]
@@ -261,7 +281,7 @@ public sealed class ParameterTransformsFileTests : IDisposable
         Assert.Contains("rowsFile", ex.Message);
     }
 
-    // === ResolveFormulasOrFile: Inline formulas take priority ===
+    // === ResolveFormulasOrFile: Inline formulas and file selection ===
 
     [Fact]
     public void ResolveFormulasOrFile_InlineFormulas_ReturnsInlineDirectly()
@@ -270,6 +290,18 @@ public sealed class ParameterTransformsFileTests : IDisposable
         var result = ParameterTransforms.ResolveFormulasOrFile(inline, null);
 
         Assert.Same(inline, result);
+    }
+
+    [Fact]
+    public void ResolveFormulasOrFile_InlineAndFile_RejectsBeforeReadingFile()
+    {
+        var missingPath = Path.Combine(_tempDir, "missing.json");
+
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveFormulasOrFile([["0.00"]], missingPath, "formats"));
+
+        Assert.Equal("formats", error.ParamName);
+        Assert.Contains("formatsFile, not both", error.Message);
     }
 
     // === ResolveFormulasOrFile: Neither provided ===
@@ -309,19 +341,36 @@ public sealed class ParameterTransformsFileTests : IDisposable
 
     // === ResolveFormulasOrFile: JSON file ===
 
-    [Fact]
-    public void ResolveFormulasOrFile_JsonFile_Parses2DStringArray()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveFormulasOrFile_JsonFile_Parses2DStringArray(bool useEmptyInline)
     {
         var json = "[[\"=A1+B1\",\"=C1*2\"],[\"=SUM(A:A)\",\"=AVERAGE(B:B)\"]]";
         var path = CreateTempFile("formulas.json", json);
 
-        var result = ParameterTransforms.ResolveFormulasOrFile(null, path);
+        var result = ParameterTransforms.ResolveFormulasOrFile(useEmptyInline ? [] : null, path);
 
         Assert.Equal(2, result.Count);
         Assert.Equal("=A1+B1", result[0][0]);
         Assert.Equal("=C1*2", result[0][1]);
         Assert.Equal("=SUM(A:A)", result[1][0]);
         Assert.Equal("=AVERAGE(B:B)", result[1][1]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveFormulasOrFile_NullRow_ReportsPosition(bool fromFile)
+    {
+        var path = fromFile ? CreateTempFile("null-row.json", "[[\"0.00\"],null]") : null;
+        List<List<string>>? inline = fromFile ? null : [["0.00"], null!];
+
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveFormulasOrFile(inline, path, "formats"));
+
+        Assert.Equal("formats", error.ParamName);
+        Assert.Contains("formats[1] must be an array", error.Message);
     }
 
     [Fact]
@@ -355,14 +404,28 @@ public sealed class ParameterTransformsFileTests : IDisposable
     private const string MixedFormulaCellsJson =
         "[[\"Label\", 5.86, true, null, \"=1+1\", false, 42, -1.5e3]]";
 
-    [Fact]
-    public void ResolveFormulaCellsOrFile_JsonFile_AcceptsNumbersBooleansAndNull()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveFormulaCellsOrFile_JsonFile_AcceptsNumbersBooleansAndNull(bool useEmptyInline)
     {
         var path = CreateTempFile("mixed.json", MixedFormulaCellsJson);
 
-        var result = ParameterTransforms.ResolveFormulaCellsOrFile(null, path);
+        var result = ParameterTransforms.ResolveFormulaCellsOrFile(useEmptyInline ? [] : null, path);
 
         Assert.Equal(s_mixedFormulaCellsExpected, Assert.Single(result));
+    }
+
+    [Fact]
+    public void ResolveFormulaCellsOrFile_InlineAndFile_RejectsBeforeReadingFile()
+    {
+        var missingPath = Path.Combine(_tempDir, "missing.json");
+
+        var error = Assert.Throws<ArgumentException>(
+            () => ParameterTransforms.ResolveFormulaCellsOrFile([["=1+1"]], missingPath));
+
+        Assert.Equal("formulas", error.ParamName);
+        Assert.Contains("formulasFile, not both", error.Message);
     }
 
     [Fact]
