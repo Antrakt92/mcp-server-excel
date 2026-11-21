@@ -46,6 +46,10 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         {
             commands = await ReadCommandsAsync(settings.InputFile, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return ReportCancellation();
+        }
         catch (JsonException ex)
         {
             var safeMessage = "Batch input is not valid JSON command data. " +
@@ -94,6 +98,9 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         var callerDirectory = Environment.CurrentDirectory;
         for (int i = 0; i < commands.Count; i++)
         {
+            if (cancellationToken.IsCancellationRequested)
+                return ReportCancellation();
+
             var cmd = commands[i];
             var command = canonicalCommands[i];
             var argsJson = cmd.Args.HasValue && cmd.Args.Value.ValueKind != JsonValueKind.Undefined
@@ -121,6 +128,9 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             validationDurations[i] = validationStopwatch.ElapsedMilliseconds;
         }
 
+        if (cancellationToken.IsCancellationRequested)
+            return ReportCancellation();
+
         if (validationErrors.Count == commands.Count ||
             (settings.StopOnError && validationErrors.ContainsKey(0)))
         {
@@ -137,13 +147,25 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
         }
 
         // Connect to daemon (auto-starts if needed)
-        using var client = await CliCommandRuntime.Current.ClientFactory.ConnectAsync(cancellationToken);
+        ICliRequestClient client;
+        try
+        {
+            client = await CliCommandRuntime.Current.ClientFactory.ConnectAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return ReportCancellation();
+        }
+        using var clientScope = client;
 
         string? activeSession = settings.SessionId;
         bool hasErrors = false;
 
         for (int i = 0; i < commands.Count; i++)
         {
+            if (cancellationToken.IsCancellationRequested)
+                return ReportCancellation(i + 1, commands.Count);
+
             var cmd = commands[i];
             var command = canonicalCommands[i];
             var itemTimer = Stopwatch.StartNew();
@@ -171,7 +193,16 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
 
             ServiceResponse response;
             CliCommandRuntime.Current.Error.WriteLine($"Batch {i + 1}/{commands.Count}: {cmd.Command} started.");
-            await CliCommandRuntime.Current.Error.FlushAsync(CancellationToken.None);
+            try
+            {
+                await CliCommandRuntime.Current.Error.FlushAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return ReportCancellation(i + 1, commands.Count);
+            }
+
             try
             {
                 response = await CliTelemetry.TrackCommandAsync(
@@ -282,8 +313,12 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
 
         if (string.IsNullOrEmpty(inputFile) || inputFile == "-")
         {
-            // Read from stdin
-            content = await CliCommandRuntime.Current.Input.ReadToEndAsync(cancellationToken);
+            var input = CliCommandRuntime.Current.Input;
+            // Console.In performs synchronous reads even through its async API.
+            // A canceled invocation can leave that read to end with the CLI process.
+            content = cancellationToken.CanBeCanceled && ReferenceEquals(input, Console.In)
+                ? await Task.Run(input.ReadToEnd, cancellationToken).WaitAsync(cancellationToken)
+                : await input.ReadToEndAsync(cancellationToken);
         }
         else
         {
@@ -296,6 +331,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
             content = await File.ReadAllTextAsync(fullPath, cancellationToken);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         content = content.Trim();
 
         if (string.IsNullOrEmpty(content))
@@ -331,6 +367,14 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
     private static void WriteError(string message)
     {
         CliErrorOutput.WriteError(message, "InvalidInput");
+    }
+
+    private static int ReportCancellation(int nextCommand = 0, int commandCount = 0)
+    {
+        CliCommandRuntime.Current.Error.WriteLine(nextCommand == 0
+            ? "Batch canceled before any commands were sent."
+            : $"Batch canceled before command {nextCommand}/{commandCount} was sent.");
+        return 1;
     }
 
     // JSON options for batch I/O — camelCase, skip nulls for clean output

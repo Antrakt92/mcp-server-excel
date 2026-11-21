@@ -18,7 +18,44 @@ internal sealed class Program
         ["--input", "-i", "--values", "--formulas", "--formats", "--rows"],
         StringComparer.OrdinalIgnoreCase);
 
-    private static Task<int> Main(string[] args) => RunEntryPointAsync(args);
+    private static async Task<int> Main(string[] args)
+    {
+        var command = args.FirstOrDefault(arg => !QuietFlags.Contains(arg, StringComparer.OrdinalIgnoreCase));
+        if (!string.Equals(command, "batch", StringComparison.OrdinalIgnoreCase) ||
+            args.Any(arg => VersionFlags.Contains(arg, StringComparer.OrdinalIgnoreCase)))
+            return await RunEntryPointAsync(args);
+
+        using var cancellation = new CancellationTokenSource();
+        var signalGate = new object();
+        Task? cancellationCallbacks = null;
+        bool acceptingSignal = true;
+        ConsoleCancelEventHandler cancelBatch = (_, signal) =>
+        {
+            lock (signalGate)
+            {
+                // A second interrupt retains the console's default termination behavior.
+                if (!acceptingSignal || cancellationCallbacks is not null)
+                    return;
+
+                signal.Cancel = true;
+                cancellationCallbacks = cancellation.CancelAsync();
+            }
+        };
+        Console.CancelKeyPress += cancelBatch;
+        try
+        {
+            return await RunEntryPointAsync(args, cancellationToken: cancellation.Token);
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelBatch;
+            lock (signalGate)
+                acceptingSignal = false;
+            // A handler already queued by the console can outlive unsubscription.
+            if (cancellationCallbacks is not null)
+                await cancellationCallbacks;
+        }
+    }
 
     /// <summary>
     /// The process entry path: enables telemetry, runs the command, then signals reporting exit.
@@ -26,7 +63,8 @@ internal sealed class Program
     /// </summary>
     internal static async Task<int> RunEntryPointAsync(
         string[] args,
-        CliCommandRuntime? runtime = null)
+        CliCommandRuntime? runtime = null,
+        CancellationToken cancellationToken = default)
     {
         if (Service.ExcelController.IsWorkerMode(args))
             return await Service.ExcelController.RunWorkerAsync(args);
@@ -42,7 +80,7 @@ internal sealed class Program
             {
                 return CliErrorOutput.WriteException(ex);
             }
-            return await RunAsync(args, runtime, initializeOperation: false);
+            return await RunAsync(args, runtime, initializeOperation: false, cancellationToken);
         }
         finally
         {
@@ -55,7 +93,8 @@ internal sealed class Program
     internal static async Task<int> RunAsync(
         string[] args,
         CliCommandRuntime? runtime = null,
-        bool initializeOperation = true)
+        bool initializeOperation = true,
+        CancellationToken cancellationToken = default)
     {
         if (runtime is null)
         {
@@ -207,10 +246,10 @@ internal sealed class Program
         {
             var telemetryObserver = CliCommandRuntime.Current.TelemetryObserver;
             var exitCode = await (telemetryObserver == null
-                ? CliTelemetry.TrackCliInvocationAsync(filteredArgs, () => app.RunAsync(filteredArgs))
+                ? CliTelemetry.TrackCliInvocationAsync(filteredArgs, () => app.RunAsync(filteredArgs, cancellationToken))
                 : CliTelemetry.TrackCliInvocationAsync(
                     filteredArgs,
-                    () => app.RunAsync(filteredArgs),
+                    () => app.RunAsync(filteredArgs, cancellationToken),
                     telemetryObserver));
             if (exitCode == 0 &&
                 string.Equals(filteredArgs[0], "batch", StringComparison.OrdinalIgnoreCase) &&
