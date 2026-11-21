@@ -911,7 +911,7 @@ public sealed partial class ExcelMcpServiceErrorTests
             $"Expected ExcelProcessDied but got '{response.ErrorCategory}'. Message: {response.ErrorMessage}");
         Assert.NotNull(response.ErrorMessage);
         Assert.Contains("disconnected", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Dead-session tracking has been removed", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("session list", response.ErrorMessage, StringComparison.Ordinal);
         Assert.Equal(1, batch.SaveCalls);
         Assert.Equal(1, batch.DisposeCalls);
 

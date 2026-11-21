@@ -117,6 +117,11 @@ processes. Exit code zero confirms normal native exit, not saved workbook edits
 or the cause of an earlier automation error. An unconfirmed exit never releases
 ownership merely because a COM call or Quit returned.
 
+When a close disconnect reports `Alive`, Excel was still running when the error
+was handled. If the session then disappears, compare both `processId` and
+`startedAtUtcFileTime` with `recentExcelExits` from the same controller. Use
+discovery to check for an open workbook and verify the saved file before retrying.
+
 If a known worker dies before acknowledging release, the controller can retain
 its newer persisted exit observation after validating both process identities,
 controller generation and build. This recovers diagnostic evidence for an
