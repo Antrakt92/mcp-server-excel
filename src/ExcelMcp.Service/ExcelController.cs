@@ -26,7 +26,7 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, (ExcelWorkerClient Worker, OpenWorkbookInfo Workbook)> _selections = new(StringComparer.Ordinal);
     private sealed record PathReservation(string Token, string? SessionId = null)
     {
-        internal long? SaveAsReplyRevision { get; set; }
+        internal (long Revision, bool RequiresLocation)? SaveAsReply { get; set; }
     }
     private readonly WorkbookPathReservations<PathReservation> _paths = new((first, second) =>
         first.SessionId is not null && second.SessionId is not null
@@ -421,8 +421,10 @@ internal sealed class ExcelController : IDisposable
             {
                 // A dialog, pending native work, or a failed status capture can defer reconciliation.
                 // Wait for a settled snapshot at or after this reply before dropping the claim.
+                // A native wait may have given an untitled workbook a path before Excel could report it.
                 lock (_shutdownLock)
-                    reservation.SaveAsReplyRevision = execution.Snapshot.Revision;
+                    reservation.SaveAsReply = (execution.Snapshot.Revision,
+                        response.PartialState is not null && response.ErrorCategory is "Timeout" or "Cancelled");
             }
             var applied = ApplyWorkerSnapshot(worker);
             lock (_shutdownLock)
@@ -704,7 +706,8 @@ internal sealed class ExcelController : IDisposable
                             _selections[selection.Key] = (worker, selection.Value.Workbook with { Location = session.FilePath });
                     foreach (var old in _paths.Where(entry => entry.Value.SessionId == session.SessionId
                         && (hasCurrentPath && entry.Value.Token == "recorded"
-                            || entry.Value.SaveAsReplyRevision is { } revision && snapshot.Revision >= revision)
+                            || entry.Value.SaveAsReply is { } reply && snapshot.Revision >= reply.Revision
+                                && (hasCurrentPath || !reply.RequiresLocation))
                         && !currentPaths.Contains(entry.Key)))
                         _paths.TryRemove(old);
                 }

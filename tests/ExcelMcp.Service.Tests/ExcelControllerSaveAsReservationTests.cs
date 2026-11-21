@@ -11,9 +11,11 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelControllerTests
 {
     [Theory(Timeout = 15000)]
-    [InlineData("Timeout", false, false, false, false)]
-    [InlineData("Timeout", true, false, false, false)]
-    [InlineData("Timeout", false, false, true, false)]
+    [InlineData("Timeout", false, false, false, true)]
+    [InlineData("Timeout", true, false, false, true)]
+    [InlineData("Timeout", false, false, true, true)]
+    [InlineData("Cancelled", false, false, true, false)]
+    [InlineData("Cancelled", false, false, true, true)]
     [InlineData("Busy", false, true, false, false)]
     [InlineData("Busy", false, true, true, false)]
     [InlineData("Busy", false, true, false, true)]
@@ -21,7 +23,7 @@ public sealed partial class ExcelControllerTests
     [InlineData("InvalidInput", true, false, false, true)]
     [InlineData("ExcelDisconnected", false, false, false, true)]
     public async Task Controller_ReconcilesSaveAsDestinationWithoutLosingUncertainOutcomes(
-        string errorCategory, bool statusUnavailable, bool dialogOpen, bool unsaved, bool priorWaitExpired)
+        string errorCategory, bool statusUnavailable, bool dialogOpen, bool unsaved, bool includeWaitDiagnostics)
     {
         const string sessionId = "save-as-session";
         var directory = Directory.CreateTempSubdirectory("excelmcp-save-as-reservation-");
@@ -55,8 +57,9 @@ public sealed partial class ExcelControllerTests
             var partialState = errorCategory switch
             {
                 "ExcelDisconnected" => """{"outcome":"unknown","operation":{"state":"completed","waitExpired":true,"executionPending":false}}""",
-                "Timeout" => """{"operation":{"waitExpired":true}}""",
-                _ => priorWaitExpired ? settledWait : null
+                "Timeout" or "Cancelled" when includeWaitDiagnostics =>
+                    """{"operation":{"command":"workbook.save-as","state":"running","waitExpired":true,"executionPending":true}}""",
+                _ => includeWaitDiagnostics ? settledWait : null
             };
             var target = new SaveAsReservationWorker(errorCategory, partialState, failure, completed);
             using var host = new DaemonHost(registration.PipeName, pipe => new JsonRpc(pipe, pipe, target),
@@ -106,6 +109,18 @@ public sealed partial class ExcelControllerTests
                     Assert.Equal("Conflict", (await SaveAsAsync()).ErrorCategory);
                     Assert.Equal(1, target.Calls);
                     return;
+                }
+                if (unsaved && includeWaitDiagnostics && errorCategory is "Timeout" or "Cancelled")
+                {
+                    worker.RecordSnapshot(Snapshot(original, 4));
+                    apply.Invoke(controller, [worker]);
+                    Assert.Equal("Conflict", (await SaveAsAsync()).ErrorCategory);
+                    Assert.Equal(1, target.Calls);
+
+                    // The late Save As can still publish its confirmed path. A request
+                    // for the same destination then belongs to this session again.
+                    worker.RecordSnapshot(completed);
+                    apply.Invoke(controller, [worker]);
                 }
                 if (statusUnavailable || dialogOpen)
                 {
