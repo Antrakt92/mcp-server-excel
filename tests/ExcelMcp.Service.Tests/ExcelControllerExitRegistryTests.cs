@@ -10,6 +10,66 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelControllerTests
 {
     [Theory(Timeout = 15000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Registry_DiscoveryRetainsExcelRegisteredDuringTheRead(bool controllerAlive)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-registration-race-");
+        var registry = new WorkerRegistry(directory.FullName);
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        var stopped = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+        var current = WorkerProcess.Current;
+        var record = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", stopped,
+            controllerAlive ? current : stopped, "generation", WorkerRegistry.Build, null);
+        var registered = record with
+        {
+            Excel = new ExcelProcessIdentity(current.ProcessId, current.StartedAtUtcFileTime),
+            OwnsExcel = true
+        };
+        try
+        {
+            registry.Write(record);
+            registry.AfterRecordOpenForTests = () =>
+            {
+                registry.AfterRecordOpenForTests = null;
+                registry.Write(registered);
+            };
+
+            Assert.Equal(registered, Assert.Single(registry.Read()));
+            Assert.Equal(registered, registry.Read(record.PipeName));
+        }
+        finally
+        {
+            registry.Remove(record.PipeName);
+            directory.Delete();
+        }
+    }
+
+    [Fact(Timeout = 15000)]
+    public async Task Registry_DiscoveryDoesNotPruneACompletedRecordWhileItsWorkerCanWrite()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-registration-release-");
+        var registry = new WorkerRegistry(directory.FullName);
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        var stopped = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+        var record = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", WorkerProcess.Current,
+            stopped, "generation", WorkerRegistry.Build, null, ReleaseConfirmed: true);
+        try
+        {
+            registry.Write(record);
+            Assert.Empty(registry.Read());
+            Assert.Equal(record, registry.Read(record.PipeName));
+        }
+        finally
+        {
+            registry.Remove(record.PipeName);
+            directory.Delete();
+        }
+    }
+
+    [Theory(Timeout = 15000)]
     [InlineData(true, false)]
     [InlineData(true, true)]
     [InlineData(false, false)]
