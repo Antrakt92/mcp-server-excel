@@ -215,10 +215,8 @@ internal sealed class ExcelWorkerHost : IDisposable
                     .Select(session => (session.SessionId, Status: _service.SessionManager.GetOperationStatus(session.SessionId)))
                     .ToArray();
                 AfterOperationStatusCaptureForTests?.Invoke();
-                var sessions = _service.SessionManager.GetActiveSessions(statusOnly: true);
-                var list = _service.ProcessAsync(new ServiceRequest { Command = "session.list" }).GetAwaiter().GetResult();
-                if (!list.Success)
-                    throw new InvalidOperationException($"Could not record Excel worker status: {list.ErrorMessage}");
+                var sessions = _service.SessionManager.GetActiveSessionStatus(RecordObservation);
+                var list = _service.BuildSessionList(sessions);
                 if (sessions.Count != operations.Length || operations.Any(observed =>
                     {
                         var current = _service.SessionManager.GetOperationStatus(observed.SessionId, reconcilePaths: false);

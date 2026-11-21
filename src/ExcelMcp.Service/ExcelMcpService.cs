@@ -360,7 +360,7 @@ public sealed class ExcelMcpService : IDisposable
             "open" => HandleSessionOpen(request),
             "close" => HandleSessionClose(request),
             "save" => HandleSessionSave(request),
-            "list" => HandleSessionList(),
+            "list" => BuildSessionList(_sessionManager.GetActiveSessions(statusOnly: true)),
             "test" => HandleSessionTest(request),
             "discover" => await HandleSessionDiscoverAsync(),
             "attach" => HandleSessionAttach(request),
@@ -782,9 +782,9 @@ public sealed class ExcelMcpService : IDisposable
         }
     }
 
-    private ServiceResponse HandleSessionList()
+    internal ServiceResponse BuildSessionList(IReadOnlyList<SessionDescriptor> activeSessions)
     {
-        var sessions = _sessionManager.GetActiveSessions(statusOnly: true)
+        var sessions = activeSessions
             .Select(s =>
             {
                 var validation = _sessionManager.ValidateClose(s.SessionId);

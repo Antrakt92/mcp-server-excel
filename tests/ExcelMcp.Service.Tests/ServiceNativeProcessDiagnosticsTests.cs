@@ -2,12 +2,94 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Service.Workers;
 using Xunit;
 
 namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ExcelMcpServiceErrorTests
 {
+    [Theory]
+    [InlineData("Exited", 17u, false)]
+    [InlineData("Exited", 17u, true)]
+    [InlineData("Exited", null, false)]
+    [InlineData("Indeterminate", null, false)]
+    [InlineData("Alive", null, false)]
+    public void WorkerSnapshot_RecordsConfirmedExcelExitBeforeOmittingSession(
+        string stateName, uint? exitCode, bool registryUnavailable)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-status-exit-");
+        try
+        {
+            using var service = new ExcelMcpService();
+            var batch = new FakeBatch
+            {
+                ExecuteException = new InvalidOperationException("Synthetic Excel process stopped responding."),
+                IsAliveAfterExecuteException = false
+            };
+            const string sessionId = "exit-observed-during-status";
+            RegisterSession(service, sessionId, batch);
+            var identity = new ExcelProcessIdentity(batch.ExcelProcessId!.Value, 456);
+            var state = Enum.Parse<ExcelNativeProcessState>(stateName);
+            var observation = new ExcelNativeProcessObservation(identity, state, exitCode,
+                state != ExcelNativeProcessState.Alive && exitCode is null ? 5 : null);
+            var process = WorkerProcess.Current;
+            var generation = Guid.NewGuid().ToString("N");
+            var registration = new WorkerRegistration("excelmcp-worker-" + generation, process, process,
+                generation, WorkerRegistry.Build, identity, OwnsExcel: true);
+            var registry = new WorkerRegistry(directory.FullName);
+            registry.Write(registration);
+            using var host = new ExcelWorkerHost(registration, service, registry);
+            var refresh = typeof(ExcelWorkerHost).GetMethod("TryRefreshSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            refresh.Invoke(host, null);
+            Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+            Assert.Single(GetPrivateField<WorkerSnapshot>(host, "_snapshot").Sessions);
+
+            Assert.Same(batch.ExecuteException, Assert.Throws<InvalidOperationException>(() => batch.Execute(static (_, _) => { })));
+            batch.ProcessObservation = observation;
+            var temporary = Path.Join(directory.FullName, registration.PipeName + ".json.tmp");
+            if (registryUnavailable)
+            {
+                Directory.CreateDirectory(temporary);
+                refresh.Invoke(host, null);
+                Assert.Contains("Excel status could not be refreshed", GetPrivateField<string>(host, "_statusError"));
+                Assert.Single(GetPrivateField<WorkerSnapshot>(host, "_snapshot").Sessions);
+                Assert.Equal(registration, registry.Read(registration.PipeName));
+                Directory.Delete(temporary);
+            }
+            refresh.Invoke(host, null);
+            Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+
+            var snapshot = GetPrivateField<WorkerSnapshot>(host, "_snapshot");
+            var expectedExit = state == ExcelNativeProcessState.Exited ? observation : null;
+            Assert.Equal(expectedExit, snapshot.Registration.LastExcelObservation);
+            Assert.Equal(snapshot.Registration, registry.Read(registration.PipeName));
+            Assert.Equal(identity, snapshot.Registration.Excel);
+            Assert.True(snapshot.Registration.OwnsExcel);
+            Assert.False(snapshot.Registration.ReleaseConfirmed);
+            Assert.Empty(snapshot.Sessions);
+            using var list = JsonDocument.Parse(snapshot.SessionList.Result!);
+            Assert.Empty(list.RootElement.GetProperty("sessions").EnumerateArray());
+            Assert.Contains(sessionId, service.SessionManager.ActiveSessionIds);
+            Assert.Equal(1, batch.ExecuteCalls);
+            Assert.Equal(0, batch.SaveCalls);
+            Assert.Equal(0, batch.DisposeCalls);
+            if (registryUnavailable)
+            {
+                // The same exit is already durable, so later polls do not write again.
+                Directory.CreateDirectory(temporary);
+                refresh.Invoke(host, null);
+                Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+                Assert.Equal(expectedExit, GetPrivateField<WorkerSnapshot>(host, "_snapshot").Registration.LastExcelObservation);
+                Assert.Equal(snapshot.Registration, registry.Read(registration.PipeName));
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public void NativeDiagnostics_CreationIdentityPreservesDigitsBeyondJavascriptIntegerPrecision()
     {

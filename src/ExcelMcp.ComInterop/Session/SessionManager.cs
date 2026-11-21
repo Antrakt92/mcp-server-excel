@@ -2187,9 +2187,16 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>
     /// Returns a snapshot of active sessions with associated workbook paths.
-    /// Dead sessions (where Excel process has died) are automatically cleaned up and excluded.
+    /// Dead sessions are excluded and cleaned up unless this is a status-only read.
     /// </summary>
-    public IReadOnlyList<SessionDescriptor> GetActiveSessions(bool statusOnly = false)
+    public IReadOnlyList<SessionDescriptor> GetActiveSessions(bool statusOnly = false) =>
+        ReadActiveSessions(statusOnly, recordNativeExit: null);
+
+    internal IReadOnlyList<SessionDescriptor> GetActiveSessionStatus(Action<ExcelNativeProcessObservation> recordNativeExit) =>
+        ReadActiveSessions(statusOnly: true, recordNativeExit);
+
+    private List<SessionDescriptor> ReadActiveSessions(
+        bool statusOnly, Action<ExcelNativeProcessObservation>? recordNativeExit)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -2228,6 +2235,10 @@ public sealed class SessionManager : IDisposable
                 }
                 else
                 {
+                    // Keep the worker's exact exit receipt with the status that omits the row.
+                    if (recordNativeExit is not null && (batch as IExcelBatchProcessObservation)?.ProcessObservation is
+                        { State: ExcelNativeProcessState.Exited } observation)
+                        recordNativeExit(observation);
                     // Mark for cleanup (don't cleanup during iteration)
                     deadSessions.Add((sessionId, batch));
                 }
