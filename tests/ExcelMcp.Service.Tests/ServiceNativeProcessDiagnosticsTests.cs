@@ -264,6 +264,68 @@ public sealed partial class ExcelMcpServiceErrorTests
     }
 
     [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task ProcessAsync_FatalCloseDisconnect_ReportsSnapshotAndRecoverySteps(bool alive, bool hasObserver)
+    {
+        using var service = new ExcelMcpService();
+#pragma warning disable CA2201 // Simulates a fatal COM disconnect during workbook close without launching Excel.
+        var rpcError = new COMException("The RPC server is unavailable.", unchecked((int)0x800706BA));
+#pragma warning restore CA2201
+        var error = new InvalidOperationException("Workbook close failed. Excel has not been asked to quit.", rpcError);
+        var identity = new ExcelProcessIdentity(123, 456);
+        var batch = new FakeBatch
+        {
+            ExecuteException = error,
+            IsAliveAfterExecuteException = alive,
+            ProcessObservation = hasObserver ? new(identity, ExcelNativeProcessState.Alive, null, null) : null,
+            ProcessObservationAfterDeathCheck = !alive ? new(identity, ExcelNativeProcessState.Exited, 0, null) : null
+        };
+        const string sessionId = "fatal-close-disconnect";
+        RegisterSession(service, sessionId, batch);
+        service.SessionManager.BeforeCloseSessionHookForTests = () => batch.Execute(static (_, _) => { });
+
+        var response = await service.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
+
+        Assert.False(response.Success);
+        Assert.Equal(alive ? "ExcelDisconnected" : "ExcelProcessDied", response.ErrorCategory);
+        Assert.Equal("0x800706BA", response.HResult);
+        Assert.Equal("session.close", response.Command);
+        Assert.Equal(sessionId, response.SessionId);
+        Assert.Contains(rpcError.Message, response.InnerError);
+        Assert.Contains("Closing and any requested save are unconfirmed", response.ErrorMessage);
+        Assert.Contains("session list", response.ErrorMessage);
+        Assert.Contains("session discover", response.ErrorMessage);
+        Assert.Contains("file_read", response.ErrorMessage);
+        Assert.Contains("saved file", response.ErrorMessage);
+        Assert.Equal(alive, service.SessionManager.ActiveSessionIds.Contains(sessionId));
+        Assert.Equal(1, batch.ExecuteCalls);
+        Assert.Equal(alive ? 0 : 1, batch.DisposeCalls);
+        Assert.Equal(0, batch.SaveCalls);
+        if (hasObserver)
+        {
+            Assert.Contains("same controller", response.ErrorMessage);
+            Assert.Contains("recentExcelExits", response.ErrorMessage);
+            Assert.Contains("startedAtUtcFileTime", response.ErrorMessage);
+            using var state = JsonDocument.Parse(Assert.IsType<string>(response.PartialState));
+            AssertNativeDiagnosticsIdentity(state, alive ? "Alive" : "Exited");
+        }
+        else
+        {
+            Assert.DoesNotContain("recentExcelExits", response.ErrorMessage);
+            Assert.DoesNotContain("process was observed alive", response.ErrorMessage);
+        }
+        if (alive)
+        {
+            Assert.Contains("The session was still tracked", response.ErrorMessage);
+            Assert.Contains(error.Message, response.ErrorMessage);
+        }
+        if (alive && hasObserver)
+            Assert.Contains("process was observed alive when the close error was handled", response.ErrorMessage);
+    }
+
+    [Theory]
     [InlineData("Alive")]
     [InlineData("Exited")]
     [InlineData("Indeterminate")]

@@ -678,7 +678,7 @@ public sealed class ExcelMcpService : IDisposable
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return HandleExcelDisconnect(request.SessionId, ex, closingBatch);
+            return HandleExcelDisconnect(request.SessionId, ex, closingBatch, duringClose: true);
         }
         catch (ExcelBusyException ex) when (ex.CloseOutcomeUnconfirmed)
         {
@@ -1258,7 +1258,18 @@ public sealed class ExcelMcpService : IDisposable
         }
     }
 
-    private ServiceResponse HandleExcelDisconnect(string sessionId, Exception exception, IExcelBatch? failedBatch)
+    private const string CloseSessionReadbackGuidance =
+        "Check the current session with CLI 'session list' or MCP 'file_read' action 'list'. " +
+        "If the session is absent, inspect open workbooks with CLI 'session discover' or MCP 'file_read' action 'discover' before continuing.";
+
+    private static string CloseDisconnectGuidance(ExcelNativeProcessObservation? observation) =>
+        "Closing and any requested save are unconfirmed. " + CloseSessionReadbackGuidance +
+        (observation is null ? "" :
+            " In recentExcelExits from the same controller, match both processId and startedAtUtcFileTime to this error's nativeProcess diagnostics.") +
+        " Verify the saved file before retrying.";
+
+    private ServiceResponse HandleExcelDisconnect(
+        string sessionId, Exception exception, IExcelBatch? failedBatch, bool duringClose = false)
     {
         var batch = _sessionManager.GetSession(sessionId);
         var diagnosticBatch = failedBatch ?? batch;
@@ -1280,12 +1291,14 @@ public sealed class ExcelMcpService : IDisposable
                 ErrorMessage = "Excel disconnected from automation. " +
                     (observation?.State switch
                     {
+                        ExcelNativeProcessState.Alive when duringClose => "Its process was observed alive when the close error was handled. ",
                         ExcelNativeProcessState.Alive => "Its process is still live. ",
                         ExcelNativeProcessState.Exited => "Native process exit was observed; session cleanup is not confirmed. ",
                         _ => "Native process exit is not confirmed. "
                     }) +
-                    "The session remains owned; the operation's outcome is not confirmed. " +
-                    exception.Message,
+                    (duringClose ? "The session was still tracked. " :
+                        "The session remains owned; the operation's outcome is not confirmed. ") +
+                    exception.Message + (duringClose ? " " + CloseDisconnectGuidance(observation) : ""),
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
@@ -1295,9 +1308,12 @@ public sealed class ExcelMcpService : IDisposable
         }
         CleanupDeadSession(sessionId);
         // Looking up a dead session can remove it. Read the original batch's retained exit evidence.
+        var exitObservation = GetNativeProcessObservation(diagnosticBatch);
         return CreateExcelDisconnectedResponse(sessionId, exception,
-            "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.",
-            GetNativeProcessObservation(diagnosticBatch));
+            duringClose
+                ? "Excel disconnected during close and is no longer running. " + CloseDisconnectGuidance(exitObservation)
+                : "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.",
+            exitObservation);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
@@ -1594,8 +1610,7 @@ public sealed class ExcelMcpService : IDisposable
         var closeOutcomeUnconfirmed = command == "session.close" && ex is ExcelBusyException { CloseOutcomeUnconfirmed: true };
         if (closeOutcomeUnconfirmed)
         {
-            errorMessage += " Check the current session with CLI 'session list' or MCP 'file_read' action 'list'. " +
-                "If the session is absent, inspect open workbooks with CLI 'session discover' or MCP 'file_read' action 'discover' before continuing.";
+            errorMessage += " " + CloseSessionReadbackGuidance;
         }
         if (includeOperationStatus && errorCategory == "Busy" && sessionId is not null &&
             !errorMessage.Contains(ExcelBusyException.DialogGuidance, StringComparison.Ordinal))
