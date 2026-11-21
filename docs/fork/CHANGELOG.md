@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.8.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.8.0) | 2026-11-21 | VBA operation receipts, save and close diagnostics, and range search fixes |
 | [5.7.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.1) | 2026-11-21 | Safer workbook access changes and fixes for worksheet, formatting, VBA and CLI commands |
 | [5.7.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.0) | 2026-11-21 | MCP shutdown diagnostics, Excel recovery and safer workbook edits |
 | [5.6.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.6.0) | 2026-11-19 | Literal text writes, VBA label warnings and workbook timings |
@@ -32,6 +33,30 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.8.0 — 2026-11-21
+
+### VBA and CLI batches
+
+- Give a `vba.invoke` batch entry a fresh UUID as its `operationId` to look up its outcome after a timeout or a lost reply. Use `session operation-result` in the CLI or `file_read` with `operation-result` in MCP. The receipt can include the typed return value, and a duplicate ID is rejected while the receipt is retained. The same controller holds up to 128 receipts. Finished receipts expire after 15 minutes, and results over 8 KiB are omitted.
+- Ctrl+C stops `excelcli batch` from starting further commands and preserves the results already written. An interrupted command that may have reached Excel is reported as unconfirmed.
+
+### Saving, closing and discovery
+
+- When an explicit save returns `partialState.save`, it separates Excel's save-event report from the workbook's unsaved state. If Excel reports success before a COM error, the service preserves the original error and skips an automatic retry. Check the saved file when the workbook remains dirty.
+- Save As releases a stale destination reservation once Excel confirms that the workbook is still at its original location. If the outcome remains unclear for a workbook that has never been saved, its destination stays reserved until the workbook location is confirmed or the session closes.
+- When Excel's readiness or an RPC disconnect leaves closing unconfirmed, the response explains how to check the session and find an open workbook. An RPC disconnect also prompts you to verify the saved file and, when the process identity is available, match it to the same controller's recent exits by PID and creation time. Confirmed exit records remain visible after the workbook session disappears.
+- Partial discovery explains how to proceed when another controller or a different ExcelMcp build owns an Excel instance. Sessions already managed by the current connection remain usable.
+
+### Search and data validation
+
+- Range search checks values and formulas when both sources are enabled. Each matching cell is counted once, even with a limited preview.
+- Replace First rejects unsupported partial-cell wildcard patterns even when the range has no matches. Escape a literal `*` or `?` with `~`, or use Replace All for wildcard matching.
+- Replacing data validation preserves the existing rules when Excel rejects the replacement on the first target cell.
+
+The upstream base remains **2.6.13**. Dependency versions are unchanged.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.7.1...v5.8.0)
 
 ## 5.7.1 — 2026-11-21
 
