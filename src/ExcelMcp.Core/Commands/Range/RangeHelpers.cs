@@ -565,6 +565,11 @@ public static class RangeHelpers
     internal static object ConvertToCellValue(object? value, bool literalText)
     {
         object cellValue = ConvertToComValue(value);
+        if (cellValue is double doubleValue && !double.IsFinite(doubleValue) ||
+            cellValue is float floatValue && !float.IsFinite(floatValue))
+        {
+            throw new ArgumentException("Excel cell values must use finite numbers.", nameof(value));
+        }
         if (!literalText || cellValue is not string { Length: > 0 } text)
             return cellValue;
 
