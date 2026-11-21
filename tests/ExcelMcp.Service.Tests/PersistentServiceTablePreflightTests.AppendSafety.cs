@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
@@ -7,6 +8,37 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class PersistentServiceTablePreflightTests
 {
+    [Theory]
+    [InlineData("""[["North","One",500,"2025-04-01"],["East","Two",1e309,"2025-04-02"]]""", false, "must use finite numbers")]
+    [InlineData("""[["North","One",500,"2025-04-01"],null]""", false, "rows[1] must be an array of cells")]
+    [InlineData("""[["North","One",500,"2025-04-01"]]""", true, "Provide either rows or rowsFile, not both")]
+    public async Task Append_MatrixInputRejected_PreservesTableAndNeighbor(
+        string matrixJson, bool includeFile, string expectedError)
+    {
+        var batch = _fixture.BatchToken;
+        SetValues(batch, "E7", [["Outside table"]]);
+        Assert.Equal("Outside table",
+            RequireSuccess(_rangeCommands.GetValues(batch, "Sales", "E7")).Values[0][0]);
+        var before = GetSourceState("Sales", "A1:E8");
+        var calculation = _fixture.ExecuteRawVerification((context, _) => context.App.Calculation);
+
+        using var matrix = JsonDocument.Parse(matrixJson);
+        var rowsFile = includeFile
+            ? _fixture.CreateInputFile(".json", """[["South","From file",700,"2025-04-03"]]""")
+            : null;
+        var failure = await _fixture.SendForFailureAsync("table.append", new
+        {
+            tableName = "SalesTable",
+            rows = matrix.RootElement,
+            rowsFile
+        });
+
+        Assert.Equal("InvalidInput", failure.ErrorCategory);
+        Assert.Contains(expectedError, failure.ErrorMessage, StringComparison.Ordinal);
+        AssertPreflightPreserved(before, "A1:E8");
+        Assert.Equal(calculation, _fixture.ExecuteRawVerification((context, _) => context.App.Calculation));
+    }
+
     [Fact]
     public void Append_WithTotals_PreservesTotalsAndAddsEveryRow()
     {
