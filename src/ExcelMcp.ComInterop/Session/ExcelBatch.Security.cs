@@ -384,7 +384,7 @@ internal sealed partial class ExcelBatch
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Both setting-restoration failures are collected and thrown together with the original operation failure; no cleanup failure is hidden.")]
-    private static void RestoreOpeningSettings(Excel.Application app, Office.MsoAutomationSecurity security,
+    internal static void RestoreOpeningSettings(Excel.Application app, Office.MsoAutomationSecurity security,
         bool? alerts, Exception? primary)
     {
         List<Exception> failures = [];
@@ -399,8 +399,9 @@ internal sealed partial class ExcelBatch
             return;
         if (primary is not null)
             failures.Insert(0, primary);
-        throw new AggregateException(primary is null
-            ? "The workbook action completed, but restoring Excel opening settings failed; inspect the retained workbook."
-            : "The workbook action failed and restoring Excel opening settings also failed; inspect the retained workbook.", failures);
+        var message = primary is null
+            ? "The workbook action completed, but restoring Excel opening settings failed. Inspect Excel before continuing."
+            : "The workbook action failed and restoring Excel opening settings also failed. Inspect Excel before continuing.";
+        throw new WorkbookSecurityCompletionUnconfirmedException(message, new AggregateException(failures));
     }
 }
