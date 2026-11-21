@@ -482,20 +482,6 @@ public static class ParameterTransforms
     }
 
     /// <summary>
-    /// Validates that a required parameter is not null, empty, or whitespace, returning the value if valid.
-    /// </summary>
-    /// <param name="value">The parameter value to validate</param>
-    /// <param name="parameterName">Name of the parameter for error messages</param>
-    /// <param name="actionName">Name of the action for error messages</param>
-    /// <returns>The validated non-null value</returns>
-    /// <exception cref="ArgumentException">Thrown when value is null, empty, or whitespace</exception>
-    public static string RequireNotEmptyReturn(string? value, string parameterName, string actionName)
-    {
-        RequireNotEmpty(value, parameterName, actionName);
-        return value!;
-    }
-
-    /// <summary>
     /// Converts a validated public whole-second timeout to the internal TimeSpan representation.
     /// </summary>
     /// <param name="value">Timeout in whole seconds</param>

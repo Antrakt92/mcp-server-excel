@@ -13,11 +13,6 @@ public static class FilePathValidation
     public static string NormalizeWorkbookLocation(string location) => WorkbookLocation.Normalize(location);
 
     /// <summary>
-    /// Identifies a normalized remote workbook location.
-    /// </summary>
-    public static bool IsRemoteWorkbook(string location) => WorkbookLocation.IsRemote(location);
-
-    /// <summary>
     /// Requires and normalizes an absolute Windows file path.
     /// </summary>
     public static string NormalizeAbsoluteWindowsPath(string filePath)
