@@ -346,8 +346,13 @@ public sealed partial class PersistentServicePivotTableTests
             batch, "ReplaceSoleItemSlicer", [initial], clearFirst: true), 325, initial);
         AssertRegularSlicerState(_pivotCommands.SetSlicerSelection(
             batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: false), 650, "North", "South");
-        AssertRegularSlicerState(_pivotCommands.SetSlicerSelection(
-            batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: true), 325, replacement);
+        var beforeUnknown = _pivotCommands.SetSlicerSelection(
+            batch, "ReplaceSoleItemSlicer", [replacement], clearFirst: true);
+        AssertRegularSlicerState(beforeUnknown, 325, replacement);
+        var unknown = Assert.Throws<ArgumentException>(() => _pivotCommands.SetSlicerSelection(
+            batch, "ReplaceSoleItemSlicer", ["missing"], clearFirst: true));
+        Assert.Contains("availableItems", unknown.Message, StringComparison.Ordinal);
+        AssertRegularSlicerState(beforeUnknown, 325, replacement);
         AssertRegularSlicerState(_pivotCommands.SetSlicerSelection(
             batch, "ReplaceSoleItemSlicer", [initial.ToLowerInvariant(), initial, "missing"],
             clearFirst: true), 325, initial);

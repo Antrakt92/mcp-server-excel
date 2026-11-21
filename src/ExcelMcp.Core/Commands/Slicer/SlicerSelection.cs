@@ -15,7 +15,7 @@ internal static class SlicerSelection
         {
             items = cache.SlicerItems;
             if (!selectAll)
-                ValidateRequestedItems(items, requested, ct);
+                RequireMatchingItem(items, requested, ct);
 
             // Excel resets the filter if its last selected item is deselected.
             // Select replacements first so removing old items never empties a valid selection.
@@ -55,19 +55,19 @@ internal static class SlicerSelection
         }
     }
 
-    private static void ValidateRequestedItems(Excel.SlicerItems items, HashSet<string> selectedItems, CancellationToken ct)
+    private static void RequireMatchingItem(Excel.SlicerItems items, HashSet<string> selectedItems, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var missing = new HashSet<string>(selectedItems, selectedItems.Comparer);
         int count = items.Count;
-        for (int index = 1; index <= count && missing.Count > 0; index++)
+        for (int index = 1; index <= count; index++)
         {
             ct.ThrowIfCancellationRequested();
             Excel.SlicerItem? item = null;
             try
             {
                 item = items.Item[index];
-                missing.Remove(item.Name);
+                if (selectedItems.Contains(item.Name))
+                    return;
             }
             finally
             {
@@ -75,7 +75,6 @@ internal static class SlicerSelection
             }
         }
 
-        if (missing.Count > 0)
-            throw new ArgumentException($"Slicer item '{missing.First()}' was not found. Use an item name from availableItems.", nameof(selectedItems));
+        throw new ArgumentException("None of the requested slicer items were found. Use item names from availableItems.", nameof(selectedItems));
     }
 }

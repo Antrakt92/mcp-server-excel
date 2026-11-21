@@ -13,15 +13,16 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Slicer;
 ///
 /// NAMING: Caller supplies a unique name, destination worksheet, and anchor cell.
 ///
-/// SELECTION: selectedItems as list of strings. Data Model/OLAP slicers return item captions
-/// and accept captions or MDX unique names; unknown or ambiguous items fail before changing the filter.
-/// Empty list clears filter (shows all items). Set clearFirst=false to add to existing selection.
+/// SELECTION: Use items from availableItems. Table and regular PivotTable slicers require at least one
+/// matching name in a nonempty list and skip unmatched names. Data Model/OLAP slicers accept
+/// captions or MDX unique names and reject unknown items or ambiguous captions before changing the filter.
+/// An empty list clears the filter. Set clearFirst=false to add to the current selection.
 /// </summary>
 [ServiceCategory("Slicer")]
 [McpTool("slicer", Title = "Slicer Operations", Destructive = true, Category = "analysis",
     Description = "Create, configure, and delete slicers and timelines that filter PivotTables and Tables. Creation requires a unique slicer_name, an existing destination_sheet, and a position. " +
         "PIVOTTABLE SLICERS: create-slicer, set-slicer-selection, delete-slicer; they filter only connected PivotTables. TABLE SLICERS: create-table-slicer, set-table-slicer-selection, delete-table-slicer. TIMELINES: create-timeline, set-timeline-selection, clear-timeline-selection, using calendar dates. " +
-        "SELECTION: selected_items is JSON-array text; '[]' clears the filter. Selection replaces by default; clear_first=false adds. Data Model/OLAP selection accepts captions or MDX unique names and rejects unknown or ambiguous items before changing the filter. " +
+        "SELECTION: selected_items is JSON-array text. Use items from availableItems. Table and regular PivotTable slicers skip unmatched names if at least one matches. Data Model/OLAP also accepts MDX unique names and rejects unknown items or ambiguous captions before changing the filter. '[]' clears the filter. Selection replaces by default. Set clear_first=false to add to the current selection. " +
         "connect-pivottable links compatible PivotTables without rebuilding caches: regular PivotTables must share the PivotCache; Data Model PivotTables must use the same workbook Data Model connection. disconnect-pivottable removes one link. update-slicer changes appearance settings in points. " +
         "STYLES: create-style copies source_style_name into a new style_name, overriding supplied slicer_style_options without applying it. apply-style changes only the named slicer's style, not layout or filters. Timeline styles use workbook style commands and update-slicer.")]
 [McpReadOnlyActions("get-slicer", "list-slicers", "list-table-slicers", "list-styles")]
@@ -136,8 +137,8 @@ public interface ISlicerCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="slicerName">Name of the slicer to modify</param>
-    /// <param name="selectedItems">Items to select (show in PivotTable); empty clears the filter. Data Model/OLAP accepts returned captions or MDX unique names; unknown or ambiguous items fail without changing the filter.</param>
-    /// <param name="clearFirst">If true, clears existing selection before setting new items (default: true)</param>
+    /// <param name="selectedItems">Items from availableItems. An empty list clears the filter. Regular PivotTable slicers skip unmatched names if at least one matches. Data Model/OLAP accepts captions or MDX unique names and rejects unknown items or ambiguous captions before changing the filter.</param>
+    /// <param name="clearFirst">Replace the current selection when true (default). Add to it when false.</param>
     /// <returns>Updated slicer state with current selection</returns>
     [ServiceAction("set-slicer-selection")]
     SlicerResult SetSlicerSelection(IExcelBatch batch, string slicerName,
@@ -180,8 +181,8 @@ public interface ISlicerCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="slicerName">Name of the slicer to modify</param>
-    /// <param name="selectedItems">Items to select (show in table)</param>
-    /// <param name="clearFirst">If true, clears existing selection before setting new items (default: true)</param>
+    /// <param name="selectedItems">Item names from availableItems. An empty list clears the filter. Unmatched names are skipped if at least one matches.</param>
+    /// <param name="clearFirst">Replace the current selection when true (default). Add to it when false.</param>
     /// <returns>Updated slicer state with current selection</returns>
     [ServiceAction("set-table-slicer-selection")]
     SlicerResult SetTableSlicerSelection(IExcelBatch batch, string slicerName,
