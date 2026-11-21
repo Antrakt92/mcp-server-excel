@@ -387,8 +387,9 @@ public partial class SheetCommands
     /// <inheritdoc />
     public OperationResult Move(IExcelBatch batch, string sheetName, string? beforeSheet = null, string? afterSheet = null)
     {
-        // Validate parameters
-        if (!string.IsNullOrWhiteSpace(beforeSheet) && !string.IsNullOrWhiteSpace(afterSheet))
+        bool hasBefore = !string.IsNullOrWhiteSpace(beforeSheet);
+        bool hasAfter = !string.IsNullOrWhiteSpace(afterSheet);
+        if (hasBefore && hasAfter)
         {
             throw new ArgumentException("Cannot specify both beforeSheet and afterSheet");
         }
@@ -408,7 +409,7 @@ public partial class SheetCommands
                 }
 
                 // If no position specified, move to end
-                if (string.IsNullOrWhiteSpace(beforeSheet) && string.IsNullOrWhiteSpace(afterSheet))
+                if (!hasBefore && !hasAfter)
                 {
                     sheets = ctx.Book.Sheets;
                     lastTab = sheets[sheets.Count];
@@ -418,7 +419,7 @@ public partial class SheetCommands
                 else
                 {
                     // Find target sheet for positioning
-                    string targetName = beforeSheet ?? afterSheet!;
+                    string targetName = hasBefore ? beforeSheet! : afterSheet!;
                     targetSheet = ComUtilities.FindSheet(ctx.Book, targetName);
                     if (targetSheet == null)
                     {
@@ -426,7 +427,7 @@ public partial class SheetCommands
                     }
 
                     // Move using Excel COM API
-                    if (!string.IsNullOrWhiteSpace(beforeSheet))
+                    if (hasBefore)
                     {
                         sheet.Move(Before: targetSheet);
                     }

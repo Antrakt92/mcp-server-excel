@@ -13,6 +13,11 @@ public sealed partial class PersistentServiceSheetTests
     [Fact]
     public void Move_WithAfterSheet_RepositionsSheet() => AssertMove("after");
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Move_WithBlankBeforeAndValidAfter_RepositionsSheet(string blankBefore) => AssertMove("after", blankBefore);
+
     [Fact]
     public void Move_NoPositionSpecified_MovesToEnd() => AssertMove("end");
 
@@ -89,10 +94,12 @@ public sealed partial class PersistentServiceSheetTests
         });
     }
 
-    private void AssertMove(string position)
+    private void AssertMove(string position, string? blankBefore = null)
     {
         var source = CreateSeededSheet("Move");
         var target = CreateSeededSheet("Target");
+        if (position == "after")
+            RequireSuccess(_sheetCommands.Move(_fixture.BatchToken, source, beforeSheet: target));
         var before = ReadCurrentSheetNames();
         var sourceState = CaptureSheet(source);
         var targetState = CaptureSheet(target);
@@ -100,8 +107,10 @@ public sealed partial class PersistentServiceSheetTests
         var index = position == "end" ? expected.Count : expected.IndexOf(target) + (position == "after" ? 1 : 0);
         Assert.InRange(index, 0, expected.Count);
         expected.Insert(index, source);
+        if (position == "after")
+            Assert.False(expected.SequenceEqual(before), "Arrange the sheets so that moving after the anchor changes their order.");
         RequireSuccess(_sheetCommands.Move(_fixture.BatchToken, source,
-            beforeSheet: position == "before" ? target : null,
+            beforeSheet: position == "before" ? target : blankBefore,
             afterSheet: position == "after" ? target : null));
         Assert.Equal(expected, ReadCurrentSheetNames());
         Assert.Equal(sourceState, CaptureSheet(source));
