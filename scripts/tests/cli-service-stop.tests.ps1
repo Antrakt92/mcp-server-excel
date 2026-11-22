@@ -4,13 +4,17 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $stopScript = Join-Path $root 'scripts\Stop-ExcelCliService.ps1'
 $release = Join-Path $root 'src\ExcelMcp.CLI\bin\Release\net10.0-windows\excelcli.exe'
 $debug = Join-Path $root 'src\ExcelMcp.CLI\bin\Debug\net10.0-windows\excelcli.exe'
+$testHostProcess = [Diagnostics.Process]::GetCurrentProcess()
+try { $buildSession = $testHostProcess.SessionId }
+finally { $testHostProcess.Dispose() }
 
-function New-Candidate([int]$Id, [string]$Path, [string]$Arguments) {
+function New-Candidate([int]$Id, [string]$Path, [string]$Arguments, $Session = $buildSession) {
     [pscustomobject]@{
         ProcessId = $Id
         ExecutablePath = $Path
         CommandLine = "`"$Path`" $Arguments"
         CreationDate = [datetime]'2026-01-01T00:00:00Z'
+        SessionId = $Session
     }
 }
 
@@ -20,10 +24,17 @@ function Get-CimInstance {
     param([string]$ClassName, [string]$Filter)
     if ($ClassName -ne 'Win32_Process') { throw 'Unexpected process provider.' }
     if ($global:queryFailure) { throw 'process-query-denied' }
-    if ($Filter -eq "Name = 'excelcli.exe'") { return $global:candidates }
-    if ($Filter -notmatch '^ProcessId = (\d+)$') { throw "Unexpected query: $Filter" }
+    if ($Filter -notlike "* AND SessionId = $buildSession") { $global:unscopedQuery = $true }
+    if ($Filter -eq "Name = 'excelcli.exe'" -or $Filter -eq "Name = 'excelcli.exe' AND SessionId = $buildSession") {
+        return $global:candidates
+    }
+    if ($Filter -notmatch "^ProcessId = (\d+)(?: AND SessionId = $buildSession)?$") { throw "Unexpected query: $Filter" }
     $id = [int]$Matches[1]
     $validated = $global:revalidation[$id]
+    if ($global:changeSessionInValidation -and $null -ne $validated) {
+        $validated = $validated.PSObject.Copy()
+        $validated.SessionId++
+    }
     if ($global:replaceAfterValidation -and $null -ne $validated) {
         $replacement = $validated.PSObject.Copy()
         $replacement.CreationDate = $validated.CreationDate.AddSeconds(1)
@@ -52,6 +63,7 @@ function Get-Process {
     if ($null -eq $identity) { throw 'process-exited' }
     $process = [pscustomobject]@{
         Id = $Id
+        SessionId = if ($global:changeSessionAtHandle) { $identity.SessionId + 1 } else { $identity.SessionId }
         StartTime = $identity.CreationDate.AddTicks($global:fractionalTicks)
         Pinned = $false
         HasExited = $false
@@ -96,12 +108,18 @@ $excluded = @(
     (New-Candidate 24 (Join-Path $root 'src\ExcelMcp.McpServer\bin\Release\net10.0-windows\mcp-excel.exe') 'service run --pipe-name one'),
     (New-Candidate 25 'C:\Program Files\Microsoft Office\EXCEL.EXE' 'service run --pipe-name one')
 )
+$foreignSession = New-Candidate 26 $release 'service run --pipe-name one' ($buildSession + 1)
+$unknownSession = New-Candidate 27 $release 'service run --pipe-name one' $null
+$global:unscopedQuery = $false
 
 foreach ($case in @(
     @{ Name = 'all-local'; Candidates = $local + $excluded; Expected = @(11, 12) },
     @{ Name = 'case-insensitive-pipe'; Candidates = $local + $excluded; Pipe = 'ONE'; Expected = @(11) },
     @{ Name = 'quoted-pipe'; Candidates = $local; Pipe = 'pipe two'; Expected = @(12) },
     @{ Name = 'exact-pipe-only'; Candidates = $local; Pipe = 'on'; Expected = @() },
+    @{ Name = 'foreign-session'; Candidates = @($local[0], $foreignSession, $unknownSession); Expected = @(11); NoHandles = @(26, 27) },
+    @{ Name = 'foreign-handle-session'; Candidates = @($local[0]); ChangeSessionAtHandle = $true; Expected = @() },
+    @{ Name = 'foreign-session-on-revalidation'; Candidates = @($local[0]); ChangeSessionInValidation = $true; Expected = @() },
     @{ Name = 'no-process'; Candidates = @(); Expected = @() },
     @{ Name = 'already-exited'; Candidates = @($local[0]); Missing = $true; Expected = @() },
     @{ Name = 'reused-pid'; Candidates = @($local[0]); Reused = $true; Expected = @() },
@@ -128,6 +146,8 @@ foreach ($case in @(
     $global:handles = @{}
     $global:replaceAfterValidation = $case.ReplaceAfterValidation
     $global:replaceAtHandle = $case.ReplaceAtHandle
+    $global:changeSessionAtHandle = $case.ChangeSessionAtHandle
+    $global:changeSessionInValidation = $case.ChangeSessionInValidation
     $global:fractionalTicks = if ($case.FractionalTicks) { $case.FractionalTicks } else { 0 }
     $global:handleFailure = $case.HandleFailure
     $global:stopFailure = $case.StopFailure
@@ -143,8 +163,12 @@ foreach ($case in @(
     if (($global:stopped -join ',') -ne ($case.Expected -join ',')) {
         throw "$($case.Name): expected PIDs $($case.Expected -join ','), stopped $($global:stopped -join ',')."
     }
+    foreach ($id in $case.NoHandles) {
+        if ($global:handles.ContainsKey($id)) { throw "$($case.Name): opened a handle outside the verified session." }
+    }
     foreach ($handle in $global:handles.Values) {
         if (-not $handle.Disposed) { throw "$($case.Name): process handle was not disposed." }
     }
 }
+if ($global:unscopedQuery) { throw 'Process queries must stay within the build session.' }
 Write-Output 'CLI service stop identity, isolation, no-op and failure cases passed.'
