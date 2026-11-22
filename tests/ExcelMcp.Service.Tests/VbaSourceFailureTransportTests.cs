@@ -14,6 +14,25 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed class VbaSourceFailureTransportTests
 {
     [Fact]
+    public void SpacingMismatch_PreservesObservedLineAndKindInServiceResponse()
+    {
+        const string supplied = "Sub F()\nDim privateMarker As Long\nprivateMarker  = 1\nEnd Sub";
+        const string observed = "Sub F()\nDim privateMarker As Long\nprivateMarker = 1\nEnd Sub";
+        string current = "";
+        var failure = Assert.Throws<VbaSourceEditException>(() => VbaModuleSource.Replace("Target", null, supplied,
+            () => current, () => current = "", _ => current = observed));
+        using var service = new ExcelMcpService();
+        var create = typeof(ExcelMcpService).GetMethod("CreateErrorResponse", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var response = Assert.IsType<ServiceResponse>(create.Invoke(service, [failure, "vba.replace-module", null, null, null]));
+        Assert.False(response.Success);
+        using var state = JsonDocument.Parse(response.PartialState!);
+        Assert.Equal(3, state.RootElement.GetProperty("firstDifferentLine").GetInt32());
+        Assert.Equal("codeSpacing", state.RootElement.GetProperty("mismatchKind").GetString());
+        Assert.Equal(VbaModuleSource.ComputeHash(observed), state.RootElement.GetProperty("sourceHash").GetString());
+        Assert.DoesNotContain("privateMarker", JsonSerializer.Serialize(response, ServiceProtocol.JsonOptions), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProcedureCancellation_PreservesCancelledCategoryAndObservedModuleState()
     {
         using var cancellation = new CancellationTokenSource();

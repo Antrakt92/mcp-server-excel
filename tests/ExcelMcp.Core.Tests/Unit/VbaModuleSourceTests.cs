@@ -55,6 +55,8 @@ public sealed class VbaModuleSourceTests
         Assert.Equal(VbaModuleSource.ComputeHash(""), failure.State.SourceHash);
         Assert.Equal(0, failure.State.LineCount);
         Assert.Equal("synthetic insert failure", failure.InnerException!.Message);
+        Assert.Null(failure.State.FirstDifferentLine);
+        Assert.Null(failure.State.MismatchKind);
     }
 
     [Fact]
@@ -66,6 +68,34 @@ public sealed class VbaModuleSourceTests
         Assert.Equal("verifying", failure.State.Phase);
         Assert.Equal(VbaModuleSource.ComputeHash("unexpected"), failure.State.SourceHash);
         Assert.Equal("unexpected", current);
+        Assert.Equal(1, failure.State.FirstDifferentLine);
+        Assert.Equal("sourceChanged", failure.State.MismatchKind);
+    }
+
+    [Theory]
+    [InlineData("x  = 1", "X = 1", "codeSpacing")]
+    [InlineData("x\t  = 1", "X = 1", "codeSpacing")]
+    [InlineData("Debug.Print  \"Keep # and [ here  exactly\"  'two  spaces", "Debug.Print \"Keep # and [ here  exactly\" 'two  spaces", "codeSpacing")]
+    [InlineData("Debug.Print \"two  spaces\"", "Debug.Print \"two spaces\"", "sourceChanged")]
+    [InlineData("Debug.Print \"He said \"\"two  spaces\"\"\"", "Debug.Print \"He said \"\"two spaces\"\"\"", "sourceChanged")]
+    [InlineData("x = 1 'two  spaces", "x = 1 'two spaces", "sourceChanged")]
+    [InlineData("If ready Then Rem two  spaces", "If ready Then Rem two spaces", "sourceChanged")]
+    [InlineData("Debug.Print [two  spaces]", "Debug.Print [two spaces]", "sourceChanged")]
+    [InlineData("x = #1  Jan 2020#", "x = #1 Jan 2020#", "sourceChanged")]
+    [InlineData("Debug.Print x", "Debug.Printx", "sourceChanged")]
+    [InlineData("x  = 1\ny = 2", "x = 1\ny = 3", "sourceChanged")]
+    public void Replace_MismatchReportsLineAndClassificationWithoutReturningSource(string expected, string observed, string kind)
+    {
+        string current = "old";
+        string stored = $"Sub F()\n{observed}\nEnd Sub";
+        var failure = Assert.Throws<VbaSourceEditException>(() => VbaModuleSource.Replace("M", VbaModuleSource.ComputeHash(current),
+            $"Sub F()\n{expected}\nEnd Sub", () => current, () => current = "", _ => current = stored));
+        Assert.Equal("verifying", failure.State.Phase);
+        Assert.Equal(2, failure.State.FirstDifferentLine);
+        Assert.Equal(kind, failure.State.MismatchKind);
+        Assert.Equal(VbaModuleSource.ComputeHash(stored), failure.State.SourceHash);
+        Assert.Equal(stored, current);
+        Assert.DoesNotContain(observed, failure.ToString(), StringComparison.Ordinal);
     }
 
     [Theory]
@@ -148,6 +178,31 @@ public sealed class VbaModuleSourceTests
         Assert.Equal(VbaModuleSource.ComputeHash(source), failure.State.SourceHash);
         Assert.Equal(1, failure.State.LineCount);
         Assert.DoesNotContain(source, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Import_ExtraLineReportsFirstMissingLineOfTheExpectedSource()
+    {
+        const string expected = "Option Explicit";
+        const string observed = "Option Explicit\nPrivate Const TestValue = 1";
+        var failure = Assert.Throws<VbaSourceEditException>(() => VbaModuleSource.Import("M", expected, [],
+            () => { }, _ => { }, _ => { }, () => "M", () => observed));
+        Assert.Equal("verifying", failure.State.Phase);
+        Assert.Equal(2, failure.State.FirstDifferentLine);
+        Assert.Equal("sourceChanged", failure.State.MismatchKind);
+        Assert.Equal(VbaModuleSource.ComputeHash(observed), failure.State.SourceHash);
+        Assert.DoesNotContain("TestValue", failure.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("", "\nPrivate Const TestValue = 1")]
+    [InlineData("Option Explicit", "")]
+    public void Import_MismatchBetweenEmptyAndNonemptySourceStartsAtFirstLine(string expected, string observed)
+    {
+        var failure = Assert.Throws<VbaSourceEditException>(() => VbaModuleSource.Import("M", expected, [],
+            () => { }, _ => { }, _ => { }, () => "M", () => observed));
+        Assert.Equal(1, failure.State.FirstDifferentLine);
+        Assert.Equal("sourceChanged", failure.State.MismatchKind);
     }
 
     [Fact]

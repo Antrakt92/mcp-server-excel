@@ -40,6 +40,8 @@ public sealed class VbaProcedureEditTests
         Assert.Equal(VbaModuleSource.ComputeHash("Option Explicit\n" + current), failure.State.SourceHash);
         Assert.Equal(4, failure.State.LineCount);
         Assert.Null(failure.State.ReadBackError);
+        Assert.Null(failure.State.FirstDifferentLine);
+        Assert.Null(failure.State.MismatchKind);
         Assert.Equal(1, inserts);
         Assert.Equal(Source.Replace("\n", "\r\n", StringComparison.Ordinal), current);
     }
@@ -55,7 +57,23 @@ public sealed class VbaProcedureEditTests
         Assert.Equal("verifying", failure.State.Phase);
         Assert.Equal("observed read failed", failure.State.ReadBackError);
         Assert.Null(failure.State.SourceHash);
+        Assert.Equal(1, failure.State.FirstDifferentLine);
+        Assert.Equal("sourceChanged", failure.State.MismatchKind);
         Assert.Equal("unexpected", current);
+    }
+
+    [Fact]
+    public void ProcedureSpacingMismatch_ReportsLineRelativeToProcedureAndHashOfModule()
+    {
+        const string expected = "Sub F()\nvalue  = 1\nEnd Sub";
+        const string observed = "SUB F()\nValue = 1\nEND SUB";
+        const string module = "Option Explicit\n\n" + observed;
+        var failure = Assert.Throws<VbaSourceEditException>(() => VbaProcedureSource.Replace("M", expected,
+            () => { }, _ => { }, () => observed, () => module));
+        Assert.Equal(2, failure.State.FirstDifferentLine);
+        Assert.Equal("codeSpacing", failure.State.MismatchKind);
+        Assert.Equal(5, failure.State.LineCount);
+        Assert.Equal(VbaModuleSource.ComputeHash(module), failure.State.SourceHash);
     }
 
     [Fact]

@@ -71,6 +71,7 @@ internal static class VbaProcedureSource
         ParseSingleProcedure(normalized);
         cancellationToken.ThrowIfCancellationRequested();
         string phase = "deleting";
+        (int Line, string Kind)? mismatch = null;
         try
         {
             delete();
@@ -79,13 +80,14 @@ internal static class VbaProcedureSource
             phase = "verifying";
             cancellationToken.ThrowIfCancellationRequested();
             string stored = readBody();
-            if (!VbaModuleSource.EquivalentReadBack(normalized, stored))
+            mismatch = VbaModuleSource.FindReadBackMismatch(normalized, stored);
+            if (mismatch is not null)
                 throw new InvalidOperationException("The procedure source read back from Excel differs from the supplied replacement.");
             return stored;
         }
         catch (Exception failure)
         {
-            throw VbaModuleSource.DescribeEditFailure(moduleName, phase, failure, readModule);
+            throw VbaModuleSource.DescribeEditFailure(moduleName, phase, failure, readModule, mismatch);
         }
     }
 
