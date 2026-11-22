@@ -2,7 +2,6 @@
 // Copyright (c) Stephan Brenner. All rights reserved.
 // </copyright>
 
-using System.Diagnostics;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
 
@@ -24,11 +23,6 @@ public class PythonInExcelTestsFixture : IAsyncLifetime
     /// Path to the shared test file.
     /// </summary>
     public string TestFilePath { get; private set; } = null!;
-
-    /// <summary>
-    /// Results of fixture creation (exposed for validation).
-    /// </summary>
-    public FixtureCreationResult CreationResult { get; private set; } = null!;
 
     /// <summary>
     /// Initializes a new instance of the fixture.
@@ -56,30 +50,10 @@ public class PythonInExcelTestsFixture : IAsyncLifetime
     /// </summary>
     public Task InitializeAsync()
     {
-        var sw = Stopwatch.StartNew();
-
         TestFilePath = Path.Join(_tempDir, "PythonInExcelTest.xlsx");
-        CreationResult = new FixtureCreationResult();
-
-        try
-        {
-            using var manager = new SessionManager();
-            var sessionId = manager.CreateSessionForNewFile(TestFilePath, show: false);
-            manager.CloseSession(sessionId, save: true);
-            CreationResult.FileCreated = true;
-
-            sw.Stop();
-            CreationResult.Success = true;
-            CreationResult.CreationTimeSeconds = sw.Elapsed.TotalSeconds;
-        }
-        catch (Exception ex)
-        {
-            CreationResult.Success = false;
-            CreationResult.ErrorMessage = ex.Message;
-            sw.Stop();
-            throw;
-        }
-
+        using var manager = new SessionManager();
+        var sessionId = manager.CreateSessionForNewFile(TestFilePath, show: false);
+        manager.CloseSession(sessionId, save: true);
         return Task.CompletedTask;
     }
 
