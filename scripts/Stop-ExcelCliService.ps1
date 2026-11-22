@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Forcibly stops only CLI background services from this worktree and Windows session.
+    Forcibly stops CLI background services owned by the current account in this worktree and Windows session.
 .DESCRIPTION
     Development builds do not save workbooks or terminate Excel. Unsaved work
     in stopped services may be lost. An optional pipe limits test-run cleanup.
@@ -13,6 +13,10 @@ $ErrorActionPreference = 'Stop'
 $buildProcess = [Diagnostics.Process]::GetCurrentProcess()
 try { $buildSession = $buildProcess.SessionId }
 finally { $buildProcess.Dispose() }
+$buildIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try { $buildOwnerSid = $buildIdentity.User.Value }
+finally { $buildIdentity.Dispose() }
+if ([string]::IsNullOrWhiteSpace($buildOwnerSid)) { throw 'Cannot verify the current Windows account.' }
 $root = Split-Path -Parent $PSScriptRoot
 $cliPaths = @(
     (Join-Path $root 'src\ExcelMcp.CLI\bin\Release\net10.0-windows\excelcli.exe'),
@@ -50,9 +54,15 @@ foreach ($candidate in Get-CimInstance Win32_Process -Filter "Name = 'excelcli.e
             continue
         }
         $current = Get-CimInstance Win32_Process -Filter $processFilter
-        if ($null -eq $current -or $current.SessionId -ne $buildSession -or $current.CreationDate -ne $candidate.CreationDate -or
+        if ($process.HasExited -or $null -eq $current -or $current.ProcessId -ne $candidate.ProcessId -or
+            $current.SessionId -ne $buildSession -or $current.CreationDate -ne $candidate.CreationDate -or
             $current.ExecutablePath -ne $candidate.ExecutablePath -or
             $current.CommandLine -ne $candidate.CommandLine) {
+            continue
+        }
+        # An alternate Windows account can share the desktop session and worktree.
+        $owner = Invoke-CimMethod -InputObject $current -MethodName GetOwnerSid
+        if ($null -eq $owner -or $owner.ReturnValue -ne 0 -or $owner.Sid -cne $buildOwnerSid -or $process.HasExited) {
             continue
         }
         $process.Kill()

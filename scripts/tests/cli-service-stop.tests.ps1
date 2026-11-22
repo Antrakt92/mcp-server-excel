@@ -7,6 +7,9 @@ $debug = Join-Path $root 'src\ExcelMcp.CLI\bin\Debug\net10.0-windows\excelcli.ex
 $testHostProcess = [Diagnostics.Process]::GetCurrentProcess()
 try { $buildSession = $testHostProcess.SessionId }
 finally { $testHostProcess.Dispose() }
+$testIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try { $buildOwnerSid = $testIdentity.User.Value }
+finally { $testIdentity.Dispose() }
 
 function New-Candidate([int]$Id, [string]$Path, [string]$Arguments, $Session = $buildSession) {
     [pscustomobject]@{
@@ -54,6 +57,30 @@ function Stop-Process {
         throw 'process-exited'
     }
     if ($global:stopFailure) { throw 'process-stop-denied' }
+}
+
+function Invoke-CimMethod {
+    [CmdletBinding()]
+    param($InputObject, [string]$MethodName)
+    $id = $InputObject.ProcessId
+    $process = $global:handles[$id]
+    if ($MethodName -ne 'GetOwnerSid' -or $null -eq $process -or -not $process.Pinned -or
+        $process.Disposed -or $process.HasExited -or
+        -not [object]::ReferenceEquals($InputObject, $global:revalidation[$id])) {
+        throw 'Process ownership must be read only for a revalidated identity with a live, pinned handle.'
+    }
+    $global:ownerChecks.Add($id)
+    if ($global:exitDuringOwnerLookup) {
+        $process.HasExited = $true
+        $global:revalidation.Remove($id)
+        throw 'process-exited'
+    }
+    if ($global:ownerLookupDenied) { throw 'owner-lookup-denied' }
+    if ($global:ownerUnavailable) { return [pscustomobject]@{ ReturnValue = 2; Sid = $null } }
+    [pscustomobject]@{
+        ReturnValue = 0
+        Sid = if ($global:foreignOwner) { 'S-1-99-12345' } elseif (-not $global:ownerMissing) { $buildOwnerSid }
+    }
 }
 
 function Get-Process {
@@ -120,6 +147,11 @@ foreach ($case in @(
     @{ Name = 'foreign-session'; Candidates = @($local[0], $foreignSession, $unknownSession); Expected = @(11); NoHandles = @(26, 27) },
     @{ Name = 'foreign-handle-session'; Candidates = @($local[0]); ChangeSessionAtHandle = $true; Expected = @() },
     @{ Name = 'foreign-session-on-revalidation'; Candidates = @($local[0]); ChangeSessionInValidation = $true; Expected = @() },
+    @{ Name = 'foreign-owner-in-build-session'; Candidates = @($local[0]); ForeignOwner = $true; OwnerChecks = @(11); Expected = @() },
+    @{ Name = 'unavailable-owner'; Candidates = @($local[0]); OwnerUnavailable = $true; OwnerChecks = @(11); Expected = @() },
+    @{ Name = 'missing-owner'; Candidates = @($local[0]); OwnerMissing = $true; OwnerChecks = @(11); Expected = @() },
+    @{ Name = 'owner-lookup-denied'; Candidates = @($local[0]); OwnerLookupDenied = $true; OwnerChecks = @(11); Expected = @(); Error = 'owner-lookup-denied' },
+    @{ Name = 'exit-during-owner-lookup'; Candidates = @($local[0]); ExitDuringOwnerLookup = $true; OwnerChecks = @(11); Expected = @() },
     @{ Name = 'no-process'; Candidates = @(); Expected = @() },
     @{ Name = 'already-exited'; Candidates = @($local[0]); Missing = $true; Expected = @() },
     @{ Name = 'reused-pid'; Candidates = @($local[0]); Reused = $true; Expected = @() },
@@ -143,6 +175,7 @@ foreach ($case in @(
     if ($case.ChangedPath) { $global:revalidation[11].ExecutablePath = $debug }
     if ($case.ChangedCommand) { $global:revalidation[11].CommandLine = "`"$release`" service status" }
     $global:stopped = [Collections.Generic.List[int]]::new()
+    $global:ownerChecks = [Collections.Generic.List[int]]::new()
     $global:handles = @{}
     $global:replaceAfterValidation = $case.ReplaceAfterValidation
     $global:replaceAtHandle = $case.ReplaceAtHandle
@@ -153,6 +186,11 @@ foreach ($case in @(
     $global:stopFailure = $case.StopFailure
     $global:queryFailure = $case.QueryFailure
     $global:exitDuringStop = $case.ExitDuringStop
+    $global:foreignOwner = $case.ForeignOwner
+    $global:ownerUnavailable = $case.OwnerUnavailable
+    $global:ownerMissing = $case.OwnerMissing
+    $global:ownerLookupDenied = $case.OwnerLookupDenied
+    $global:exitDuringOwnerLookup = $case.ExitDuringOwnerLookup
     $failure = $null
     try { & $stopScript -PipeName $case.Pipe }
     catch { $failure = $_.Exception.GetBaseException().Message }
@@ -162,6 +200,9 @@ foreach ($case in @(
     elseif ($failure) { throw "$($case.Name): $failure" }
     if (($global:stopped -join ',') -ne ($case.Expected -join ',')) {
         throw "$($case.Name): expected PIDs $($case.Expected -join ','), stopped $($global:stopped -join ',')."
+    }
+    if ($case.OwnerChecks -and ($global:ownerChecks -join ',') -ne ($case.OwnerChecks -join ',')) {
+        throw "$($case.Name): did not validate the expected owner's identity."
     }
     foreach ($id in $case.NoHandles) {
         if ($global:handles.ContainsKey($id)) { throw "$($case.Name): opened a handle outside the verified session." }
