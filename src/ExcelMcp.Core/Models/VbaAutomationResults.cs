@@ -13,6 +13,10 @@ public sealed class VbaSourceEditState
     public int? LineCount { get; init; }
     /// <summary>Independent read-back failure, when the remaining source could not be inspected.</summary>
     public string? ReadBackError { get; init; }
+    /// <summary>First mismatching line in the normalized module or procedure source, starting at one.</summary>
+    public int? FirstDifferentLine { get; init; }
+    /// <summary>codeSpacing for recognized spacing changes, or sourceChanged for other mismatches.</summary>
+    public string? MismatchKind { get; init; }
 }
 
 /// <summary>A source edit failed after mutation started; retains its original cause and observed state.</summary>

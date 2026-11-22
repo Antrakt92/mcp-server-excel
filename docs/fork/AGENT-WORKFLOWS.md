@@ -98,6 +98,14 @@ Read a module with `vba_read` action `view` before a full replacement. Pass its
 returned `sourceHash` as `expected_source_hash` to `vba` action `replace-module`,
 with `module_name` and the new `vba_code` or `vba_code_file`. CLI uses
 `vba replace-module --expected-source-hash` and `--vba-code-file`.
+
+If source read-back differs after a VBA edit, inspect `partialState.firstDifferentLine`
+and `partialState.mismatchKind`. The line number is relative to the supplied
+module or procedure after input normalization. `codeSpacing` identifies spacing
+differences outside protected VBA text. `sourceChanged` means the difference
+could not be classified as code spacing. Read the edited module again and use
+its current fingerprint before retrying. The error leaves the post-edit source
+available for inspection.
 Use absolute Windows input file paths in MCP, including in batch entries.
 The CLI resolves relative input file paths against its working directory.
 

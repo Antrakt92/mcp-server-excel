@@ -61,6 +61,7 @@ internal static class VbaModuleSource
             Convert.FromHexString(ComputeHash(current)), Convert.FromHexString(expectedHash)))
             throw new OperationFailureException(OperationFailureCategory.Conflict, "The module changed after it was read. Read it again before replacing it.");
         string phase = "deleting";
+        (int Line, string Kind)? mismatch = null;
         try
         {
             delete();
@@ -68,13 +69,14 @@ internal static class VbaModuleSource
             if (normalized.Length != 0) insert(normalized);
             phase = "verifying";
             string stored = read();
-            if (!CanonicalReadBack(normalized).Equals(CanonicalReadBack(stored), StringComparison.Ordinal))
+            mismatch = FindReadBackMismatch(normalized, stored);
+            if (mismatch is not null)
                 throw new InvalidOperationException("The source read back from Excel differs from the supplied replacement.");
             return stored;
         }
         catch (Exception ex)
         {
-            throw DescribeEditFailure(moduleName, phase, ex, read);
+            throw DescribeEditFailure(moduleName, phase, ex, read, mismatch);
         }
     }
 
@@ -88,6 +90,7 @@ internal static class VbaModuleSource
             throw new OperationFailureException(OperationFailureCategory.Conflict,
                 $"Module '{moduleName}' already exists. Use update or replace-module to modify it.");
         string phase = "creating";
+        (int Line, string Kind)? mismatch = null;
         try
         {
             create();
@@ -96,7 +99,8 @@ internal static class VbaModuleSource
             phase = "inserting";
             if (normalized.Length != 0) insert(normalized);
             phase = "verifying";
-            if (!CanonicalReadBack(normalized).Equals(CanonicalReadBack(read()), StringComparison.Ordinal))
+            mismatch = FindReadBackMismatch(normalized, read());
+            if (mismatch is not null)
                 throw new InvalidOperationException("Imported source read back from Excel differs from the supplied source.");
         }
         catch (Exception ex)
@@ -122,14 +126,17 @@ internal static class VbaModuleSource
                     Phase = phase,
                     SourceHash = hash,
                     LineCount = lineCount,
-                    ReadBackError = readBackErrors.Count == 0 ? null : string.Join(" ", readBackErrors)
+                    ReadBackError = readBackErrors.Count == 0 ? null : string.Join(" ", readBackErrors),
+                    FirstDifferentLine = mismatch?.Line,
+                    MismatchKind = mismatch?.Kind
                 });
         }
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Observed source is secondary to the primary mutation failure. Preserve both and never roll back.")]
-    internal static VbaSourceEditException DescribeEditFailure(string moduleName, string phase, Exception failure, Func<string> read)
+    internal static VbaSourceEditException DescribeEditFailure(string moduleName, string phase,
+        Exception failure, Func<string> read, (int Line, string Kind)? mismatch)
     {
         string? hash = null;
         int? lineCount = null;
@@ -142,11 +149,77 @@ internal static class VbaModuleSource
         }
         catch (Exception readFailure) { readBackError = readFailure.Message; }
         return new VbaSourceEditException("VBA source editing failed after mutation started. No rollback was attempted; inspect the observed module state before continuing.", failure,
-            new VbaSourceEditState { ModuleName = moduleName, Phase = phase, SourceHash = hash, LineCount = lineCount, ReadBackError = readBackError });
+            new VbaSourceEditState
+            {
+                ModuleName = moduleName,
+                Phase = phase,
+                SourceHash = hash,
+                LineCount = lineCount,
+                ReadBackError = readBackError,
+                FirstDifferentLine = mismatch?.Line,
+                MismatchKind = mismatch?.Kind
+            });
     }
 
-    internal static bool EquivalentReadBack(string expected, string observed) =>
-        CanonicalReadBack(expected).Equals(CanonicalReadBack(observed), StringComparison.Ordinal);
+    internal static (int Line, string Kind)? FindReadBackMismatch(string expected, string observed)
+    {
+        string expectedCanonical = CanonicalReadBack(expected);
+        string observedCanonical = CanonicalReadBack(observed);
+        if (expectedCanonical.Equals(observedCanonical, StringComparison.Ordinal))
+            return null;
+
+        string[] expectedLines = expectedCanonical.Length == 1 ? [] : expectedCanonical[..^1].Split('\n');
+        string[] observedLines = observedCanonical.Length == 1 ? [] : observedCanonical[..^1].Split('\n');
+        int sharedLines = Math.Min(expectedLines.Length, observedLines.Length);
+        int? firstDifferentLine = null;
+        bool spacingOnly = expectedLines.Length == observedLines.Length;
+        for (int index = 0; index < sharedLines; index++)
+        {
+            string expectedLine = expectedLines[index];
+            string observedLine = observedLines[index];
+            if (expectedLine.Equals(observedLine, StringComparison.Ordinal))
+                continue;
+
+            firstDifferentLine ??= index + 1;
+            if (!spacingOnly)
+                break;
+
+            string? expectedSpacing = CollapseCodeSpacing(expectedLine);
+            if (expectedSpacing is null || !expectedSpacing.Equals(CollapseCodeSpacing(observedLine), StringComparison.Ordinal))
+            {
+                spacingOnly = false;
+                break;
+            }
+        }
+        return (firstDifferentLine ?? sharedLines + 1, spacingOnly ? "codeSpacing" : "sourceChanged");
+    }
+
+    // Used only to describe a failed comparison. Keep token boundaries, strings and comments verbatim.
+    private static string? CollapseCodeSpacing(string line)
+    {
+        int comment = CommentStart(line);
+        var result = new StringBuilder(line.Length);
+        bool quoted = false;
+        bool codeSpacing = false;
+        for (int index = 0; index < comment; index++)
+        {
+            char character = line[index];
+            if (!quoted && character is '[' or ']' or '#')
+                return null; // Excel bracket expressions and VBA date literals need separate parsing.
+            if (!quoted && character is ' ' or '\t')
+            {
+                if (!codeSpacing)
+                    result.Append(' ');
+                codeSpacing = true;
+                continue;
+            }
+            codeSpacing = false;
+            if (character == '"')
+                quoted = !quoted;
+            result.Append(character);
+        }
+        return quoted ? null : result.Append(line.AsSpan(comment)).ToString();
+    }
 
     // Shared by procedure parsing and read-back comparison. Rem starts after labels, Then, Else, or a colon.
     internal static int CommentStart(string line)
