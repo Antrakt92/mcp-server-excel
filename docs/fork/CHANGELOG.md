@@ -7,6 +7,7 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.9.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.9.0) | 2026-11-22 | Close history, worker readiness, and VBA readback diagnostics |
 | [5.8.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.8.0) | 2026-11-21 | VBA operation receipts, save and close diagnostics, and range search fixes |
 | [5.7.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.1) | 2026-11-21 | Safer workbook access changes and fixes for worksheet, formatting, VBA and CLI commands |
 | [5.7.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.0) | 2026-11-21 | MCP shutdown diagnostics, Excel recovery and safer workbook edits |
@@ -33,6 +34,22 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.9.0 — 2026-11-22
+
+### Closing and recovery
+
+- `file_read list` and `excelcli session list` now include `recentCloseAttempts`. For a known session, the history shows whether the worker confirmed close, whether the controller released the workbook claims, whether a save during close was confirmed, and any matching native Excel exit. It correlates the exit by PID and exact process creation time.
+- A command failure and a failure recording its completion can now be read separately. A successful retry retains `lastFailure` and any earlier worker status diagnostic. The controller keeps up to 16 recent session/process pairs in memory.
+- `closeReadiness` distinguishes a known blocker from a failed status check. A previously reported blocker stays visible. When readiness is unconfirmed, an authorized close of the same session rechecks Excel using its existing safeguards. Worker diagnostics include the failing stage, exception type, COM HRESULT, and last matching native observation when available.
+
+### VBA source edits
+
+- If the text read back after an import, module replacement, or procedure replacement differs from the supplied code, `partialState.firstDifferentLine` points to the first difference in the normalized input. `partialState.mismatchKind` reports `codeSpacing` when the difference is limited to recognized code spacing. The response omits the source line. The source fingerprint and strict read-back checks still apply.
+
+The upstream base remains **2.6.13**. Dependency versions are unchanged.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.8.0...v5.9.0)
 
 ## 5.8.0 — 2026-11-21
 
