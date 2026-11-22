@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using StreamJsonRpc;
 
@@ -14,7 +15,27 @@ internal sealed class ExcelWorkerClient
     private readonly Lock _snapshotLock = new();
     internal WorkerRegistration Registration { get; private set; }
     internal WorkerSnapshot? Snapshot { get; private set; }
-    internal string? StatusError { get; set; }
+    private volatile WorkerStatusFailure? _statusFailure;
+    internal string? StatusError
+    {
+        get => _statusFailure?.Message;
+        set => _statusFailure = value is null ? null : new(value);
+    }
+
+    internal void ReportStatusFailure(string stage, string message, Exception error) =>
+        _statusFailure = WorkerStatusDiagnostic.Capture(stage, message, error);
+
+    internal WorkerStatusFailure? GetStatusFailure(WorkerSnapshot? live, WorkerSnapshot? published) =>
+        _statusFailure ?? FromSnapshot(live) ?? FromSnapshot(published);
+
+    private static WorkerStatusFailure? FromSnapshot(WorkerSnapshot? snapshot) =>
+        snapshot?.StatusError is { } message ? new(message, snapshot.StatusDiagnostic) : null;
+
+    internal JsonObject? BuildStatusDiagnostic(WorkerSnapshot? fallback = null)
+    {
+        var live = Snapshot;
+        return GetStatusFailure(live, fallback)?.Diagnostic?.ToJson(live?.Registration ?? Registration);
+    }
 
     internal ExcelWorkerClient(WorkerRegistration registration, WorkerProcess controller, string generation)
     {
@@ -71,7 +92,7 @@ internal sealed class ExcelWorkerClient
                 return current;
             Registration = snapshot.Registration;
             Snapshot = snapshot;
-            StatusError = snapshot.StatusError;
+            _statusFailure = FromSnapshot(snapshot);
             return snapshot;
         }
     }

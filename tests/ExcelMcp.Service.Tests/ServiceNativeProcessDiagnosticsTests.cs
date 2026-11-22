@@ -42,7 +42,7 @@ public sealed partial class ExcelMcpServiceErrorTests
             using var host = new ExcelWorkerHost(registration, service, registry);
             var refresh = typeof(ExcelWorkerHost).GetMethod("TryRefreshSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
             refresh.Invoke(host, null);
-            Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+            Assert.Null(GetPrivateField<WorkerStatusFailure?>(host, "_statusFailure"));
             Assert.Single(GetPrivateField<WorkerSnapshot>(host, "_snapshot").Sessions);
 
             Assert.Same(batch.ExecuteException, Assert.Throws<InvalidOperationException>(() => batch.Execute(static (_, _) => { })));
@@ -52,13 +52,15 @@ public sealed partial class ExcelMcpServiceErrorTests
             {
                 Directory.CreateDirectory(temporary);
                 refresh.Invoke(host, null);
-                Assert.Contains("Excel status could not be refreshed", GetPrivateField<string>(host, "_statusError"));
+                var failure = GetPrivateField<WorkerStatusFailure>(host, "_statusFailure");
+                Assert.Contains("Excel status could not be refreshed", failure.Message);
+                Assert.Equal("snapshotRefresh", failure.Diagnostic!.Stage);
                 Assert.Single(GetPrivateField<WorkerSnapshot>(host, "_snapshot").Sessions);
                 Assert.Equal(registration, registry.Read(registration.PipeName));
                 Directory.Delete(temporary);
             }
             refresh.Invoke(host, null);
-            Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+            Assert.Null(GetPrivateField<WorkerStatusFailure?>(host, "_statusFailure"));
 
             var snapshot = GetPrivateField<WorkerSnapshot>(host, "_snapshot");
             var expectedExit = state == ExcelNativeProcessState.Exited ? observation : null;
@@ -79,7 +81,7 @@ public sealed partial class ExcelMcpServiceErrorTests
                 // The same exit is already durable, so later polls do not write again.
                 Directory.CreateDirectory(temporary);
                 refresh.Invoke(host, null);
-                Assert.Null(GetPrivateField<string?>(host, "_statusError"));
+                Assert.Null(GetPrivateField<WorkerStatusFailure?>(host, "_statusFailure"));
                 Assert.Equal(expectedExit, GetPrivateField<WorkerSnapshot>(host, "_snapshot").Registration.LastExcelObservation);
                 Assert.Equal(snapshot.Registration, registry.Read(registration.PipeName));
             }

@@ -136,6 +136,55 @@ public sealed class ExcelWorkerBoundaryTests
         }
     }
 
+    [Fact(Timeout = 15000)]
+    public async Task WorkerSnapshot_ReportsRefreshFailureWithoutReplacingCompletedResponse()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-status-refresh-");
+        var registry = new WorkerRegistry(directory.FullName);
+        var process = WorkerProcess.Current;
+        var generation = Guid.NewGuid().ToString("N");
+        var registration = new WorkerRegistration("excelmcp-worker-" + generation, process, process,
+            generation, WorkerRegistry.Build, null);
+        using var host = new ExcelWorkerHost(registration, registry: registry);
+        var run = host.RunAsync();
+        var worker = new ExcelWorkerClient(registration, process, generation);
+        await worker.InitializeAsync();
+        try
+        {
+#pragma warning disable CA2201 // Synthetic COM failure exercises read-only status reporting without Excel.
+            host.AfterOperationStatusCaptureForTests = () => throw new InvalidOperationException("Status wrapper.",
+                new System.Runtime.InteropServices.COMException("The interface is unknown.", unchecked((int)0x800706B5)));
+#pragma warning restore CA2201
+            var request = new ServiceRequest { Command = "diag.echo", Args = """{"message":"completed"}""" };
+            var completed = await worker.ExecuteWithAdmissionAsync(request, CancellationToken.None);
+            Assert.True(completed.Response.Success, completed.Response.ErrorMessage);
+            Assert.Contains("Status wrapper.", completed.Snapshot.StatusError);
+            using var snapshot = System.Text.Json.JsonDocument.Parse(ServiceProtocol.Serialize(completed.Snapshot));
+            var diagnostic = snapshot.RootElement.GetProperty("statusDiagnostic");
+            Assert.Equal("snapshotRefresh", diagnostic.GetProperty("stage").GetString());
+            Assert.Equal("COMException", diagnostic.GetProperty("exceptionType").GetString());
+            Assert.Equal("0x800706B5", diagnostic.GetProperty("hresult").GetString());
+            Assert.False(diagnostic.TryGetProperty("message", out _));
+            Assert.Null(completed.Snapshot.PendingOperation);
+
+            host.AfterOperationStatusCaptureForTests = null;
+            var second = await worker.ExecuteWithAdmissionAsync(request, CancellationToken.None);
+            Assert.True(second.Response.Success, second.Response.ErrorMessage);
+            Assert.Null(second.Snapshot.StatusError);
+            using var refreshed = System.Text.Json.JsonDocument.Parse(ServiceProtocol.Serialize(second.Snapshot));
+            Assert.False(refreshed.RootElement.TryGetProperty("statusDiagnostic", out _));
+        }
+        finally
+        {
+            host.AfterOperationStatusCaptureForTests = null;
+            var released = await worker.ReleaseAsync(CancellationToken.None);
+            Assert.True(released.Success, released.ErrorMessage);
+            await run.WaitAsync(TimeSpan.FromSeconds(3));
+            registry.Remove(registration.PipeName);
+            directory.Delete();
+        }
+    }
+
     [Theory(Timeout = 30000)]
     [InlineData(false)]
     [InlineData(true)]
