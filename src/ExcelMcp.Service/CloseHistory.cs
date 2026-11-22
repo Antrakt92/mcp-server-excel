@@ -17,7 +17,8 @@ internal sealed class CloseHistory
     private readonly Lock _gate = new();
     private readonly LinkedList<Entry> _entries = new();
 
-    internal void Record(Target target, ServiceResponse response, JsonObject? priorStatus = null)
+    internal (bool CloseConfirmed, bool SaveConfirmed) Record(
+        Target target, ServiceResponse response, JsonObject? priorStatus = null)
     {
         var recordingFailures = new List<Failure>();
         var close = response;
@@ -50,6 +51,7 @@ internal sealed class CloseHistory
             if (_entries.Count > Capacity)
                 _entries.RemoveFirst();
         }
+        return (confirmed, saved);
     }
 
     internal JsonArray Snapshot(IEnumerable<ExcelNativeProcessObservation> nativeExits, Func<string, bool> sessionReleased)

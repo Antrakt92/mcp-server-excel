@@ -971,6 +971,81 @@ public sealed partial class ExcelControllerTests
     }
 
     [Theory(Timeout = 30000)]
+    [InlineData(0u, false)]
+    [InlineData(0xC0000005u, false)]
+    [InlineData(0xC0000005u, true)]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    public async Task Controller_ObservedExcelFailureDoesNotConfirmAnUnacknowledgedClose(uint? exitCode, bool save)
+    {
+        using var exited = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+        _ = exited.Handle;
+        var identity = WorkerProcess.From(exited);
+        await exited.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var excel = new ExcelProcessIdentity(identity.ProcessId, identity.StartedAtUtcFileTime);
+        using var controller = new ExcelController(launcher: Launcher);
+        var worker = await controller.StartWorkerAsync(null, CancellationToken.None);
+        using var process = System.Diagnostics.Process.GetProcessById(worker.Registration.Worker.ProcessId);
+        _ = process.Handle;
+        Assert.Equal(worker.Registration.Worker, WorkerProcess.From(process));
+        var session = Guid.NewGuid().ToString("N");
+        var path = Path.Join(Path.GetTempPath(), $"exited-{Guid.NewGuid():N}.xlsx");
+        var registration = worker.Registration with { Excel = excel };
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            worker.RecordSnapshot(new WorkerSnapshot(registration, [new SessionDescriptor(session, path)],
+                new ServiceResponse
+                {
+                    Success = true,
+                    Result = JsonSerializer.Serialize(new
+                    {
+                        sessions = new[] { new { sessionId = session, filePath = path, operationPending = false } }
+                    })
+                }, null, null, new Dictionary<string, IReadOnlyList<string>> { [session] = [path] },
+                Revision: long.MaxValue - 1));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (controller.Sessions.Count == 0)
+                await Task.Delay(25, timeout.Token);
+            var retired = registration with
+            {
+                LastExcelObservation = new(excel, ExcelNativeProcessState.Exited, exitCode, null)
+            };
+            worker.RecordSnapshot(new WorkerSnapshot(retired, [],
+                new ServiceResponse { Success = true, Result = """{"sessions":[]}""" }, null, null,
+                new Dictionary<string, IReadOnlyList<string>>(), Revision: long.MaxValue));
+            while (controller.Sessions.Count != 0)
+                await Task.Delay(25, timeout.Token);
+
+            var close = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.close",
+                SessionId = session,
+                Args = JsonSerializer.Serialize(new { save })
+            });
+            if (exitCode == 0)
+            {
+                Assert.True(close.Success, close.ErrorMessage);
+                Assert.Contains("already closed", close.Result);
+                return;
+            }
+
+            Assert.False(close.Success);
+            Assert.Equal("ServiceUnavailable", close.ErrorCategory);
+            Assert.Contains("Excel process exited", close.ErrorMessage);
+            Assert.Contains("no work was repeated", close.ErrorMessage);
+            using var state = JsonDocument.Parse(Assert.IsType<string>(close.PartialState));
+            Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+            Assert.DoesNotContain("still be running", state.RootElement.GetProperty("message").GetString());
+        });
+        var cleanup = await Record.ExceptionAsync(() =>
+            process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        if (failure is not null && cleanup is not null)
+            throw new AggregateException(failure, cleanup);
+        if (failure is not null || cleanup is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture((failure ?? cleanup)!).Throw();
+    }
+
+    [Theory(Timeout = 30000)]
     [InlineData("session.save", null, "InvalidInput")]
     [InlineData("session.save", "missing", "SessionNotFound")]
     [InlineData("service.restart", null, "InvalidInput")]
