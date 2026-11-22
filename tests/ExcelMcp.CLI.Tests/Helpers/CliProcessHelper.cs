@@ -188,7 +188,7 @@ internal static class CliProcessHelper
         return builder.ToString().TrimEnd();
     }
 
-    private static async Task<CliResult> RunProcessAsync(
+    internal static async Task<CliResult> RunProcessAsync(
         ProcessStartInfo startInfo,
         string commandLabel,
         int timeoutMs,

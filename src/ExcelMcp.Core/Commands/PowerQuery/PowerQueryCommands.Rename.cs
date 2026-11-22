@@ -29,20 +29,10 @@ public partial class PowerQueryCommands
                 return result;
             }
 
-            // No-op when normalized names are exactly equal
-            if (RenameNameRules.IsNoOp(result.NormalizedOldName, result.NormalizedNewName))
-            {
-                result.Success = true;
-                return result;
-            }
-
             Excel.Queries? queries = null;
             Excel.WorkbookQuery? targetQuery = null;
             try
             {
-                queries = ctx.Book.Queries;
-
-                // Find target query (case-sensitive exact match first)
                 targetQuery = PowerQuery.PowerQueryHelpers.FindQueryByExactName(
                     ctx.Book,
                     result.NormalizedOldName);
@@ -52,8 +42,14 @@ public partial class PowerQueryCommands
                     result.ErrorMessage = $"Power Query '{result.NormalizedOldName}' not found.";
                     return result;
                 }
+                if (RenameNameRules.IsNoOp(result.NormalizedOldName, result.NormalizedNewName))
+                {
+                    result.Success = true;
+                    return result;
+                }
 
                 // Collect existing query names for conflict detection
+                queries = ctx.Book.Queries;
                 var existingNames = new List<string>();
                 int count = queries.Count;
                 for (int i = 1; i <= count; i++)
@@ -86,8 +82,8 @@ public partial class PowerQueryCommands
             }
             finally
             {
-                ComUtilities.Release(ref targetQuery!);
                 ComUtilities.Release(ref queries!);
+                ComUtilities.Release(ref targetQuery!);
             }
         });
     }

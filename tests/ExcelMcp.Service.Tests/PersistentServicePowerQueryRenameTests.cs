@@ -87,13 +87,15 @@ public sealed class PersistentServicePowerQueryRenameTests(
     [Fact]
     public void Rename_CaseInsensitiveConflict_ReturnsError() => AssertConflict(ignoreCase: true);
 
-    [Fact]
-    public void Rename_MissingQuery_ReturnsError()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Rename_MissingQuery_ReturnsError(bool sameName)
     {
         var name = CreateTracked();
         var guard = CreateGuard();
         var missing = UniqueName("Missing");
-        var newName = UniqueName("New");
+        var newName = sameName ? $"  {missing}  " : UniqueName("New");
         var before = SnapshotQueries();
         var result = _queries.Rename(_fixture.BatchToken, missing, newName);
         Assert.False(result.Success);

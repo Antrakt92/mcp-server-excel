@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Xunit;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -185,7 +186,9 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
     [Theory]
     [InlineData("columns", "B1:B400", "$B$1:$B$400", 400L)]
     [InlineData("rows", "A2:AZ2", "$A$2:$AZ$2", 52L)]
-    public void SpecialCells_VisibleOnOneHiddenDimension_ReturnsNoMatches(
+    [InlineData("columns", "B1:C400", "$B$1:$C$400", 800L)]
+    [InlineData("rows", "A2:AZ3", "$A$2:$AZ$3", 104L)]
+    public void SpecialCells_VisibleOnHiddenRectangle_DoesNotProbeCells(
         string axis, string rangeAddress, string visibleAddress, long cellCount)
     {
         var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
@@ -220,9 +223,19 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
             }
         });
 
-        using var hiddenResult = Discover(sheetName, rangeAddress, "visible");
-        Assert.Equal(0, hiddenResult.RootElement.GetProperty("cellCount").GetInt64());
-        Assert.Empty(ReadAreas(hiddenResult));
+        int fallbackProbes = 0;
+        try
+        {
+            RangeCommands.VisibleFallbackProbeForTests = () => Interlocked.Increment(ref fallbackProbes);
+            using var hiddenResult = Discover(sheetName, rangeAddress, "visible");
+            Assert.Equal(0, hiddenResult.RootElement.GetProperty("cellCount").GetInt64());
+            Assert.Empty(ReadAreas(hiddenResult));
+        }
+        finally
+        {
+            RangeCommands.VisibleFallbackProbeForTests = null;
+        }
+        Assert.Equal(0, fallbackProbes);
 
         var shown = _fixture.Send("rangeformat.set-visibility", new { sheetName, rangeAddress, axis, hidden = false });
         Assert.True(shown.Success, shown.ErrorMessage);

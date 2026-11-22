@@ -8,6 +8,8 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 public partial class RangeCommands
 {
+    internal static Action? VisibleFallbackProbeForTests { get; set; }
+
     /// <inheritdoc />
     public SpecialCellsResult GetSpecialCells(
         IExcelBatch batch, string sheetName, string rangeAddress, SpecialCellKind cellKind)
@@ -268,74 +270,71 @@ public partial class RangeCommands
     {
         if (cellKind != SpecialCellKind.Visible)
             return ContainsMatchingCellInBulk(scope, cellKind, ct, formulaErrors);
-        Excel.Range? cells = null;
         Excel.Range? rows = null;
         Excel.Range? columns = null;
         try
         {
             ct.ThrowIfCancellationRequested();
-            rows = scope.Rows;
-            columns = scope.Columns;
-            int rowCount = rows.Count;
-            int columnCount = columns.Count;
-
-            if (TryConfirmSingleHiddenDimension(scope, rowCount, columnCount))
+            rows = scope.EntireRow;
+            object? rowsHidden = rows.Hidden;
+            if (rowsHidden is true)
                 return false;
 
-            cells = scope.Cells;
-            for (int row = 1; row <= rowCount; row++)
-            {
-                for (int column = 1; column <= columnCount; column++)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    Excel.Range? cell = null;
-                    try
-                    {
-                        cell = cells[row, column];
-                        if (MatchesCell(cell, cellKind))
-                        {
-                            return true;
-                        }
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref cell);
-                    }
-                }
-            }
-            return false;
+            columns = scope.EntireColumn;
+            object? columnsHidden = columns.Hidden;
+            if (columnsHidden is true)
+                return false;
+
+            // A rectangle contains a visible cell exactly when both axes contain a visible member.
+            // A mixed aggregate needs a separate check of its own axis, not of every cell.
+            return (rowsHidden is false || ContainsVisibleMember(rows, true, ct))
+                && (columnsHidden is false || ContainsVisibleMember(columns, false, ct));
         }
         finally
         {
-            ComUtilities.Release(ref cells);
             ComUtilities.Release(ref columns);
             ComUtilities.Release(ref rows);
         }
     }
 
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
-        Justification = "A failed optional shortcut falls back to the existing per-cell verification, which still propagates errors.")]
-    private static bool TryConfirmSingleHiddenDimension(Excel.Range scope, int rowCount, int columnCount)
+    private static bool ContainsVisibleMember(Excel.Range dimension, bool rows, CancellationToken ct)
     {
-        if (rowCount != 1 && columnCount != 1)
-            return false;
-
-        Excel.Range? dimension = null;
+        Excel.Range? members = null;
         try
         {
-            // A single hidden row or column proves no cell in this rectangle is visible.
-            dimension = columnCount == 1 ? scope.EntireColumn : scope.EntireRow;
-            object? hidden = dimension.Hidden;
-            return hidden is true;
-        }
-        catch (COMException)
-        {
-            return false;
+            members = rows ? dimension.Rows : dimension.Columns;
+            return ContainsVisibleMember(members, ct);
         }
         finally
         {
-            ComUtilities.Release(ref dimension);
+            ComUtilities.Release(ref members);
         }
+    }
+
+    private static bool ContainsVisibleMember(Excel.Range members, CancellationToken ct)
+    {
+        int count = members.Count;
+        for (int index = 1; index <= count; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+            Excel.Range? member = null;
+            try
+            {
+                VisibleFallbackProbeForTests?.Invoke();
+                member = members[index];
+                object? hidden = member.Hidden;
+                if (hidden is false)
+                    return true;
+
+                if (hidden is not true)
+                    throw new InvalidOperationException("Excel could not verify the visibility of a row or column.");
+            }
+            finally
+            {
+                ComUtilities.Release(ref member);
+            }
+        }
+        return false;
     }
 
     private static bool ContainsMatchingCellInBulk(

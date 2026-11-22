@@ -55,14 +55,6 @@ public static class ExcelToolsBase
             response.InnerError, response.PartialState, contract);
     }
 
-    internal static string SerializeServiceResponse(ServiceResponse response, string? filePath = null)
-    {
-        var result = ReadServiceResponse(response, response.Command ?? "file");
-        if (filePath is not null && result.Error is not null)
-            result.Error["filePath"] = filePath;
-        return result.ToToolJson();
-    }
-
     public static Task<CallToolResult> ExecuteToolActionAsync(
         string toolName,
         string actionName,

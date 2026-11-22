@@ -128,6 +128,11 @@ controller generation and build. This recovers diagnostic evidence for an
 already-known Excel identity; it does not adopt an unseen process or confirm an
 unacknowledged workbook operation.
 
+If the session disappears after Excel exits with a nonzero or unavailable exit
+code, commands to that session report its last outcome as unknown. An explicit
+successful close reply can still confirm the close, including when the reply is
+retained inside a status recording error. Check the saved file before repeating
+any edits.
 
 `file_read list` and `excelcli session list` also return `recentCloseAttempts`.
 Each entry covers an explicitly requested close on a known session and pairs

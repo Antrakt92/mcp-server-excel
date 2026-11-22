@@ -104,8 +104,10 @@ Summaries hide native query text and exception messages by default. Set
 are needed; they can contain sensitive information. Trace files are stored by
 Excel under the current user's local application data folder. They may contain
 source names, query text, and error details. Manage or remove these files
-outside ExcelMcp. Use the returned `traceCursor` as `since` on the next summary
-to inspect only newer entries.
+outside ExcelMcp. When a summary returns a `traceCursor`, pass it as `since`
+on the next summary to inspect only newer entries. If `truncated` is true,
+check the scan warnings and retry with a narrower time window or process filter
+before advancing.
 
 The global setting can also be read with `settings_read` action
 `get-pq-tracing` and changed with `settings` action `set-pq-tracing`; CLI

@@ -34,7 +34,7 @@ internal sealed class ExcelController : IDisposable
     private readonly SemaphoreSlim _discovery = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _newWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
-    private enum SessionEnd { Closed, SavedAndClosed, WorkerExited }
+    private enum SessionEnd { Closed, SavedAndClosed, WorkerExited, ExcelExited }
     private readonly ConcurrentDictionary<string, SessionEnd> _closedSessions = new(StringComparer.Ordinal);
     private readonly CloseHistory _closeHistory = new();
     private readonly OperationReceipts _operationReceipts = new();
@@ -342,10 +342,12 @@ internal sealed class ExcelController : IDisposable
                 return ExcelMcpService.AlreadyClosedResponse(request, saved: end == SessionEnd.SavedAndClosed)
                     .WithCloseTimings(new Dictionary<string, double>());
             else if (!ExcelMcpService.IsSessionlessCommand(request.Command) && request.SessionId is { } lostId
-                && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd == SessionEnd.WorkerExited)
+                && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd is SessionEnd.WorkerExited or SessionEnd.ExcelExited)
                 return CreateWorkerError(request,
-                    new IOException("The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
-                    sent: true);
+                    new IOException(lostEnd == SessionEnd.ExcelExited
+                        ? "The workbook's Excel process exited. Its last outcome could not be confirmed; no work was repeated."
+                        : "The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
+                    sent: true, nativeExitObserved: lostEnd == SessionEnd.ExcelExited);
             else
             {
                 lock (_utilityLock)
@@ -436,18 +438,20 @@ internal sealed class ExcelController : IDisposable
             var response = execution.Response;
             completedResponse = response;
             if (closeTarget is not null)
-                _closeHistory.Record(closeTarget, response, priorCloseStatus);
+            {
+                var confirmation = _closeHistory.Record(closeTarget, response, priorCloseStatus);
+                if (execution.Accepted && confirmation.CloseConfirmed)
+                {
+                    // The reply confirms the close even if publishing its status failed.
+                    // Worker release and path cleanup still depend on their own evidence.
+                    var end = confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed;
+                    _closedSessions.AddOrUpdate(closeTarget.SessionId, end, (_, previous) =>
+                        previous == SessionEnd.SavedAndClosed ? previous : end);
+                }
+            }
             if (!execution.Accepted)
                 foreach (var path in reservedPaths)
                     _paths.TryRemove(new KeyValuePair<string, PathReservation>(path, reservation));
-            if (execution.Accepted && response.Success && request.Command == "session.close"
-                && request.SessionId is { } savedSession && response.Result is { } result
-                && JsonNode.Parse(result)?["saved"]?.GetValueKind() == JsonValueKind.True)
-            {
-                // Polling can observe the closed session and release its worker before this reply is published.
-                // Only an explicit worker receipt confirms that both save and close completed.
-                _closedSessions[savedSession] = SessionEnd.SavedAndClosed;
-            }
             if (execution.Accepted && request.Command == "workbook.save-as" && reservedPaths.Count > 0
                 && CanReconcileSaveAsClaim(response))
             {
@@ -494,7 +498,6 @@ internal sealed class ExcelController : IDisposable
                 }
                 if (response.Success && request.Command == "session.close" && request.SessionId is { } closed)
                 {
-                    _closedSessions.TryAdd(closed, SessionEnd.Closed);
                     _sessions.TryRemove(closed, out _);
                     foreach (var path in _paths.Where(path => path.Value.SessionId == closed))
                         _paths.TryRemove(path.Key, out _);
@@ -546,7 +549,7 @@ internal sealed class ExcelController : IDisposable
     }
 
     private static ServiceResponse CreateWorkerError(
-        ServiceRequest request, Exception ex, bool sent, ServiceResponse? completed = null) =>
+        ServiceRequest request, Exception ex, bool sent, ServiceResponse? completed = null, bool nativeExitObserved = false) =>
         completed?.WithCompletionFailure(request, ex) ?? new()
         {
             Success = false,
@@ -568,7 +571,9 @@ internal sealed class ExcelController : IDisposable
             PartialState = !sent || ex is ArgumentException or JsonException ? null : JsonSerializer.Serialize(new
             {
                 outcome = "unknown",
-                message = "The worker response could not be confirmed. Work may still be running; do not repeat edits automatically."
+                message = nativeExitObserved
+                    ? "Excel exited before the outcome could be confirmed. Check the saved workbook before repeating edits."
+                    : "The worker response could not be confirmed. Work may still be running; do not repeat edits automatically."
             }, ServiceProtocol.JsonOptions)
         };
 
@@ -751,14 +756,20 @@ internal sealed class ExcelController : IDisposable
                 }
             }
             if (settled)
+            {
+                var registration = snapshot.Registration;
+                var end = registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited, ExitCode: not 0 } exit
+                    && exit.Identity == (registration.Excel ?? registration.ReleasedExcel)
+                    ? SessionEnd.ExcelExited : SessionEnd.Closed;
                 foreach (var removed in _sessions.Where(entry => entry.Value == worker
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
-                    _closedSessions.TryAdd(removed.Key, SessionEnd.Closed);
+                    _closedSessions.TryAdd(removed.Key, end);
                     _sessions.TryRemove(removed);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
                         _paths.TryRemove(path);
                 }
+            }
             return snapshot;
         }
     }

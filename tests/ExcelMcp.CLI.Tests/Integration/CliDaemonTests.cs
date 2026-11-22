@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.CLI.Infrastructure;
 using Sbroenne.ExcelMcp.CLI.Tests.Helpers;
@@ -57,6 +59,85 @@ public sealed class CliDaemonTests(ITestOutputHelper output) : CliDaemonTestBase
 
         var processId = statusJson.RootElement.GetProperty("data").GetProperty("processId").GetInt32();
         _daemonProcess = Process.GetProcessById(processId);
+    }
+
+    [Fact]
+    public async Task ServiceStart_AutoStartsFromManagedToolWithoutApphost()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli managed tool ");
+        var entryPoint = Path.Combine(directory.FullName, "excelcli.dll");
+        var dotnet = Path.GetFullPath(Path.Combine(RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", "..", "dotnet.exe"));
+        var environment = TestEnv;
+        environment["EXCELMCP_TELEMETRY_MODE"] = "off";
+
+        Task<CliResult> RunManagedCliAsync(string action)
+        {
+            var start = new ProcessStartInfo(dotnet)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = directory.FullName
+            };
+            foreach (var argument in new[] { entryPoint, "-q", "service", action })
+                start.ArgumentList.Add(argument);
+            foreach (var (key, value) in environment)
+                start.Environment[key] = value;
+            return CliProcessHelper.RunProcessAsync(start, $"managed CLI service {action}", 30000, environment);
+        }
+
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            var source = Path.GetDirectoryName(CliProcessHelper.GetExePath())!;
+            var files = Directory.EnumerateFiles(source, "*.dll")
+                .Concat(Directory.EnumerateFiles(source, "excelcli.*.json"))
+                .Concat(Directory.EnumerateFiles(Path.Combine(source, "runtimes"), "*", SearchOption.AllDirectories));
+            foreach (var path in files)
+            {
+                var destination = Path.Combine(directory.FullName, Path.GetRelativePath(source, path));
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(path, destination);
+            }
+            Assert.False(File.Exists(Path.ChangeExtension(entryPoint, "exe")));
+
+            var started = await RunManagedCliAsync("start");
+            Assert.True(started.ExitCode == 0, started.Stdout + Environment.NewLine + started.Stderr);
+            using var startJson = JsonDocument.Parse(started.Stdout);
+            Assert.True(startJson.RootElement.GetProperty("success").GetBoolean());
+
+            var status = await RunManagedCliAsync("status");
+            Assert.True(status.ExitCode == 0, status.Stdout + Environment.NewLine + status.Stderr);
+            using var statusJson = JsonDocument.Parse(status.Stdout);
+            var data = statusJson.RootElement.GetProperty("data");
+            Assert.True(data.GetProperty("running").GetBoolean());
+            Assert.True(DaemonProcessTracker.TryGetTrackedProcess(_testPipeName, out var daemon));
+            using (daemon)
+            {
+                Assert.Equal(data.GetProperty("processId").GetInt32(), daemon.Id);
+                Assert.Equal(dotnet, daemon.MainModule?.FileName, ignoreCase: true);
+            }
+        });
+        var cleanup = await Record.ExceptionAsync(async () =>
+        {
+            DaemonProcessTracker.TryGetTrackedProcess(_testPipeName, out var daemon);
+            using (daemon)
+            {
+                if (daemon is not null)
+                {
+                    _ = daemon.Handle;
+                    var stopped = await RunManagedCliAsync("stop");
+                    Assert.True(stopped.ExitCode == 0, stopped.Stdout + Environment.NewLine + stopped.Stderr);
+                    await daemon.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
+            Assert.False(DaemonAutoStart.IsDaemonMutexHeld(_testPipeName));
+            directory.Delete(recursive: true);
+        });
+        if (failure is not null && cleanup is not null)
+            throw new AggregateException(failure, cleanup);
+        if (failure is not null || cleanup is not null)
+            ExceptionDispatchInfo.Capture((failure ?? cleanup)!).Throw();
     }
 
     [Fact]

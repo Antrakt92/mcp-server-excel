@@ -31,11 +31,6 @@ public partial class DataModelCommands
                 result.ErrorMessage = "New table name cannot be empty or whitespace.";
                 return result;
             }
-            if (RenameNameRules.IsNoOp(result.NormalizedOldName, result.NormalizedNewName))
-            {
-                result.Success = true;
-                return result;
-            }
             ct.ThrowIfCancellationRequested();
             if (!HasDataModelTables(ctx.Book))
             {
@@ -52,6 +47,11 @@ public partial class DataModelCommands
                 if (table is null)
                 {
                     result.ErrorMessage = DataModelErrorMessages.TableNotFound(result.NormalizedOldName);
+                    return result;
+                }
+                if (RenameNameRules.IsNoOp(result.NormalizedOldName, result.NormalizedNewName))
+                {
+                    result.Success = true;
                     return result;
                 }
                 var existingNames = new List<string>();

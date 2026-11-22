@@ -328,23 +328,6 @@ public sealed class ExcelToolsBaseTelemetryTests
     }
 
     [Fact]
-    public void SerializeServiceResponse_WritesOnlyErrorMessage()
-    {
-        var json = ExcelToolsBase.SerializeServiceResponse(new ServiceResponse
-        {
-            Success = false,
-            Command = "workbook.read",
-            ErrorMessage = "Workbook is unavailable.",
-            ErrorCategory = "SessionNotFound"
-        });
-
-        using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
-        Assert.Equal("Workbook is unavailable.", root.GetProperty("errorMessage").GetString());
-        Assert.False(root.TryGetProperty("error", out _));
-    }
-
-    [Fact]
     public void SerializeToolError_WritesOnlyErrorMessage()
     {
         var json = ExcelToolsBase.SerializeToolError(
