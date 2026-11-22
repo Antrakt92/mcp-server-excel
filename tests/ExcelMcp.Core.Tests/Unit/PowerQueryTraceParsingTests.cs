@@ -34,10 +34,22 @@ public sealed class PowerQueryTraceParsingTests
     [InlineData("DataMashup.Trace Information: 24579 : {\"Start\":\"2026-10-15T07:27:19Z\",\"Pid\":1}")]
     [InlineData("DataMashup.Trace Information: 24579 : {\"Action\":\"run\",\"Start\":\"bad\",\"Pid\":1}")]
     [InlineData("DataMashup.Trace Information: 24579 : {\"Action\":\"run\",\"Start\":\"2026-10-15T07:27:19Z\",\"Pid\":1,\"Duration\":\"bad\"}")]
+    [InlineData("DataMashup.Trace Information: 24579 : {\"Action\":\"run\",\"Start\":\"9999-12-31T23:59:59Z\",\"Pid\":1,\"Duration\":\"00:00:01\"}")]
     public void TryParse_InvalidLine_ReturnsFalse(string? line)
     {
         Assert.False(PowerQueryTraceLineParser.TryParse(line, out var entry));
         Assert.Null(entry);
+    }
+
+    [Fact]
+    public void TryParse_TraceLineEndingAtDateTimeLimit_ReadsEntry()
+    {
+        const string line =
+            """DataMashup.Trace Information: 24579 : {"Action":"run","Start":"9999-12-31T23:59:59Z","Pid":1,"Duration":"00:00:00.9999999"}""";
+
+        Assert.True(PowerQueryTraceLineParser.TryParse(line, out var entry));
+        Assert.NotNull(entry);
+        Assert.Equal(DateTime.MaxValue, entry.EndUtc);
     }
 
     [Theory]

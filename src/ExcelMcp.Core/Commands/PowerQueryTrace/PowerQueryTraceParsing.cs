@@ -72,6 +72,11 @@ internal static class PowerQueryTraceLineParser
                 return false;
             }
 
+            if (duration.Ticks > DateTime.MaxValue.Ticks - startUtc.Ticks)
+            {
+                return false;
+            }
+
             int? pid = GetInt(root, "Pid");
             if (pid is null)
             {
