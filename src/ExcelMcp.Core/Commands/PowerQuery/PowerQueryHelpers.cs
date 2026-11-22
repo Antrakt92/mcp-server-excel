@@ -50,16 +50,6 @@ public static class PowerQueryHelpers
     }
 
     /// <summary>
-    /// Compatibility overload for callers compiled against the object-based API.
-    /// </summary>
-    public static bool IsOrphanedPowerQueryConnection(object workbook, object connection)
-    {
-        return IsOrphanedPowerQueryConnection(
-            (Excel.Workbook)workbook,
-            (Excel.WorkbookConnection)connection);
-    }
-
-    /// <summary>
     /// Determines if a connection is a Power Query connection
     /// </summary>
     /// <param name="connection">Connection COM object</param>
@@ -67,14 +57,6 @@ public static class PowerQueryHelpers
     public static bool IsPowerQueryConnection(Excel.WorkbookConnection connection)
     {
         return TryGetMashupIdentity(connection, out _);
-    }
-
-    /// <summary>
-    /// Compatibility overload for callers compiled against the object-based API.
-    /// </summary>
-    public static bool IsPowerQueryConnection(object connection)
-    {
-        return IsPowerQueryConnection((Excel.WorkbookConnection)connection);
     }
 
     /// <summary>
