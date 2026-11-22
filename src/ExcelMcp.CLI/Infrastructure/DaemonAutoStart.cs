@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using Sbroenne.ExcelMcp.Service;
+using Sbroenne.ExcelMcp.Service.Workers;
 
 namespace Sbroenne.ExcelMcp.CLI.Infrastructure;
 
@@ -440,23 +441,16 @@ internal static class DaemonAutoStart
         OperationDeadline startupDeadline,
         CancellationToken cancellationToken)
     {
-        var exePath = ResolveDaemonExecutablePath();
-
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = exePath,
-            Arguments = $"service run --pipe-name \"{pipeName}\"",
-            UseShellExecute = true,
-            CreateNoWindow = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-            WorkingDirectory = Path.GetDirectoryName(exePath) ?? Environment.CurrentDirectory
-        };
+        var apphost = Path.Combine(AppContext.BaseDirectory, "excelcli.exe");
+        var launcher = File.Exists(apphost)
+            ? new ProductProcessLauncher(apphost, [])
+            : ProductProcessLauncher.Current();
 
         var daemonProcess = StartDaemonProcess(
             startupDeadline,
             cancellationToken,
-            exePath,
-            () => Process.Start(startInfo));
+            launcher.FileName,
+            () => launcher.Start(["service", "run", "--pipe-name", pipeName]));
 
         using (daemonProcess)
         {
@@ -531,23 +525,6 @@ internal static class DaemonAutoStart
                 $"Failed to start daemon process '{executablePath}': {ex.Message}",
                 ex);
         }
-    }
-
-    private static string ResolveDaemonExecutablePath()
-    {
-        var baseDirectoryCandidate = Path.Combine(AppContext.BaseDirectory, "excelcli.exe");
-        if (File.Exists(baseDirectoryCandidate))
-        {
-            return baseDirectoryCandidate;
-        }
-
-        var processPath = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(processPath) && File.Exists(processPath))
-        {
-            return processPath;
-        }
-
-        throw new InvalidOperationException("Cannot determine executable path to start daemon.");
     }
 
     private static string FormatDuration(TimeSpan duration)
