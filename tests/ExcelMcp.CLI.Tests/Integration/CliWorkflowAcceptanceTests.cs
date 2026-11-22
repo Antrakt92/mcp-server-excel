@@ -51,7 +51,8 @@ public sealed class CliWorkflowAcceptanceTests(ITestOutputHelper output) : IAsyn
         Assert.Equal(JsonValueKind.Null, values[0][3].ValueKind);
         Assert.Equal("#DIV/0!", values[1][0].GetString());
         Assert.Single(data.GetProperty("cellErrors").EnumerateArray());
-        var closed = await SendAsync("session", "close", "--session", Session, "--save");
+        var closedSession = Session;
+        var closed = await SendAsync("session", "close", "--session", closedSession, "--save");
         var timings = closed.GetProperty("data").GetProperty("closeTimingsMs");
         Assert.Equal(11, timings.EnumerateObject().Count());
         Assert.True(timings.GetProperty("session-close").GetDouble() > 0);
@@ -61,6 +62,16 @@ public sealed class CliWorkflowAcceptanceTests(ITestOutputHelper output) : IAsyn
         Assert.All(timings.EnumerateObject(), timing => Assert.True(timing.Value.GetDouble() >= 0));
         Assert.True(System.Text.Encoding.UTF8.GetByteCount(timings.GetRawText()) < 1024);
         _session = null;
+        var listing = (await SendAsync("session", "list")).GetProperty("data");
+        Assert.Empty(listing.GetProperty("sessions").EnumerateArray());
+        var closeEvidence = Assert.Single(listing.GetProperty("recentCloseAttempts").EnumerateArray());
+        Assert.Equal(closedSession, closeEvidence.GetProperty("sessionId").GetString());
+        Assert.True(closeEvidence.GetProperty("closeConfirmed").GetBoolean());
+        Assert.True(closeEvidence.GetProperty("sessionReleased").GetBoolean());
+        Assert.True(closeEvidence.GetProperty("saveConfirmed").GetBoolean());
+        Assert.True(closeEvidence.GetProperty("processId").GetInt32() > 0);
+        Assert.Equal(JsonValueKind.String, closeEvidence.GetProperty("startedAtUtcFileTime").ValueKind);
+
         var reopened = await SendAsync("session", "open", _workbook);
         _session = reopened.GetProperty("data").GetProperty("sessionId").GetString();
         Assert.False(string.IsNullOrWhiteSpace(_session));

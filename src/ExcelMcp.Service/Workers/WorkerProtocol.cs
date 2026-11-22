@@ -1,6 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 
@@ -79,6 +82,48 @@ internal sealed record WorkerCall(string OperationId, string Generation, Service
 internal sealed record WorkerExecution(ServiceResponse Response, bool Accepted, WorkerSnapshot Snapshot,
     bool HasLateNativeCompletion = false);
 internal sealed record WorkerRelease(ServiceResponse Response, WorkerSnapshot Snapshot);
+internal sealed record WorkerStatusFailure(string Message, WorkerStatusDiagnostic? Diagnostic = null);
+internal sealed record WorkerStatusDiagnostic(string Stage, string ExceptionType,
+    [property: JsonPropertyName("hresult")] string? HResult)
+{
+    internal static WorkerStatusFailure Capture(string stage, string message, Exception error)
+    {
+        var cause = error;
+        for (var inner = error; inner is not null; inner = inner.InnerException)
+        {
+            if (inner is COMException)
+            {
+                cause = inner;
+                break;
+            }
+        }
+        return new(message, new(stage, cause.GetType().Name, cause is COMException ? $"0x{cause.HResult:X8}" : null));
+    }
+
+    internal JsonObject ToJson(WorkerRegistration registration)
+    {
+        var diagnostic = new JsonObject
+        {
+            ["stage"] = Stage,
+            ["exceptionType"] = ExceptionType,
+            ["hresult"] = HResult
+        };
+        if (registration.LastExcelObservation is { } observation
+            && (registration.Excel == observation.Identity || registration.ReleasedExcel == observation.Identity))
+        {
+            diagnostic["nativeProcess"] = new JsonObject
+            {
+                ["processId"] = observation.Identity.ProcessId,
+                ["startedAtUtcFileTime"] = observation.Identity.StartedAtUtcFileTime.ToString(CultureInfo.InvariantCulture),
+                ["state"] = observation.State.ToString(),
+                ["exitCode"] = observation.ExitCode is { } exitCode ? JsonValue.Create(exitCode) : null,
+                ["nativeError"] = observation.NativeError is { } nativeError ? JsonValue.Create(nativeError) : null
+            };
+        }
+        return diagnostic;
+    }
+}
+
 internal sealed record WorkerSnapshot(
     WorkerRegistration Registration,
     IReadOnlyList<SessionDescriptor> Sessions,
@@ -88,7 +133,8 @@ internal sealed record WorkerSnapshot(
     IReadOnlyDictionary<string, IReadOnlyList<string>> OwnershipKeys,
     string? StatusError = null,
     bool Releasing = false,
-    long Revision = 0);
+    long Revision = 0,
+    WorkerStatusDiagnostic? StatusDiagnostic = null);
 
 [StreamJsonRpc.JsonRpcContract]
 [PolyType.GenerateShape(IncludeMethods = PolyType.MethodShapeFlags.PublicInstance)]

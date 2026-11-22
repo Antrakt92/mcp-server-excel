@@ -583,7 +583,7 @@ public sealed partial class ExcelControllerTests
             var complete = typeof(ExcelController).GetMethod("CompleteWorkerRequestAsync", hidden)!;
             var response = await ((Task<ServiceResponse>)complete.Invoke(controller,
                 [new ServiceRequest { Command = "diag.echo", Args = """{"message":"ownership-cleanup"}""" },
-                    worker, new List<string> { targetPath }, reservation])!).WaitAsync(TimeSpan.FromSeconds(5));
+                    worker, new List<string> { targetPath }, reservation, null, null])!).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(response.Success, response.ErrorMessage);
             Assert.True(advanced);
             Assert.Same(newer, worker.Snapshot);

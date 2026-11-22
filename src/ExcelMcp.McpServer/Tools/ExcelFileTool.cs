@@ -15,7 +15,7 @@ public static partial class ExcelFileTool
     /// Open/create workbooks and manage their sessions.
     /// Reuse the intended workbook's existing session or open/create one, then operate and close when authorized.
     /// Open/create return workbook_session_id; pass it to session-based tools. Create requires an existing directory.
-    /// Close defaults to save:false (discard edits); set save:true to save. Wait for canClose before closing,
+    /// Close defaults to save:false (discard edits); set save:true to save. Check canClose and closeReadiness before closing,
     /// and confirm before closing a visible window unless already authorized.
     /// Normal shutdown closes saved owned workbooks and leaves unsaved ones open and visible without saving or discarding. Attached workbooks stay untouched.
     /// Protected files may need visible authentication; Excel determines editing rights.
@@ -84,7 +84,7 @@ public static partial class ExcelFileTool
             bridge, file_path, workbook_session_id, save, show, timeout_seconds, cancellationToken, open_workbook_id,
             approved, allow_remembered_trust, allow_reopen, read_only);
 
-    /// <summary>Discover already-open workbooks in the current user's Windows session without reopening them, list managed sessions, test a workbook path, or inspect a selected session's opening restrictions with notices. Notices never enable content and return complete:false because not every notification bar is readable. Discover returns workbookId values for file attach, sessionId for workbooks already connected to this host, and complete:false with errors when any application or workbook could not be inspected. Discovery can attach Protected View workbooks when a normal controlling Excel window is available; restricted-only windows report an error. List includes canClose, excelState, operationPending and blockers. Confirmed blocking dialogs reveal Excel and report readable dialog text in blockingMessage. Ask the user to respond in Excel; input values are not read. activeOperations:0 does not prove refresh has finished.</summary>
+    /// <summary>Discover already-open workbooks in the current user's Windows session without reopening them, list managed sessions, test a workbook path, or inspect a selected session's opening restrictions with notices. Notices never enable content and return complete:false because not every notification bar is readable. Discover returns workbookId values for file attach, sessionId for workbooks already connected to this host, and complete:false with errors when any application or workbook could not be inspected. Discovery can attach Protected View workbooks when a normal controlling Excel window is available; restricted-only windows report an error. List includes canClose, closeReadiness, excelState, operationPending, blockers and recent close evidence. Confirmed blocking dialogs reveal Excel and report readable dialog text in blockingMessage. Ask the user to respond in Excel; input values are not read. activeOperations:0 does not prove refresh has finished.</summary>
     /// <remarks>
     /// Test defaults to 120 seconds and validates ordinary files through a temporary read-only Excel open.
     /// IRM/AIP files require visible authentication; Excel determines editing rights, not protection detection.

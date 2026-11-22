@@ -128,6 +128,34 @@ controller generation and build. This recovers diagnostic evidence for an
 already-known Excel identity; it does not adopt an unseen process or confirm an
 unacknowledged workbook operation.
 
+
+`file_read list` and `excelcli session list` also return `recentCloseAttempts`.
+Each entry covers an explicitly requested close on a known session and pairs
+its ID with the Excel PID and exact creation time when available. The history
+keeps up to 16 session/process pairs in the current controller.
+
+- `closeConfirmed` records a successful close response from the session's worker.
+- `sessionReleased` records that the controller removed the session and its path claims.
+- `saveConfirmed` records an explicit successful save-with-close response.
+- `nativeExit` adds a matching confirmed process exit when available.
+- `lastFailure` preserves the latest close error's category, type and HRESULT.
+  A later success can add confirmation without erasing that failure.
+
+- `recordingFailures` reports errors publishing the worker or controller result separately.
+- `priorStatusDiagnostic` preserves a worker status failure reported before dispatch, even if the close request succeeds.
+
+If a session has `closeReadiness: "unconfirmed"`, a worker status refresh
+failed. The row can retain `canClose: false` while the owning worker is still
+able to recheck an explicitly requested close. `closeReadiness: "blocked"`
+indicates pending work, worker release, or a blocker from the last session status. When available, `statusDiagnostic`
+reports the stage, exception type, COM HRESULT and last matching native
+process observation. Keep the existing close safeguards and confirm the
+original session ID before sending a targeted close.
+
+A false confirmation field means that evidence is unavailable. An observed exit
+can appear after a failed close, so use the separate observations and check the
+file on disk before retrying a save. This history is not a recovery handle and
+expires when the controller restarts.
 ## Rebuild or report a problem
 
 The separately labeled [historical 2.4.1 patch](LEGACY.md) preserves the earlier

@@ -28,7 +28,7 @@ internal sealed class ExcelWorkerHost : IDisposable
     private readonly Dictionary<(string Generation, string Id), Task<ServiceResponse?>> _lateCompletions = [];
     private bool _releasing;
     private Task? _refresh;
-    private string? _statusError;
+    private WorkerStatusFailure? _statusFailure;
 
     internal Action? AfterOperationStatusCaptureForTests { get; set; }
 
@@ -199,7 +199,8 @@ internal sealed class ExcelWorkerHost : IDisposable
         Registration = _registration,
         PendingOperation = _pendingOperation,
         PendingCommand = _pendingCommand,
-        StatusError = _statusError,
+        StatusError = _statusFailure?.Message,
+        StatusDiagnostic = _statusFailure?.Diagnostic,
         Releasing = _releasing,
         Revision = ++_snapshotRevision
     };
@@ -233,7 +234,7 @@ internal sealed class ExcelWorkerHost : IDisposable
                     _snapshot = new(_registration, sessions, list, _pendingOperation, _pendingCommand,
                         OwnershipKeys: sessions.ToDictionary(session => session.SessionId,
                             session => _service.SessionManager.GetOwnedFilePathKeys(session.SessionId)));
-                    _statusError = null;
+                    _statusFailure = null;
                 }
                 return;
             }
@@ -251,7 +252,8 @@ internal sealed class ExcelWorkerHost : IDisposable
         catch (Exception ex)
         {
             lock (_stateLock)
-                _statusError = $"Excel status could not be refreshed: {ex.GetType().Name}: {ex.Message}";
+                _statusFailure = WorkerStatusDiagnostic.Capture("snapshotRefresh",
+                    $"Excel status could not be refreshed: {ex.GetType().Name}: {ex.Message}", ex);
             System.Diagnostics.Trace.TraceError("Excel status could not be refreshed: {0}", ex);
         }
     }
@@ -321,7 +323,8 @@ internal sealed class ExcelWorkerHost : IDisposable
                 catch (Exception ex)
                 {
                     lock (_stateLock)
-                        _statusError = $"The completed request could not be recorded: {ex.GetType().Name}: {ex.Message}";
+                        _statusFailure = WorkerStatusDiagnostic.Capture("completionPublication",
+                            $"The completed request could not be recorded: {ex.GetType().Name}: {ex.Message}", ex);
                     response = response.WithCompletionFailure(call.Request, ex);
                 }
             }
@@ -363,7 +366,7 @@ internal sealed class ExcelWorkerHost : IDisposable
                 _registry.Write(released);
                 _registration = released;
                 _releasing = true;
-                _statusError = null;
+                _statusFailure = null;
                 _snapshot = new(_registration, [], EmptySessionList(), null, null,
                     new Dictionary<string, IReadOnlyList<string>>());
             }
@@ -415,11 +418,11 @@ internal sealed class ExcelWorkerHost : IDisposable
             TryRefreshSnapshot();
             lock (_stateLock)
             {
-                if (_statusError is not null
+                if (_statusFailure is not null
                     || _snapshot.Sessions.Any(session =>
                         _service.SessionManager.GetOperationStatus(session.SessionId, reconcilePaths: false)?.ExecutionPending == true))
                     return Released(Failure(new ServiceRequest { Command = "service.shutdown" }, "Busy",
-                        _statusError ?? "Excel is still executing. Its worker remains available for explicit reconnection."));
+                        _statusFailure?.Message ?? "Excel is still executing. Its worker remains available for explicit reconnection."));
                 _releasing = true;
             }
             var report = await Task.Run(_service.RequestShutdown);

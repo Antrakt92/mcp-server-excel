@@ -53,9 +53,11 @@ See [window management](window.md#visibility-and-placement).
   Discovery reports `complete` and `errors`; do not treat an incomplete result
   as proof that a workbook is absent. Attach does not reopen a workbook or
   change its unsaved state.
-- Close only when authorized, operations have finished, and the session listing
-  reports `canClose: true`. Confirm before closing a visible window unless
-  already authorized. Keep the workbook open when requested.
+- Close only when authorized and operations have finished. Use
+  `canClose: true`, or an authorized same-session close to recheck
+  `closeReadiness: "unconfirmed"`. Wait when `closeReadiness: "blocked"`.
+  Confirm before closing a visible window unless already authorized. Keep the
+  workbook open when requested.
 - Explicit close discards unsaved edits unless saving is requested. Normal
   service shutdown closes saved workbooks it opened and leaves unsaved ones open
   and visible without saving or discarding; attached workbooks stay untouched. Leaving a
@@ -153,10 +155,11 @@ do not submit new work while closing that session.
 `activeOperations: 0` counts server-tracked work, not every query Excel can run.
 The session listing also checks Excel's live refresh state. `canClose: false`
 can mean a running query, an open modal dialog, another busy Excel operation, or an inspection that
-could not confirm readiness. Both save-before-close and discard-close are
-blocked in these cases; the workbook remains open. Wait for Excel to finish,
-list sessions again, and retry only when ready. Do not cancel a query or discard
-edits merely to make closing possible.
+could not confirm readiness. A status failure can report `closeReadiness: "unconfirmed"`
+when the last snapshot allowed close. An authorized close of that same session
+asks the owning worker to run its usual safeguards. For `closeReadiness: "blocked"`,
+wait for pending work or resolve the reported blocker before requesting close.
+Do not cancel a query or discard edits merely to make closing possible.
 
 MCP `file_read` action `list` and `excelcli session list` expose `excelState`,
 `operationPending`, and, when closing is blocked, `blockingReason`. `excelState: "dialogOpen"`
