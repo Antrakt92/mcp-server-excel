@@ -103,9 +103,9 @@ If source read-back differs after a VBA edit, inspect `partialState.firstDiffere
 and `partialState.mismatchKind`. The line number is relative to the supplied
 module or procedure after input normalization. `codeSpacing` identifies spacing
 differences outside protected VBA text. `sourceChanged` means the difference
-could not be classified as code spacing. Read the edited module again and use
-its current fingerprint before retrying. The error leaves the post-edit source
-available for inspection.
+could not be classified as code spacing. The error does not roll back the edit.
+If Excel is still available, read the edited module and use its current
+fingerprint before retrying.
 Use absolute Windows input file paths in MCP, including in batch entries.
 The CLI resolves relative input file paths against its working directory.
 
