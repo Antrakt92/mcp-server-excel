@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 
 namespace Sbroenne.ExcelMcp.Service.Workers;
@@ -105,9 +106,7 @@ internal sealed class WorkerRegistry
                 if (stream.Length > 65536)
                     throw new InvalidDataException("An Excel worker record exceeds its size limit.");
                 using var reader = new StreamReader(stream);
-                var registration = JsonSerializer.Deserialize<WorkerRegistration>(
-                    reader.ReadToEnd(), ServiceProtocol.JsonOptions)
-                    ?? throw new InvalidDataException("An Excel worker record is empty.");
+                var registration = ReadRegistration(reader.ReadToEnd());
                 var expectedPath = GetPath(registration.PipeName);
                 if (!Path.GetFileName(path).Equals(Path.GetFileName(expectedPath), StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("The record filename does not match its registered worker pipe.");
@@ -116,6 +115,8 @@ internal sealed class WorkerRegistry
                     || registration.Excel is { ProcessId: <= 0 } or { StartedAtUtcFileTime: <= 0 }
                     || registration.ReleasedExcel is { ProcessId: <= 0 } or { StartedAtUtcFileTime: <= 0 })
                     throw new InvalidDataException("The record contains a missing or invalid process identity.");
+                if (registration.OperationEvidence is { } evidence && !evidence.IsValidFor(registration))
+                    return registration with { OperationEvidence = null };
                 return registration;
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException)
@@ -134,6 +135,24 @@ internal sealed class WorkerRegistry
                 Thread.Sleep(100);
             }
         }
+    }
+
+    private static WorkerRegistration ReadRegistration(string json)
+    {
+        WorkerRegistration? registration;
+        try
+        {
+            registration = JsonSerializer.Deserialize<WorkerRegistration>(json, ServiceProtocol.JsonOptions);
+        }
+        catch (JsonException ex) when (ex.Path == "$.operationEvidence"
+            || ex.Path?.StartsWith("$.operationEvidence.", StringComparison.Ordinal) == true)
+        {
+            // A malformed optional checkpoint cannot invalidate the ownership fields.
+            var ownership = JsonNode.Parse(json)!.AsObject();
+            ownership.Remove("operationEvidence");
+            registration = ownership.Deserialize<WorkerRegistration>(ServiceProtocol.JsonOptions);
+        }
+        return registration ?? throw new InvalidDataException("An Excel worker record is empty.");
     }
 
     internal void Remove(string pipeName) => File.Delete(GetPath(pipeName));

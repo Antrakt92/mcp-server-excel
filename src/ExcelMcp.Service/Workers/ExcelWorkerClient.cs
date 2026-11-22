@@ -74,11 +74,12 @@ internal sealed class ExcelWorkerClient
                 return rpc.ClaimAsync(new(_controller, _generation, WorkerRegistry.Build), CancellationToken.None);
             }, CancellationToken.None, ControlTimeout, connectionCancellation: cancellationToken));
 
-    internal async Task<WorkerSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default) =>
+    internal async Task<WorkerSnapshot> ReadSnapshotAsync(CancellationToken cancellationToken = default,
+        Action<WorkerRegistration>? observe = null) =>
         RecordSnapshot(await CallAsync(rpc => rpc.SnapshotAsync(_generation, cancellationToken),
-            cancellationToken, ControlTimeout));
+            cancellationToken, ControlTimeout), observe);
 
-    internal WorkerSnapshot RecordSnapshot(WorkerSnapshot snapshot)
+    internal WorkerSnapshot RecordSnapshot(WorkerSnapshot snapshot, Action<WorkerRegistration>? observe = null)
     {
         if (snapshot.Registration.PipeName != Registration.PipeName
             || snapshot.Registration.Worker != Registration.Worker
@@ -86,6 +87,8 @@ internal sealed class ExcelWorkerClient
             || snapshot.Registration.Generation != _generation
             || snapshot.Registration.Build != WorkerRegistry.Build)
             throw new InvalidOperationException("The Excel worker returned a mismatched process identity or build.");
+        // A later poll can be newer than this reply, but it can already refer to another command.
+        observe?.Invoke(snapshot.Registration);
         lock (_snapshotLock)
         {
             if (Snapshot is { } current && current.Revision >= snapshot.Revision)
@@ -100,17 +103,17 @@ internal sealed class ExcelWorkerClient
     internal async Task<ServiceResponse> ExecuteAsync(ServiceRequest request, CancellationToken cancellationToken) =>
         (await ExecuteWithAdmissionAsync(request, cancellationToken)).Response;
 
-    internal async Task<WorkerExecution> ExecuteWithAdmissionAsync(ServiceRequest request, CancellationToken cancellationToken)
+    internal async Task<WorkerExecution> ExecuteWithAdmissionAsync(ServiceRequest request, CancellationToken cancellationToken,
+        Guid? dispatchId = null, Action<WorkerRegistration>? observe = null)
     {
-        var operationId = request.OperationId is { } receiptId
-            ? OperationReceipts.ParseId(receiptId).ToString("N") : Guid.NewGuid().ToString("N");
+        var operationId = (dispatchId ?? Guid.NewGuid()).ToString("N");
         var execution = await CallAsync(rpc => rpc.ExecuteAsync(new(operationId, _generation, request), cancellationToken),
             CancellationToken.None, ServiceClient.DefaultRequestTimeout);
         if (execution.HasLateNativeCompletion)
             request.LateWorkerResponse = CallAsync(
                 rpc => rpc.ObserveLateCompletionAsync(_generation, operationId, CancellationToken.None),
                 CancellationToken.None, ServiceClient.DefaultRequestTimeout);
-        return execution with { Snapshot = RecordSnapshot(execution.Snapshot) };
+        return execution with { Snapshot = RecordSnapshot(execution.Snapshot, observe) };
     }
 
     internal async Task<ServiceResponse> ReleaseAsync(CancellationToken cancellationToken)

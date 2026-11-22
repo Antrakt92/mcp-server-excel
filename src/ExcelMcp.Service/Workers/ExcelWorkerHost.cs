@@ -176,9 +176,16 @@ internal sealed class ExcelWorkerHost : IDisposable
             if ((_registration.Controller != claim.Controller || _registration.Generation != claim.Generation)
                 && _registration.Controller.IsAlive())
                 throw new InvalidOperationException("This Excel worker still belongs to another running controller.");
-            if (_registration.Generation != claim.Generation)
+            if (_registration.Generation != claim.Generation || _registration.Controller != claim.Controller)
+            {
                 _lateCompletions.Clear();
-            _registration = _registration with { Controller = claim.Controller, Generation = claim.Generation };
+                _registration = _registration with
+                {
+                    Controller = claim.Controller,
+                    Generation = claim.Generation,
+                    OperationEvidence = null
+                };
+            }
             _registry.Write(_registration);
             return SnapshotCore();
         }
@@ -259,6 +266,22 @@ internal sealed class ExcelWorkerHost : IDisposable
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "The optional operation checkpoint is diagnostic. A filesystem failure must not change workbook execution or mask the response; log only its type.")]
+    private void TryRecordOperationEvidence(WorkerOperationEvidence evidence)
+    {
+        var recorded = _registration with { OperationEvidence = evidence };
+        try
+        {
+            _registry.Write(recorded);
+            _registration = recorded;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Excel operation checkpoint could not be recorded: {0}.", ex.GetType().Name);
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Failure to record completed worker shutdown returns both that error and the exact completed workbook response. It retains the worker and never repeats or rolls back workbook changes.")]
     private async Task<WorkerExecution> ExecuteAsync(WorkerCall call, int clientId, CancellationToken cancellationToken)
     {
@@ -279,6 +302,8 @@ internal sealed class ExcelWorkerHost : IDisposable
         if (!await _execution.WaitAsync(0, cancellationToken))
             return Completed(Failure(call.Request, "Busy",
                 "Another request is still running in this Excel application. No new work was started."), accepted: false);
+        WorkerOperationEvidence? admitted = null;
+        WorkerProcess? admittingController = null;
         try
         {
             lock (_stateLock)
@@ -291,10 +316,23 @@ internal sealed class ExcelWorkerHost : IDisposable
                         "An earlier Excel operation is still pending. No new work was started."), accepted: false);
                 _pendingOperation = call.OperationId;
                 _pendingCommand = call.Request.Command;
+                if (_registration.Generation == call.Generation && _registration.Controller.ProcessId == clientId
+                    && WorkerOperationEvidence.TryAdmit(call, _registration.Excel) is { } evidence)
+                {
+                    admitted = evidence;
+                    admittingController = _registration.Controller;
+                    TryRecordOperationEvidence(evidence);
+                }
             }
             call.Request.CallerCancellation = cancellationToken;
             using var abandoned = cancellationToken.Register(() => _service.RevealAbandonedRequest(call.Request, null));
             var response = await Task.Run(() => ProcessAsync(call.Request), CancellationToken.None);
+            lock (_stateLock)
+            {
+                if (admitted is not null && _registration.Generation == call.Generation
+                    && _registration.Controller == admittingController && admitted.MatchesExcel(_registration))
+                    TryRecordOperationEvidence(admitted.WithResponse(response));
+            }
             if (cancellationToken.IsCancellationRequested)
                 _service.RevealAbandonedRequest(call.Request, response);
             var lateCompletion = call.Request.LateNativeCompletion is not null

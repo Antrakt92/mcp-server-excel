@@ -1,8 +1,11 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
 using Sbroenne.ExcelMcp.Generated;
+using Sbroenne.ExcelMcp.Service.Workers;
 
 namespace Sbroenne.ExcelMcp.Service;
 
@@ -57,23 +60,139 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         }
     }
 
-    internal void Complete(Operation operation, ServiceResponse response)
+    internal void BindWorker(Operation operation, WorkerRegistration registration, ExcelNativeProcessObservation? observedExit)
+    {
+        lock (_gate)
+        {
+            operation.Worker = registration;
+            if (observedExit is { State: ExcelNativeProcessState.Exited } && observedExit.Identity == registration.Excel)
+                operation.NativeExit = observedExit;
+        }
+    }
+
+    internal void ObserveWorkerEvidence(WorkerRegistration registration)
+    {
+        if (registration.OperationEvidence is not { } checkpoint || !checkpoint.IsValidFor(registration)
+            || !Guid.TryParseExact(checkpoint.OperationId, "N", out var id)
+            || !Guid.TryParseExact(checkpoint.DispatchId, "N", out var dispatch))
+            return;
+
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(id, out var operation)
+                || operation.DispatchId != dispatch
+                || operation.Worker is not { } source
+                || source.PipeName != registration.PipeName || source.Worker != registration.Worker
+                || source.Controller != registration.Controller || source.Generation != registration.Generation
+                || source.Build != registration.Build
+                || operation.SessionId != checkpoint.SessionId || operation.Command != checkpoint.Command
+                || source.Excel != checkpoint.Excel)
+                return;
+
+            if (operation.Checkpoint?.Phase != WorkerOperationEvidence.ResponsePhase)
+                operation.Checkpoint = checkpoint;
+        }
+    }
+
+    internal void ObserveNativeExit(ExcelNativeProcessObservation observation)
+    {
+        if (observation.State != ExcelNativeProcessState.Exited)
+            return;
+
+        lock (_gate)
+        {
+            foreach (var operation in _entries.Values)
+                if (operation.Worker?.Excel == observation.Identity && operation.NativeExit?.ExitCode is null)
+                    operation.NativeExit = observation;
+        }
+    }
+
+    internal void ObserveInitialFailure(Operation operation, ServiceResponse response)
+    {
+        for (var wrappers = 0; wrappers < 2 && response.ReadCompletionFailure() is { } retained; wrappers++)
+            response = retained.Response;
+        if (response.Success)
+            return;
+
+        lock (_gate)
+            operation.InitialFailure ??= new(response.ErrorCategory, response.ExceptionType, response.HResult);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A malformed partial-state payload leaves the exact original response available to the caller. Only the optional diagnostic overlay is omitted.")]
+    internal ServiceResponse IncludeEvidenceInFailure(Operation operation, ServiceResponse response)
+    {
+        if (response.Success)
+            return response;
+
+        JsonObject evidence;
+        lock (_gate)
+            evidence = FormatEvidence(operation);
+
+        try
+        {
+            var state = response.PartialState is null ? new JsonObject() : JsonNode.Parse(response.PartialState) as JsonObject;
+            if (state is null || state["diagnostics"] is { } existing && existing is not JsonObject)
+                return response;
+            if (state["diagnostics"] is not JsonObject diagnostics)
+            {
+                diagnostics = new JsonObject();
+                state["diagnostics"] = diagnostics;
+            }
+            diagnostics["operationEvidence"] = evidence;
+            return response.WithPartialState(state.ToJsonString(ServiceProtocol.JsonOptions));
+        }
+        catch (Exception ex) when (ex is JsonException or ArgumentException)
+        {
+            // Optional diagnostics must not replace the original failure.
+            return response;
+        }
+    }
+
+    private static JsonObject FormatEvidence(Operation operation)
+    {
+        var result = new JsonObject
+        {
+            ["phase"] = operation.Checkpoint?.Phase
+                ?? (operation.Worker is null ? "controllerAccepted" : "controllerDispatchStarted")
+        };
+        if (operation.Worker?.Excel is { } excel)
+        {
+            result["processId"] = excel.ProcessId;
+            result["startedAtUtcFileTime"] = excel.StartedAtUtcFileTime.ToString(CultureInfo.InvariantCulture);
+        }
+        if (operation.Checkpoint is { ErrorCategory: not null } checkpoint)
+            result["workerFailure"] = FormatFailure(new(checkpoint.ErrorCategory, checkpoint.ExceptionType, checkpoint.HResult));
+        if (operation.InitialFailure is { } initial)
+            result["initialFailure"] = FormatFailure(initial);
+        if (operation.NativeExit is { } nativeExit)
+            result["nativeExit"] = CloseHistory.NativeDiagnostic(nativeExit);
+        return result;
+    }
+
+    private static JsonObject FormatFailure(Failure failure) => new()
+    {
+        ["category"] = failure.Category,
+        ["exceptionType"] = failure.ExceptionType,
+        ["hresult"] = failure.HResult
+    };
+
+    internal sealed record Failure(string? Category, string? ExceptionType, string? HResult);
+
+    internal void Complete(Operation operation, ServiceResponse response, bool forceUnknown = false)
     {
         string? recordingError = null;
-        var result = ReadOutcome(operation, response);
-        // Both the controller and worker can wrap a response when ownership bookkeeping fails.
-        // Use the original command's outcome, retaining the bookkeeping error alongside it.
-        for (var wrappers = 0; wrappers < 2 && result.Error?["category"]?.GetValue<string>() == "ServiceUnavailable"
-            && result.PartialState is JsonObject retained
-            && retained["outcome"]?.GetValue<string>() == "completed"
-            && retained["response"]?.Deserialize<ServiceResponse>(ServiceProtocol.JsonOptions) is { } original; wrappers++)
+        // Keep the primary response even if bookkeeping failed while completion was unknown.
+        for (var wrappers = 0; wrappers < 2 && response.ReadCompletionFailure() is { } retained; wrappers++)
         {
             recordingError ??= response.ErrorMessage;
-            response = original;
-            result = ReadOutcome(operation, original);
+            forceUnknown |= !retained.CompletionKnown;
+            response = retained.Response;
         }
+        ObserveInitialFailure(operation, response);
+        var result = ReadOutcome(operation, response);
         var resultText = result.ToToolJson();
-        var state = result.CompletionUnconfirmed ? "unknown"
+        var state = forceUnknown || result.CompletionUnconfirmed ? "unknown"
             : result.Success ? ProvesCompletion(operation.Command, response) ? "completed" : "unknown"
             : (result.PartialState as JsonObject)?["outcome"]?.GetValue<string>() == "partially-applied"
                 ? "partially-applied" : "failed";
@@ -139,6 +258,7 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
                 operation.StartedAt,
                 operation.FinishedAt,
                 operation.RecordingError,
+                operationEvidence = FormatEvidence(operation),
                 result = operation.Result is null ? null : JsonNode.Parse(operation.Result)
             });
         }
@@ -159,6 +279,8 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
 
     internal sealed class Operation(string command, string sessionId, DateTimeOffset startedAt)
     {
+        // A public UUID may be reused after retention expires. A worker snapshot still needs this dispatch's identity.
+        internal Guid DispatchId { get; } = Guid.NewGuid();
         internal string Command { get; } = command;
         internal string SessionId { get; } = sessionId;
         internal DateTimeOffset StartedAt { get; } = startedAt;
@@ -166,5 +288,9 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         internal string State { get; set; } = "pending";
         internal string? Result { get; set; }
         internal string? RecordingError { get; set; }
+        internal WorkerRegistration? Worker { get; set; }
+        internal WorkerOperationEvidence? Checkpoint { get; set; }
+        internal ExcelNativeProcessObservation? NativeExit { get; set; }
+        internal Failure? InitialFailure { get; set; }
     }
 }
