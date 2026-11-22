@@ -296,8 +296,10 @@ in
     /// <summary>
     /// Tests that renaming a non-existent table fails with clear error.
     /// </summary>
-    [Fact]
-    public void RenameTable_NonExistentTable_ReturnsFailure()
+    [Theory]
+    [InlineData("NewName")]
+    [InlineData("  NonExistentTable  ")]
+    public void RenameTable_NonExistentTable_ReturnsFailure(string newName)
     {
         // Arrange
         CreateDataModelTable("ExistingTable");
@@ -305,7 +307,7 @@ in
         var batch = _fixture.BatchToken;
 
         // Act
-        var result = _dataModelCommands.RenameTable(batch, "NonExistentTable", "NewName");
+        var result = _dataModelCommands.RenameTable(batch, "NonExistentTable", newName);
 
         // Assert
         Assert.False(result.Success);
