@@ -132,6 +132,44 @@ public sealed class ServiceResponse
         };
     }
 
+    internal (ServiceResponse Response, bool CompletionKnown)? ReadCompletionFailure()
+    {
+        if (ErrorCategory != "ServiceUnavailable" || PartialState is not { } state)
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(state);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("outcome", out var outcome) || outcome.ValueKind != JsonValueKind.String
+                || outcome.GetString() is not ("completed" or "unknown")
+                || !root.TryGetProperty("response", out var original) || original.ValueKind != JsonValueKind.Object)
+                return null;
+
+            return original.Deserialize<ServiceResponse>(ServiceProtocol.JsonOptions) is { } parsed
+                ? (parsed, outcome.GetString() == "completed") : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    internal ServiceResponse WithPartialState(string partialState) => new()
+    {
+        Success = Success,
+        Command = Command,
+        SessionId = SessionId,
+        ErrorCategory = ErrorCategory,
+        ErrorMessage = ErrorMessage,
+        ExceptionType = ExceptionType,
+        HResult = HResult,
+        InnerError = InnerError,
+        Result = Result,
+        PartialState = partialState
+    };
+
     internal ServiceResponse WithCloseTimings(IReadOnlyDictionary<string, double> timings) =>
         WithResultTimings("closeTimingsMs", timings);
 

@@ -23,7 +23,7 @@ internal sealed class CloseHistory
         var close = response;
         bool confirmed = true;
         // The worker and controller may each wrap the original close in a failed completion publication.
-        while (recordingFailures.Count < 2 && ReadRecordedResponse(close) is { } retained)
+        while (recordingFailures.Count < 2 && close.ReadCompletionFailure() is { } retained)
         {
             recordingFailures.Add(new(close.ErrorCategory, close.ExceptionType, close.HResult));
             confirmed &= retained.CompletionKnown;
@@ -76,30 +76,6 @@ internal sealed class CloseHistory
                 });
             }
             return result;
-        }
-    }
-
-    private static (ServiceResponse Response, bool CompletionKnown)? ReadRecordedResponse(ServiceResponse response)
-    {
-        if (response.ErrorCategory != "ServiceUnavailable" || response.PartialState is not { } state)
-            return null;
-
-        try
-        {
-            using var document = JsonDocument.Parse(state);
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("outcome", out var outcome) || outcome.ValueKind != JsonValueKind.String
-                || outcome.GetString() is not ("completed" or "unknown")
-                || !root.TryGetProperty("response", out var original) || original.ValueKind != JsonValueKind.Object)
-                return null;
-
-            return original.Deserialize<ServiceResponse>(ServiceProtocol.JsonOptions) is { } parsed
-                ? (parsed, outcome.GetString() == "completed") : null;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 

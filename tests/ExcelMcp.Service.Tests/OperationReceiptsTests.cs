@@ -3,6 +3,7 @@ using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Commands.Table;
 using Sbroenne.ExcelMcp.Core.Models;
+using Sbroenne.ExcelMcp.Service.Workers;
 using Xunit;
 
 namespace Sbroenne.ExcelMcp.Service.Tests;
@@ -14,6 +15,153 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Speed", "Fast")]
 public sealed class OperationReceiptsTests
 {
+    [Fact]
+    public void RecordedWorkerPhaseAndLateExitAreBoundToTheOriginalOperationAndProcess()
+    {
+        var clock = new ReceiptClock();
+        var receipts = new OperationReceipts(clock);
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid().ToString("N");
+        const string command = "vba.invoke";
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var operation));
+        Assert.Equal("controllerAccepted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+
+        var self = WorkerProcess.Current;
+        var excel = new ExcelProcessIdentity(123, 134_381_234_567_890_123);
+        var worker = new WorkerRegistration("test-pipe", self, self, "generation", WorkerRegistry.Build, excel);
+        var admitted = new WorkerOperationEvidence(id.ToString("N"), operation.DispatchId.ToString("N"),
+            command, session, excel, WorkerOperationEvidence.AdmittedPhase);
+        receipts.BindWorker(operation, worker, null);
+        receipts.ObserveWorkerEvidence(worker with { Generation = "earlier", OperationEvidence = admitted });
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted with { SessionId = Guid.NewGuid().ToString("N") } });
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted with { OperationId = Guid.NewGuid().ToString("N") } });
+        Assert.Equal("controllerDispatchStarted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted });
+        Assert.Equal("workerAdmitted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+        var original = new ServiceResponse
+        {
+            ErrorCategory = "ExcelDisconnected",
+            ExceptionType = "COMException",
+            HResult = "0x800706BE",
+            PartialState = """{"outcome":"unknown"}"""
+        };
+        var request = new ServiceRequest { Command = command, SessionId = session };
+        receipts.Complete(operation, original.WithCompletionFailure(request, new IOException("worker bookkeeping"))
+            .WithCompletionFailure(request, new InvalidOperationException("controller bookkeeping")));
+
+        var response = admitted.WithResponse(original);
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = response });
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted });
+        receipts.ObserveNativeExit(new(excel with { StartedAtUtcFileTime = 456 }, ExcelNativeProcessState.Exited, 0, null));
+        var before = Lookup(receipts, id, session);
+        Assert.False(before.GetProperty("operationEvidence").TryGetProperty("nativeExit", out _));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, null, null));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, 0xC0000005u, null));
+
+        var after = Lookup(receipts, id, session);
+        Assert.Equal("unknown", after.GetProperty("state").GetString());
+        Assert.Equal(before.GetProperty("finishedAt").GetString(), after.GetProperty("finishedAt").GetString());
+        Assert.Equal("ExcelDisconnected", after.GetProperty("result").GetProperty("errorCategory").GetString());
+        Assert.Contains("controller bookkeeping", after.GetProperty("recordingError").GetString(), StringComparison.Ordinal);
+        var evidence = after.GetProperty("operationEvidence");
+        Assert.Equal("serviceResponseRecorded", evidence.GetProperty("phase").GetString());
+        Assert.Equal("134381234567890123", evidence.GetProperty("startedAtUtcFileTime").GetString());
+        Assert.Equal("0x800706BE", evidence.GetProperty("workerFailure").GetProperty("hresult").GetString());
+        Assert.Equal(0xC0000005u, evidence.GetProperty("nativeExit").GetProperty("exitCode").GetUInt32());
+        Assert.Equal(OperationReceipts.Admission.Duplicate, receipts.TryBegin(id, command, session, out _));
+
+        clock.Now += TimeSpan.FromMinutes(15);
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var reused));
+        receipts.BindWorker(reused, worker, null);
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = response });
+        Assert.Equal("controllerDispatchStarted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+        receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted with { DispatchId = reused.DispatchId.ToString("N") } });
+        Assert.Equal("workerAdmitted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingLateReplyPreservesInitialFailureAndUnknownState(bool transportFault)
+    {
+        using var controller = new ExcelController(launcher: new("unused.exe", []));
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var receipts = Assert.IsType<OperationReceipts>(typeof(ExcelController).GetField("_operationReceipts", hidden)!.GetValue(controller));
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid().ToString("N");
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, "vba.invoke", session, out var operation));
+        var original = new ServiceResponse
+        {
+            ErrorCategory = "Timeout",
+            ExceptionType = "TimeoutException",
+            ErrorMessage = "Waiting on Excel.",
+            PartialState = """{"outcome":"unknown"}"""
+        };
+        var wrapped = original.WithCompletionFailure(new ServiceRequest { Command = "vba.invoke", SessionId = session },
+            new IOException("Could not record the timeout"));
+        receipts.ObserveInitialFailure(operation, wrapped);
+        var late = transportFault
+            ? Task.FromException<ServiceResponse?>(new IOException("Lost late worker response"))
+            : Task.FromResult<ServiceResponse?>(null);
+        var capture = typeof(ExcelController).GetMethod("RecordLateOutcomeAsync", hidden)!;
+        await (Task)capture.Invoke(controller, [operation, late, wrapped])!;
+        var receipt = Lookup(receipts, id, session);
+        Assert.Equal("unknown", receipt.GetProperty("state").GetString());
+        Assert.Equal("Timeout", receipt.GetProperty("result").GetProperty("errorCategory").GetString());
+        Assert.Equal("TimeoutException", receipt.GetProperty("operationEvidence").GetProperty("initialFailure")
+            .GetProperty("exceptionType").GetString());
+    }
+
+    [Fact]
+    public void Controller_RecoversRecordedEvidenceOnlyFromTheKnownWorkerGeneration()
+    {
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var directory = Directory.CreateTempSubdirectory("excelmcp-receipt-recovery-");
+        var registry = new WorkerRegistry(directory.FullName);
+        using var controller = new ExcelController(launcher: new("unused.exe", []), registry: registry);
+        var receipts = Assert.IsType<OperationReceipts>(typeof(ExcelController).GetField("_operationReceipts", hidden)!.GetValue(controller));
+        var generation = Assert.IsType<string>(typeof(ExcelController).GetField("_generation", hidden)!.GetValue(controller));
+        var capture = typeof(ExcelController).GetMethod("CaptureRetainedOperationEvidence", hidden)!;
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid().ToString("N");
+        const string command = "vba.invoke";
+        var process = WorkerProcess.Current;
+        var excel = new ExcelProcessIdentity(123, 134_381_234_567_890_123);
+        var owner = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", process, process, generation, WorkerRegistry.Build, excel);
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var operation));
+        receipts.BindWorker(operation, owner, null);
+        var saved = owner with
+        {
+            OperationEvidence = new(id.ToString("N"), operation.DispatchId.ToString("N"), command, session, excel,
+                WorkerOperationEvidence.ResponsePhase,
+                "ExcelDisconnected", "COMException", "0x800706BE"),
+            LastExcelObservation = new(excel, ExcelNativeProcessState.Exited, 0xC0000005u, null)
+        };
+        try
+        {
+            registry.Write(saved with { Generation = "previous-controller" });
+            capture.Invoke(controller, [owner]);
+            var before = Lookup(receipts, id, session).GetProperty("operationEvidence");
+            Assert.Equal("controllerDispatchStarted", before.GetProperty("phase").GetString());
+            Assert.False(before.TryGetProperty("nativeExit", out _));
+
+            registry.Write(saved);
+            capture.Invoke(controller, [owner]);
+            var after = Lookup(receipts, id, session);
+            Assert.Equal("pending", after.GetProperty("state").GetString());
+            var evidence = after.GetProperty("operationEvidence");
+            Assert.Equal("serviceResponseRecorded", evidence.GetProperty("phase").GetString());
+            Assert.Equal("0x800706BE", evidence.GetProperty("workerFailure").GetProperty("hresult").GetString());
+            Assert.Equal(0xC0000005u, evidence.GetProperty("nativeExit").GetProperty("exitCode").GetUInt32());
+        }
+        finally
+        {
+            registry.Remove(owner.PipeName);
+            directory.Delete();
+        }
+    }
+
     [Fact]
     public async Task OversizedSessionIdIsRejectedBeforeTracking()
     {

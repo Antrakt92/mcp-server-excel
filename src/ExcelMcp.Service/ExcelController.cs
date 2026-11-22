@@ -123,7 +123,9 @@ internal sealed class ExcelController : IDisposable
         }
         catch (OperationCanceledException ex) when (request.CallerCancellation.IsCancellationRequested)
         {
-            return CreateWorkerError(request, ex, sent: true);
+            var response = CreateWorkerError(request, ex, sent: true);
+            _operationReceipts.ObserveInitialFailure(operation, response);
+            return _operationReceipts.IncludeEvidenceInFailure(operation, response);
         }
     }
 
@@ -131,41 +133,43 @@ internal sealed class ExcelController : IDisposable
         ServiceRequest request, OperationReceipts.Operation operation)
     {
         var response = ExcelMcpService.AttachRequestContext(request,
-            await ProcessCoreAsync(request, waitForWorkerCompletion: true).ConfigureAwait(false));
+            await ProcessCoreAsync(request, waitForWorkerCompletion: true, operation).ConfigureAwait(false));
         if (request.LateWorkerResponse is { } late)
         {
-            _ = RecordLateOutcomeAsync(operation, late);
-            return response;
+            _operationReceipts.ObserveInitialFailure(operation, response);
+            _ = RecordLateOutcomeAsync(operation, late, response);
+            return _operationReceipts.IncludeEvidenceInFailure(operation, response);
         }
         RecordOutcome(operation, response);
-        return response;
+        return _operationReceipts.IncludeEvidenceInFailure(operation, response);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Late receipt collection reports unknown if the worker response cannot be recovered. The original command is never repeated.")]
-    private async Task RecordLateOutcomeAsync(OperationReceipts.Operation operation, Task<ServiceResponse?> late)
+    private async Task RecordLateOutcomeAsync(OperationReceipts.Operation operation, Task<ServiceResponse?> late,
+        ServiceResponse initialResponse)
     {
         try
         {
             if (await late.ConfigureAwait(false) is { } response)
                 RecordOutcome(operation, response);
             else
-                _operationReceipts.Publish(operation, "unknown");
+                RecordOutcome(operation, initialResponse, forceUnknown: true);
         }
         catch (Exception ex)
         {
             System.Diagnostics.Trace.TraceWarning("Could not recover an Excel operation receipt: {0}", ex.GetType().Name);
-            _operationReceipts.Publish(operation, "unknown");
+            RecordOutcome(operation, initialResponse, forceUnknown: true);
         }
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "An invalid result payload is reported as an unknown receipt. The original worker reply is preserved and the workbook command is never repeated.")]
-    private void RecordOutcome(OperationReceipts.Operation operation, ServiceResponse response)
+    private void RecordOutcome(OperationReceipts.Operation operation, ServiceResponse response, bool forceUnknown = false)
     {
         try
         {
-            _operationReceipts.Complete(operation, response);
+            _operationReceipts.Complete(operation, response, forceUnknown);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException)
         {
@@ -216,12 +220,14 @@ internal sealed class ExcelController : IDisposable
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "The controller is a failure-transport boundary. It reports the exact worker/transport cause and uncertain workbook outcome without replaying, saving, or discarding work.")]
-    private async Task<ServiceResponse> ProcessCoreAsync(ServiceRequest request, bool waitForWorkerCompletion)
+    private async Task<ServiceResponse> ProcessCoreAsync(ServiceRequest request, bool waitForWorkerCompletion,
+        OperationReceipts.Operation? tracked = null)
     {
         List<string> reservedPaths = [];
         var reservation = new PathReservation(Guid.NewGuid().ToString("N"),
             request.Command == "workbook.save-as" ? request.SessionId : null);
         ExcelWorkerClient? worker = null;
+        WorkerRegistration? trackedOwner = null;
         CloseHistory.Target? closeTarget = null;
         JsonObject? priorCloseStatus = null;
         var testTimings = request.Command == "session.test" ? new SessionDiagnostics.TimingCollection() : null;
@@ -323,6 +329,8 @@ internal sealed class ExcelController : IDisposable
                 && request.SessionId is { } sessionId && _sessions.TryGetValue(sessionId, out var owner))
             {
                 worker = owner;
+                if (tracked is not null)
+                    trackedOwner = owner.Registration;
                 if (request.Command == "session.close")
                 {
                     closeTarget = new(sessionId, owner.Registration.Excel);
@@ -377,11 +385,18 @@ internal sealed class ExcelController : IDisposable
             }
             if (!worker.Registration.Worker.IsAlive())
                 throw new IOException("The Excel worker exited before this request was sent. Discover open workbooks to reconnect; no work was started.");
+            if (tracked is not null && trackedOwner is not null)
+            {
+                lock (_recentExcelExitLock)
+                    _operationReceipts.BindWorker(tracked, trackedOwner,
+                        _recentExcelExits.FirstOrDefault(exit => exit.Identity == trackedOwner.Excel));
+            }
             sent = true;
             ServiceResponse response;
             using (testTimings?.BeginStage("controllerWorkerRequest"))
             {
-                var completion = CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation, closeTarget, priorCloseStatus);
+                var completion = CompleteWorkerRequestAsync(request, worker, reservedPaths, reservation, closeTarget, priorCloseStatus,
+                    tracked?.DispatchId);
                 response = waitForWorkerCompletion
                     ? await completion
                     : await completion.WaitAsync(request.CallerCancellation);
@@ -411,12 +426,13 @@ internal sealed class ExcelController : IDisposable
         Justification = "The controller owns late worker completion after caller cancellation. It records exact results and confirmed state, and reports/logs transport failures rather than losing a faulted background task or retrying edits.")]
     private async Task<ServiceResponse> CompleteWorkerRequestAsync(
         ServiceRequest request, ExcelWorkerClient worker, List<string> reservedPaths, PathReservation reservation,
-        CloseHistory.Target? closeTarget = null, JsonObject? priorCloseStatus = null)
+        CloseHistory.Target? closeTarget = null, JsonObject? priorCloseStatus = null, Guid? dispatchId = null)
     {
         ServiceResponse? completedResponse = null;
         try
         {
-            var execution = await worker.ExecuteWithAdmissionAsync(request, request.CallerCancellation);
+            var execution = await worker.ExecuteWithAdmissionAsync(request, request.CallerCancellation,
+                dispatchId, dispatchId is null ? null : _operationReceipts.ObserveWorkerEvidence);
             var response = execution.Response;
             completedResponse = response;
             if (closeTarget is not null)
@@ -502,6 +518,8 @@ internal sealed class ExcelController : IDisposable
         }
         catch (Exception ex)
         {
+            if (request.OperationId is not null)
+                CaptureRetainedOperationEvidence(worker.Registration);
             if (StartsWorkbookWorker(request.Command))
                 _abandonedWorkers[worker.Registration.PipeName] = 0;
             if (ex is OperationCanceledException && reservedPaths.Count > 0)
@@ -679,7 +697,7 @@ internal sealed class ExcelController : IDisposable
             {
                 if (BeforeWorkerSnapshotReadForTests is { } beforeRead)
                     await beforeRead(worker);
-                await worker.ReadSnapshotAsync(cancellationToken);
+                await worker.ReadSnapshotAsync(cancellationToken, _operationReceipts.ObserveWorkerEvidence);
             }
             return ApplyWorkerSnapshot(worker);
         }
@@ -748,10 +766,10 @@ internal sealed class ExcelController : IDisposable
     private bool RecoverRecordedWorkerStatus(ExcelWorkerClient worker, WorkerRegistration recorded)
     {
         var current = worker.Registration;
-        if (recorded.PipeName != current.PipeName || recorded.Worker != current.Worker
-            || recorded.Controller != _identity || recorded.Generation != _generation
-            || recorded.Build != WorkerRegistry.Build)
+        if (!KnownRegistration(current, recorded))
             throw new InvalidOperationException("The retained Excel worker record has a mismatched process identity or build.");
+
+        _operationReceipts.ObserveWorkerEvidence(recorded);
 
         // An exit observation alone does not restore ownership or acknowledge release.
         if (recorded.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation)
@@ -771,8 +789,33 @@ internal sealed class ExcelController : IDisposable
         return true;
     }
 
+    private bool KnownRegistration(WorkerRegistration current, WorkerRegistration recorded) =>
+        recorded.PipeName == current.PipeName && recorded.Worker == current.Worker
+        && recorded.Controller == _identity && recorded.Generation == _generation
+        && recorded.Build == WorkerRegistry.Build;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Retained diagnostics are supplemental; failure to read them cannot replace an operation or transport failure.")]
+    private void CaptureRetainedOperationEvidence(WorkerRegistration current)
+    {
+        try
+        {
+            if (_registry.Read(current.PipeName) is not { } recorded || !KnownRegistration(current, recorded))
+                return;
+            _operationReceipts.ObserveWorkerEvidence(recorded);
+            if (recorded.LastExcelObservation is { State: ExcelNativeProcessState.Exited } exit
+                && (current.Excel == exit.Identity || current.ReleasedExcel == exit.Identity))
+                RememberNativeExit(recorded);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not read retained operation evidence: {0}", ex.GetType().Name);
+        }
+    }
+
     private void PublishProcessIdentity(WorkerRegistration registration)
     {
+        _operationReceipts.ObserveWorkerEvidence(registration);
         RememberNativeExit(registration);
         if (registration.ReleasedExcel is { } finished)
             ExcelProcessReleased?.Invoke(finished);
@@ -791,6 +834,7 @@ internal sealed class ExcelController : IDisposable
         {
             lock (_recentExcelExitLock)
             {
+                _operationReceipts.ObserveNativeExit(observation);
                 var recorded = _recentExcelExits.First;
                 while (recorded is not null && recorded.Value.Identity != observation.Identity)
                     recorded = recorded.Next;

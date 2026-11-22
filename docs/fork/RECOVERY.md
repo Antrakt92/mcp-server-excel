@@ -156,6 +156,41 @@ A false confirmation field means that evidence is unavailable. An observed exit
 can appear after a failed close, so use the separate observations and check the
 file on disk before retrying a save. This history is not a recovery handle and
 expires when the controller restarts.
+### Tracked commands after a lost reply
+
+To retain phase evidence for `vba.invoke`, `session.save` or `table.append`,
+send the command as a single batch entry with an `operationId`. Look up the
+receipt by the original session ID and UUID on the same controller. The
+`operationEvidence` object reports the last confirmed boundary. A failed
+command can also return it in `partialState.diagnostics.operationEvidence`.
+
+Use `excelcli -q session operation-result --session <ID> --operation-id <UUID>`
+or MCP `file_read` action `operation-result` with `workbook_session_id` and `operation_id`.
+
+- `controllerAccepted` means a receipt exists. The controller may still be
+  validating or queuing the request.
+- `controllerDispatchStarted` means the controller entered the worker request
+  path. It does not confirm delivery or admission.
+- `workerAdmitted` means the worker admitted that exact command.
+- `serviceResponseRecorded` means the worker recorded a Service response.
+  A timeout can reach this stage while native work is pending.
+
+`initialFailure` keeps the first recorded command failure's category, type and
+HRESULT when available. The separately bounded `result` retains the initial
+reply if the late response is lost.
+`workerFailure` contains the recorded failure category, exception type and
+HRESULT when available. `nativeExit` can appear later, matched by exact PID and
+creation time. An exit can follow later operations or normal cleanup. Its code
+alone gives no evidence about which command caused it or what was saved.
+An absent `nativeExit` means there is no matching observation.
+Use `recentCloseAttempts` separately for a subsequent close error.
+
+The worker checkpoint carries no workbook paths, VBA source, inputs or result
+payloads. Each worker keeps its latest checkpoint, so an earlier phase may be
+unavailable if the checkpoint was replaced before the controller observed it.
+The controller receipt remains bounded and process-local. Use separate VBA
+phase marks for individual operations inside a macro when debugging a fixture.
+
 ## Rebuild or report a problem
 
 The separately labeled [historical 2.4.1 patch](LEGACY.md) preserves the earlier
