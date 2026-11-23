@@ -35,7 +35,7 @@ public sealed class ServiceBridge : IDisposable
     private IServiceBridgeBackend? _current;
     private bool _disposed;
     private readonly SemaphoreSlim _dispatchSlots;
-    private readonly SemaphoreSlim _statusDispatchSlots = new(2, 2);
+    private readonly SemaphoreSlim _controlDispatchSlots = new(2, 2);
 
     internal ServiceBridge(Func<IServiceBridgeBackend> serviceFactory, ILogger<ServiceBridge>? logger = null,
         int maxOutstandingDispatches = 8)
@@ -100,9 +100,10 @@ public sealed class ServiceBridge : IDisposable
         }
         lock (_stateLock)
             ObjectDisposedException.ThrowIf(_disposed, this);
-        // These controller-local reads never take a worker's execution slot.
+        // Status and window visibility controls do not queue behind workbook work.
         var slots = command is "session.list" or "service.status" or "service.ping" or OperationReceipts.LookupCommand
-            ? _statusDispatchSlots : _dispatchSlots;
+            or "window.show" or "window.hide"
+            ? _controlDispatchSlots : _dispatchSlots;
         if (!slots.Wait(0))
             return new ServiceResponse
             {
