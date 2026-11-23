@@ -250,4 +250,47 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
         Assert.True(cellsAfter.Success, cellsAfter.ErrorMessage);
         Assert.Equal(JsonSerializer.Serialize(cellsBefore.Values), JsonSerializer.Serialize(cellsAfter.Values));
     }
+
+    [Theory]
+    [InlineData("rangelink.add-hyperlink", "A1:B1")]
+    [InlineData("rangelink.add-hyperlink", "A1,C1")]
+    [InlineData("rangelink.update-hyperlink", "A1:B1")]
+    [InlineData("rangelink.update-hyperlink", "A1,C1")]
+    [InlineData("rangelink.get-hyperlink", "A1:B1")]
+    [InlineData("rangelink.get-hyperlink", "A1,C1")]
+    public async Task SingleCellHyperlinkCommand_RejectsMultipleCellsWithoutChangingThem(
+        string command, string cellAddress)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.AddHyperlink(batch, sheetName, "A1", "https://first.example.com/",
+            "First", "First tip"));
+        RequireSuccess(_commands.AddHyperlink(batch, sheetName, "B1", "https://second.example.com/",
+            "Second", "Second tip"));
+        RequireSuccess(_commands.AddHyperlink(batch, sheetName, "C1", "https://third.example.com/",
+            "Third", "Third tip"));
+
+        var sheet = new { sheetName };
+        var range = new { sheetName, rangeAddress = "A1:C1" };
+        string? linksBefore = _fixture.Send("rangelink.list-hyperlinks", sheet).Result;
+        string? cellsBefore = _fixture.Send("range.get-values", range).Result;
+        Assert.NotNull(linksBefore);
+        Assert.NotNull(cellsBefore);
+
+        object args = command == "rangelink.get-hyperlink"
+            ? new { sheetName, cellAddress }
+            : new
+            {
+                sheetName,
+                cellAddress,
+                url = "https://replacement.example.com/",
+                displayText = "Replacement",
+                tooltip = "Replacement tip"
+            };
+        var rejected = await _fixture.SendForFailureAsync(command, args);
+        Assert.Equal("InvalidInput", rejected.ErrorCategory);
+        Assert.Contains("exactly one cell", rejected.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(linksBefore, _fixture.Send("rangelink.list-hyperlinks", sheet).Result);
+        Assert.Equal(cellsBefore, _fixture.Send("range.get-values", range).Result);
+    }
 }

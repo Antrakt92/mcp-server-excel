@@ -1,3 +1,4 @@
+using System.Globalization;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -41,6 +42,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                ValidateHyperlinkCell(range, cellAddress);
                 hyperlinks = sheet.Hyperlinks;
 
                 string address = NormalizeHyperlinkAddress(url, subAddress);
@@ -99,6 +101,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                ValidateHyperlinkCell(range, cellAddress);
                 hyperlinks = range.Hyperlinks;
                 if (hyperlinks.Count == 0)
                 {
@@ -287,6 +290,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                ValidateHyperlinkCell(range, cellAddress);
                 hyperlinks = range.Hyperlinks;
 
                 int count = hyperlinks.Count;
@@ -323,6 +327,12 @@ public partial class RangeCommands
                 ComUtilities.Release(ref sheet);
             }
         });
+    }
+
+    private static void ValidateHyperlinkCell(Excel.Range range, string cellAddress)
+    {
+        if (Convert.ToInt64((object)range.CountLarge, CultureInfo.InvariantCulture) != 1)
+            throw new ArgumentException($"The hyperlink address '{cellAddress}' must resolve to exactly one cell.", nameof(cellAddress));
     }
 
     private static void ValidateHyperlinkTooltip(string? tooltip)

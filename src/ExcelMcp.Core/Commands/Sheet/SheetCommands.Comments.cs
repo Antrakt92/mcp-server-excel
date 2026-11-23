@@ -1,3 +1,4 @@
+using System.Globalization;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -27,10 +28,7 @@ public partial class SheetCommands
                 }
 
                 cell = sheet.Range[cellAddress];
-                if (cell == null)
-                {
-                    throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
-                }
+                cell = RequireLegacyNoteCell(cell, cellAddress);
 
                 comment = cell.Comment;
                 if (comment == null)
@@ -69,10 +67,7 @@ public partial class SheetCommands
                 }
 
                 cell = sheet.Range[cellAddress];
-                if (cell == null)
-                {
-                    throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
-                }
+                cell = RequireLegacyNoteCell(cell, cellAddress);
 
                 comment = cell.Comment;
                 result.HasComment = comment != null;
@@ -109,10 +104,7 @@ public partial class SheetCommands
                 }
 
                 cell = sheet.Range[cellAddress];
-                if (cell == null)
-                {
-                    throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
-                }
+                cell = RequireLegacyNoteCell(cell, cellAddress);
 
                 comment = cell.Comment;
                 if (comment != null)
@@ -129,5 +121,14 @@ public partial class SheetCommands
                 ComUtilities.Release(ref sheet);
             }
         });
+    }
+
+    private static Excel.Range RequireLegacyNoteCell(Excel.Range? cell, string cellAddress)
+    {
+        if (cell is null)
+            throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
+        if (Convert.ToInt64((object)cell.CountLarge, CultureInfo.InvariantCulture) != 1)
+            throw new ArgumentException($"The legacy note address '{cellAddress}' must resolve to exactly one cell.", nameof(cellAddress));
+        return cell;
     }
 }
