@@ -119,6 +119,11 @@ public sealed class PythonInExcelCommands : IPythonInExcelCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
+                if (Convert.ToInt64((object)range.CountLarge, System.Globalization.CultureInfo.InvariantCulture) != 1)
+                {
+                    throw new ArgumentException("The Python result address must identify exactly one cell.", nameof(rangeAddress));
+                }
+
                 result.RangeAddress = range.Address;
 
                 string formula = ((object?)range.Formula2)?.ToString() ?? string.Empty;
