@@ -77,6 +77,7 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, cellAddress));
                 }
 
+                RangeHelpers.RequireSingleCell(cell, cellAddress);
                 region = cell.CurrentRegion;
                 result.RangeAddress = region.Address;
 

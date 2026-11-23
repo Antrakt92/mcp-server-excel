@@ -1,6 +1,6 @@
-using System.Globalization;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -127,8 +127,7 @@ public partial class SheetCommands
     {
         if (cell is null)
             throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
-        if (Convert.ToInt64((object)cell.CountLarge, CultureInfo.InvariantCulture) != 1)
-            throw new ArgumentException($"The legacy note address '{cellAddress}' must resolve to exactly one cell.", nameof(cellAddress));
+        RangeHelpers.RequireSingleCell(cell, cellAddress);
         return cell;
     }
 }

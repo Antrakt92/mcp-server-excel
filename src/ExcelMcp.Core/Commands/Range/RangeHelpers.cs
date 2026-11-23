@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -15,6 +16,12 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 /// </summary>
 public static class RangeHelpers
 {
+    internal static void RequireSingleCell(Excel.Range range, string cellAddress)
+    {
+        if (Convert.ToInt64((object)range.CountLarge, CultureInfo.InvariantCulture) != 1)
+            throw new ArgumentException($"The address '{cellAddress}' must resolve to exactly one cell.", nameof(cellAddress));
+    }
+
     internal static (int Rows, int Columns) GetDimensions(Excel.Range range)
     {
         Excel.Range? rows = null;

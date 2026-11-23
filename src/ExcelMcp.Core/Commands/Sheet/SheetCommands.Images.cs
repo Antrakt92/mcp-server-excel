@@ -1,5 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -33,10 +34,13 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
                 }
 
+                RangeHelpers.RequireSingleCell(cell, cellAddress);
+                var left = (double)(object)cell.Left;
+                var top = (double)(object)cell.Top;
                 pictures = (Excel.Pictures)sheet.Pictures(Type.Missing);
                 picture = pictures.Insert(imagePath);
-                picture.Left = (double)(object)cell.Left;
-                picture.Top = (double)(object)cell.Top;
+                picture.Left = left;
+                picture.Top = top;
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath };
             }

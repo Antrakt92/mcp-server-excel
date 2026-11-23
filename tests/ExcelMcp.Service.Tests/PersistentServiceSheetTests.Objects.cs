@@ -72,10 +72,7 @@ public sealed partial class PersistentServiceSheetTests
         var sheetName = _fixture.CreateTestSheet(batch);
         SeedObjectGuardCells(sheetName);
         var before = CaptureObjectGuardCells(sheetName);
-        var imagePath = _fixture.CreateInputFile(
-            ".png",
-            Convert.FromBase64String(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAIAAeIhvAAAAAElFTkSuQmCC"));
+        var imagePath = CreateObjectTestImage();
 
         RequireSuccess(_sheetCommands.AddImage(
             batch,
@@ -132,6 +129,32 @@ public sealed partial class PersistentServiceSheetTests
         Assert.Equal(before, CaptureObjectGuardCells(sheetName));
         Assert.Equal(0, RequireSuccess(_sheetCommands.GetImageCount(batch, sheetName)).ImageCount);
     }
+
+    [Theory]
+    [InlineData("worksheetstyle.add-shape")]
+    [InlineData("worksheetstyle.add-image")]
+    public async Task DrawingCommand_RejectsMultiCellAnchorBeforeInsertion(string command)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        SeedObjectGuardCells(sheetName);
+        var before = CaptureObjectGuardCells(sheetName);
+        const string cellAddress = "B2:C2";
+        object args = command == "worksheetstyle.add-image"
+            ? new { sheetName, cellAddress, imagePath = CreateObjectTestImage() }
+            : new { sheetName, cellAddress };
+
+        var result = await _fixture.SendForFailureAsync(command, args);
+
+        Assert.Equal("InvalidInput", result.ErrorCategory);
+        Assert.Contains("exactly one cell", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(0, RequireSuccess(_sheetCommands.GetShapeCount(batch, sheetName)).ShapeCount);
+        Assert.Equal(0, RequireSuccess(_sheetCommands.GetImageCount(batch, sheetName)).ImageCount);
+        Assert.Equal(before, CaptureObjectGuardCells(sheetName));
+    }
+
+    private string CreateObjectTestImage() => _fixture.CreateInputFile(".png", Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAIAAeIhvAAAAAElFTkSuQmCC"));
 
     [Fact]
     public void SetProtection_ProtectsAndUnprotectsSheet()
