@@ -359,8 +359,11 @@ public sealed class ExcelDialogProbeWindowTests
         if (failures.Count > 1) throw new AggregateException("Dialog test or cleanup failed.", failures);
     }
 
-    [Fact]
-    public async Task OwnedModalWindow_IsDetectedBeforeAnOccupiedExcelThread()
+    [Theory]
+    [InlineData("private connection details", false)]
+    [InlineData("Verbindung\tfehlgeschlagen\r\n接続エラー", false)]
+    [InlineData("摅瑩䌠湯整瑸\u0003unreadable", true)]
+    public async Task OwnedModalWindow_IsDetectedBeforeAnOccupiedExcelThread(string title, bool unreadableTitle)
     {
         var windowClass = new WindowClass
         {
@@ -384,7 +387,7 @@ public sealed class ExcelDialogProbeWindowTests
             Assert.Equal("No blocking Excel dialog was detected.",
                 ExcelDialogProbe.ReadDetails(identity, NullLogger.Instance));
 
-            dialog = CreateWindowEx(0x08000000, "STATIC", "private connection details", 0x90000000, -10000, -10000, 1, 1, root, 0, 0, 0);
+            dialog = CreateWindowEx(0x08000000, "STATIC", title, 0x90000000, -10000, -10000, 1, 1, root, 0, 0, 0);
             Assert.NotEqual(nint.Zero, dialog);
             message = CreateWindowEx(0, "STATIC", "The database is unavailable.", 0x50000000,
                 0, 0, 1, 1, dialog, 0, 0, 0);
@@ -414,7 +417,15 @@ public sealed class ExcelDialogProbeWindowTests
                     Thread.Sleep(1);
             }
             var details = await detailRead.WaitAsync(TimeSpan.FromSeconds(1));
-            Assert.Contains("private connection details", details, StringComparison.Ordinal);
+            if (unreadableTitle)
+            {
+                Assert.DoesNotContain("unreadable", details, StringComparison.Ordinal);
+                Assert.Contains("[Some dialog text could not be read or was truncated.]", details, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains(title, details, StringComparison.Ordinal);
+            }
             Assert.Contains("The database is unavailable.", details, StringComparison.Ordinal);
             Assert.DoesNotContain("test-entered-password", details, StringComparison.Ordinal);
             Assert.True(IsWindowVisible(root), batch.DialogVisibilityError);
@@ -426,7 +437,10 @@ public sealed class ExcelDialogProbeWindowTests
             Assert.Contains("workbook remains open", timeout.Message, StringComparison.Ordinal);
             Assert.Contains("No changes were saved or discarded by timeout recovery", timeout.Message, StringComparison.Ordinal);
             Assert.Contains("does not itself cancel", timeout.Message, StringComparison.Ordinal);
-            Assert.Contains("private connection details", timeout.Message, StringComparison.Ordinal);
+            if (unreadableTitle)
+                Assert.DoesNotContain("unreadable", timeout.Message, StringComparison.Ordinal);
+            else
+                Assert.Contains(title, timeout.Message, StringComparison.Ordinal);
             Assert.Contains("The database is unavailable.", timeout.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("test-entered-password", timeout.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("increasing timeoutSeconds", timeout.Message, StringComparison.Ordinal);

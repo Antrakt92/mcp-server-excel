@@ -61,7 +61,14 @@ internal static class ExcelDialogProbe
                 incomplete = true;
                 return true;
             }
-            var value = new string(buffer, 0, (int)Math.Min(length, (nuint)(buffer.Length - 1))).Trim();
+            var value = new string(buffer, 0, (int)Math.Min(length, (nuint)(buffer.Length - 1)));
+            if (value.Any(static character => char.IsControl(character)
+                && character is not ('\t' or '\r' or '\n' or '\u0085')))
+            {
+                incomplete = true;
+                return true;
+            }
+            value = value.Trim();
             if (value.Length == 0) return true;
             if (window != inspection.Dialog) labels++;
             if (text.Length > 0 && text.Length < 8192) text.Append('\n');
