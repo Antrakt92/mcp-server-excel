@@ -18,7 +18,9 @@ internal static class ServiceResultOutcome
     {
         errorMessage = null;
         errorCategory = null;
+        var contract = ServiceRegistry.GetResultContract(command);
         if (string.IsNullOrWhiteSpace(resultJson) &&
+            contract is not { ReadOnly: true } &&
             !command.Equals("session.test", StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -26,7 +28,7 @@ internal static class ServiceResultOutcome
 
         try
         {
-            var outcome = ResultJson.Read(resultJson, command, contract: ServiceRegistry.GetResultContract(command));
+            var outcome = ResultJson.Read(resultJson, command, contract: contract);
             errorMessage = outcome.Error?["message"]?.GetValue<string>();
             errorCategory = outcome.Error?["category"]?.GetValue<string>();
             return !outcome.Success;

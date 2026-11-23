@@ -37,6 +37,37 @@ public sealed class BatchToolExecutionTests
     }
 
     [Fact]
+    public async Task ReadWithoutPayload_KeepsEarlierResultsAndStopsDependentBatch()
+    {
+        var backend = new Backend(request => Task.FromResult(new ServiceResponse
+        {
+            Success = true,
+            Result = request.SessionId == "first" ? """{"sheets":[{"name":"Sales"}]}""" : null,
+            SessionId = request.SessionId
+        }));
+        using var bridge = new Bridge(() => backend);
+
+        var result = await ExcelBatchTool.ExcelBatch(BatchAction.Run, bridge,
+            [
+                new() { Command = "sheet.list", SessionId = "first" },
+                new() { Command = "sheet.list", SessionId = "missing" },
+                new() { Command = "sheet.list", SessionId = "must-not-dispatch" }
+            ], stop_on_error: true);
+
+        Assert.Equal(2, backend.Requests.Count);
+        Assert.True(result.IsError);
+        var output = result.StructuredContent!.Value;
+        Assert.Equal("InvalidResponse", output.GetProperty("errorCategory").GetString());
+        Assert.True(output.GetProperty("stoppedEarly").GetBoolean());
+        Assert.Equal(2, output.GetProperty("executedCount").GetInt32());
+        var items = output.GetProperty("results");
+        Assert.Equal("Sales", items[0].GetProperty("sheets")[0].GetProperty("name").GetString());
+        Assert.False(items[1].GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", items[1].GetProperty("errorCategory").GetString());
+        Assert.Equal("missing", items[1].GetProperty("workbook_session_id").GetString());
+    }
+
+    [Fact]
     public async Task ResultBudget_StopsBeforeNextCommandAndKeepsPriorResultsAndCrossingFailure()
     {
         const int itemSize = 4 * 1024 * 1024;

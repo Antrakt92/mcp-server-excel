@@ -117,13 +117,24 @@ public sealed class ForwardedResultConversionTests
             invocation!.Value.FailureClass);
     }
 
-    [Fact]
-    public async Task TypedForwarding_ReadWithoutResultStillFailsClosed()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" ")]
+    public async Task TypedForwarding_ReadWithoutResultReportsInvalidResponse(string? payload)
     {
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ExcelToolsBase.ExecuteToolActionAsync("range_read", "get-values",
-                () => Task.FromResult(ExcelToolsBase.ReadServiceResponse(
-                    new ServiceResponse { Success = true }, "range.get-values")), CancellationToken.None));
+        ToolInvocationResult? telemetry = null;
+        var result = await ExcelToolsBase.ExecuteToolActionAsync("range_read", "get-values",
+            () => Task.FromResult(ExcelToolsBase.ReadServiceResponse(
+                new ServiceResponse { Success = true, Result = payload, SessionId = "target" }, "range.get-values")),
+            CancellationToken.None, (_, _, _, invocation) => telemetry = invocation);
+
+        Assert.True(result.IsError);
+        var output = result.StructuredContent!.Value;
+        Assert.False(output.GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", output.GetProperty("errorCategory").GetString());
+        Assert.Equal("target", output.GetProperty("workbook_session_id").GetString());
+        Assert.False(output.TryGetProperty("result", out _));
+        Assert.Equal(ToolFailureClass.InternalProductFault, telemetry!.Value.FailureClass);
     }
 
     private static (string Tool, string Action, string Command, ServiceResponse Response) Scenario(string scenario) => scenario switch
