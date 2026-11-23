@@ -1,5 +1,6 @@
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Core.Commands.Range;
 using Sbroenne.ExcelMcp.Core.Models;
 using Excel = Microsoft.Office.Interop.Excel;
 using Office = Microsoft.Office.Core;
@@ -36,6 +37,7 @@ public partial class SheetCommands
                     throw new InvalidOperationException($"Cell '{cellAddress}' could not be resolved.");
                 }
 
+                RangeHelpers.RequireSingleCell(cell, cellAddress);
                 shapes = sheet.Shapes;
 
                 shape = shapes.AddShape(

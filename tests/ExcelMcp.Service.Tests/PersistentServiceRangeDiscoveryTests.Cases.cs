@@ -102,6 +102,23 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
     }
 
     [Fact]
+    public async Task GetCurrentRegion_MultiCellAnchor_ReturnsInvalidInput()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:B1", [["Left", "Right"]]));
+
+        var result = await _fixture.SendForFailureAsync(
+            "range.get-current-region", new { sheetName, cellAddress = "A1:B1" });
+
+        Assert.Equal("InvalidInput", result.ErrorCategory);
+        Assert.Contains("exactly one cell", result.ErrorMessage, StringComparison.Ordinal);
+        var region = RequireSuccess(_commands.GetCurrentRegion(batch, sheetName, "A1"));
+        Assert.Equal("$A$1:$B$1", region.RangeAddress);
+        Assert.Equal(new object?[] { "Left", "Right" }, Assert.Single(region.Values).ToArray());
+    }
+
+    [Fact]
     public void GetInfo_ValidAddress_ReturnsMetadata()
     {
         // Arrange - use shared file, create unique sheet for this test

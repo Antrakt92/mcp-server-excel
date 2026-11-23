@@ -13,6 +13,8 @@ namespace Sbroenne.ExcelMcp.CLI.Tests.Unit;
 [Trait("RequiresExcel", "false")]
 public sealed class CliTelemetryTests
 {
+    private const string EmptySessionList = """{"success":true,"sessions":[],"count":0}""";
+
     [Theory]
     [InlineData("list-actions")]
     [InlineData("list-actions range")]
@@ -80,7 +82,11 @@ public sealed class CliTelemetryTests
 
         var response = await CliTelemetry.TrackCommandAsync(
             request,
-            () => Task.FromResult(new ServiceResponse { Success = true }),
+            () => Task.FromResult(new ServiceResponse
+            {
+                Success = true,
+                Result = """{"success":true,"values":[[42]],"rowCount":1,"columnCount":1}"""
+            }),
             (command, _, succeeded, _, _) =>
             {
                 trackedCommand = command;
@@ -250,7 +256,7 @@ public sealed class CliTelemetryTests
             {
                 _ = CliTelemetry.TrackCommandAsync(
                     new ServiceRequest { Command = "session.test" },
-                    () => Task.FromResult(new ServiceResponse { Success = true }),
+                    () => Task.FromResult(new ServiceResponse { Success = true, Result = """{"canOpen":false}""" }),
                     (command, _, succeeded, _, expectedNegative) =>
                         trackedInvocations.Add((command, succeeded, expectedNegative))).GetAwaiter().GetResult();
                 CliTelemetry.RecordExpectedNegative();
@@ -329,7 +335,7 @@ public sealed class CliTelemetryTests
             {
                 _ = CliTelemetry.TrackCommandAsync(
                     new ServiceRequest { Command = "session.list" },
-                    () => Task.FromResult(new ServiceResponse { Success = true }),
+                    () => Task.FromResult(new ServiceResponse { Success = true, Result = EmptySessionList }),
                     (_, _, _, errorCategory, _) => trackedCategory = errorCategory).GetAwaiter().GetResult();
                 CliTelemetry.RecordFinalFailure("InvalidResponse");
                 return 1;
@@ -351,7 +357,7 @@ public sealed class CliTelemetryTests
             {
                 _ = CliTelemetry.TrackCommandAsync(
                     new ServiceRequest { Command = "session.list" },
-                    () => Task.FromResult(new ServiceResponse { Success = true }),
+                    () => Task.FromResult(new ServiceResponse { Success = true, Result = EmptySessionList }),
                     (command, _, succeeded, _, _) => trackedInvocations.Add((command, succeeded))).GetAwaiter().GetResult();
                 return 0;
             },
@@ -478,7 +484,7 @@ public sealed class CliTelemetryTests
                         trackedInvocations.Add((command, succeeded, errorCategory)));
                 _ = CliTelemetry.TrackCommandAsync(
                     new ServiceRequest { Command = "session.list" },
-                    () => Task.FromResult(new ServiceResponse { Success = true }),
+                    () => Task.FromResult(new ServiceResponse { Success = true, Result = EmptySessionList }),
                     (command, _, succeeded, errorCategory, _) =>
                         trackedInvocations.Add((command, succeeded, errorCategory))).GetAwaiter().GetResult();
                 return 1;

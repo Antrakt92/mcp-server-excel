@@ -100,6 +100,12 @@ public partial class TableCommands
                     throw new InvalidOperationException($"Sheet '{sheetName}' not found");
                 }
 
+                destRange = sheet.Range[targetCell];
+                if (Convert.ToInt64((object)destRange.CountLarge, System.Globalization.CultureInfo.InvariantCulture) != 1)
+                {
+                    throw new ArgumentException("The DAX table destination must identify exactly one cell.", nameof(targetCell));
+                }
+
                 // Check if workbook has Data Model and get first table name
                 // CreateModelWorkbookConnection requires a ModelTable name to create the connection
                 model = ctx.Book.Model;
@@ -155,9 +161,6 @@ public partial class TableCommands
                 }
                 ComUtilities.Release(ref modelConnection);
 
-                // Get target range for the table
-                destRange = sheet.Range[targetCell];
-
                 // Create Excel Table (ListObject) backed by the DAX query
                 listObjects = sheet.ListObjects;
                 listObject = listObjects.Add(
@@ -188,11 +191,11 @@ public partial class TableCommands
             {
                 ComUtilities.Release(ref listObject);
                 ComUtilities.Release(ref listObjects);
-                ComUtilities.Release(ref destRange);
-                ComUtilities.Release(ref sheet);
                 ComUtilities.Release(ref modelConnection);
                 ComUtilities.Release(ref modelWbConn);
                 ComUtilities.Release(ref model);
+                ComUtilities.Release(ref destRange);
+                ComUtilities.Release(ref sheet);
             }
         });
     }

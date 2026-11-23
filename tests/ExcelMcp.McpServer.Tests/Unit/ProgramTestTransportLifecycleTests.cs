@@ -189,7 +189,7 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
     [InlineData("exception")]
     [InlineData("invalid-json")]
     [InlineData("missing-result")]
-    public async Task UnexpectedBackendFailure_UsesSdkErrorWithoutPrivateDetails(string failureMode)
+    public async Task BackendFailure_UsesToolErrorWithoutPrivateDetails(string failureMode)
     {
         using var cancellation = new CancellationTokenSource();
         var input = new Pipe();
@@ -205,8 +205,28 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             });
             Assert.True(result.IsError);
             var text = Assert.Single(result.Content.OfType<TextContentBlock>()).Text;
-            Assert.Equal("An error occurred invoking 'file_read'.", text);
             Assert.DoesNotContain("synthetic-private-detail", text, StringComparison.Ordinal);
+            if (failureMode == "missing-result")
+            {
+                var payload = Assert.IsType<JsonElement>(result.StructuredContent);
+                using var parsedText = JsonDocument.Parse(text);
+                Assert.True(JsonElement.DeepEquals(parsedText.RootElement, payload));
+
+                using var expected = JsonDocument.Parse("""
+                    {
+                        "success": false,
+                        "errorMessage": "Read operation 'session.list' returned no result.",
+                        "errorCategory": "InvalidResponse",
+                        "command": "session.list"
+                    }
+                    """);
+                Assert.True(JsonElement.DeepEquals(expected.RootElement, payload), payload.GetRawText());
+            }
+            else
+            {
+                Assert.Equal("An error occurred invoking 'file_read'.", text);
+                Assert.Null(result.StructuredContent);
+            }
         }
         finally
         {

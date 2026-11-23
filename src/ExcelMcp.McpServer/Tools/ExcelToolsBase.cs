@@ -47,9 +47,6 @@ public static class ExcelToolsBase
     internal static ResultJson ReadServiceResponse(ServiceResponse response, string command)
     {
         var contract = ServiceRegistry.GetResultContract(command);
-        if (response.Success && response.Result is null && contract is { ReadOnly: true } &&
-            !command.Equals("session.test", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Read operation '{command}' returned no result.");
         return ResultJson.Read(response.Result, command, response.Success, response.ErrorMessage,
             response.ErrorCategory, response.SessionId, response.ExceptionType, response.HResult,
             response.InnerError, response.PartialState, contract);

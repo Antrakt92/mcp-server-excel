@@ -565,6 +565,38 @@ public sealed class InProcessCliCommandTests
     }
 
     [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    [InlineData(false, " ")]
+    [InlineData(true, " ")]
+    public async Task ReadWithoutPayload_ReportsInvalidResponse(bool batch, string? payload)
+    {
+        var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = payload });
+        var output = new StringWriter();
+        var telemetry = new List<(string Command, bool Succeeded, string? ErrorCategory)>();
+        var runtime = CreateRuntime(factory, output, new StringWriter(),
+            """{"command":"range.get-values","sessionId":"target","args":{"sheetName":"Sheet1","rangeAddress":"A1:C1"}}""",
+            telemetryObserver: (command, _, succeeded, errorCategory, _) => telemetry.Add((command, succeeded, errorCategory)));
+
+        var exit = await Program.RunAsync(batch ? ["--quiet", "batch"] :
+            ["--quiet", "range", "get-values", "--session", "target", "--sheet-name", "Sheet1", "--range-address", "A1:C1"],
+            runtime);
+
+        Assert.Equal(1, exit);
+        Assert.Equal("range.get-values", Assert.Single(factory.Requests).Command);
+        using var result = JsonDocument.Parse(output.ToString());
+        Assert.False(result.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", result.RootElement.GetProperty("error").GetProperty("category").GetString());
+        Assert.False(result.RootElement.TryGetProperty("data", out _));
+        Assert.Equal(batch, result.RootElement.TryGetProperty("index", out _));
+        // Batch requests are recorded by the daemon, not the CLI client.
+        if (batch)
+            Assert.Empty(telemetry);
+        else
+            Assert.Equal([("range.get-values", false, "InvalidResponse")], telemetry);
+    }
+
+    [Theory]
     [InlineData("enable-editing", "--allow-reopen")]
     [InlineData("enable-connections", "--allow-reopen")]
     [InlineData("enable-macros", "--allow-remembered-trust")]

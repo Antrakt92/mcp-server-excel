@@ -56,6 +56,31 @@ public sealed class ServiceBridgeAdmissionTests
     }
 
     [Fact]
+    public async Task WindowVisibilityUsesControlAdmissionWhileWorkbookWorkIsSaturated()
+    {
+        var backend = new Backend();
+        using var bridge = new Bridge(() => backend, maxOutstandingDispatches: 1);
+        var workbook = bridge.SendAsync("sheet.list", "workbook");
+        try
+        {
+            await Started(backend);
+            backend.Fast = true;
+            Assert.True((await bridge.SendAsync("window.show", "show-target")).Success);
+            Assert.True((await bridge.SendAsync("window.hide", "hide-target")).Success);
+            Assert.Equal("window.show", backend.Requests["show-target"].Command);
+            Assert.Equal("window.hide", backend.Requests["hide-target"].Command);
+            Assert.Equal("ServiceBusy", (await bridge.SendAsync("window.get-context", "other", new Poison())).ErrorCategory);
+            Assert.Equal(3, backend.Calls);
+            Assert.False(workbook.IsCompleted);
+        }
+        finally
+        {
+            backend.Complete("workbook");
+            await workbook.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+    }
+
+    [Fact]
     public async Task SaturationRejectsWithoutSerializationAndCancellationKeepsPendingWorkOwned()
     {
         var backend = new Backend();

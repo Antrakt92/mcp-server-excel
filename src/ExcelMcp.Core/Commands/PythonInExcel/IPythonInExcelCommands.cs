@@ -29,8 +29,8 @@ namespace Sbroenne.ExcelMcp.Core.Commands.PythonInExcel;
 [ServiceCategory("PythonInExcel")]
 [McpTool("pythoninexcel", Title = "Python in Excel Operations", Destructive = true, Category = "data",
     Description = "Write and read Microsoft 365 Python in Excel =PY() formulas. Requires a licensed Microsoft 365 account with Python in Excel and internet access; code runs in Microsoft's cloud. " +
-        "SET-FORMULA writes '=PY(code, returnType)'; always pass returnType (0=Excel value, 1=Python object). " +
-        "GET-RESULT calculates the whole Excel application, which can run cloud Python and pending formulas in other open workbooks, and waits until the result replaces #BUSY!. If still busy at the deadline (e.g. a cold start), call again or raise maxWaitSeconds. #NAME? means Python in Excel is unavailable in this session. " +
+        "SET-FORMULA writes '=PY(code, returnType)' to each cell in the target range. Always pass returnType (0=Excel value, 1=Python object). " +
+        "GET-RESULT requires exactly one cell. It calculates the whole Excel application, which can run cloud Python and pending formulas in other open workbooks, and waits until the result replaces #BUSY!. If still busy at the deadline (e.g. a cold start), call again or raise maxWaitSeconds. #NAME? means Python in Excel is unavailable in this session. " +
         "Reference worksheet data with xl(\"A1:A6\"), xl(\"Sheet1!A1:A6\"), or xl(\"MyRange\"). xl() returns a DataFrame/Series, so prefer .sum()/.mean() over Python's sum()/len().")]
 public interface IPythonInExcelCommands
 {
@@ -41,7 +41,7 @@ public interface IPythonInExcelCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name</param>
-    /// <param name="rangeAddress">Target cell address (e.g. "D1")</param>
+    /// <param name="rangeAddress">Target address. SET-FORMULA accepts a cell or range. GET-RESULT requires exactly one cell.</param>
     /// <param name="code">Python source code (e.g. "xl('A1:A6').sum()")</param>
     /// <param name="returnType">0 = Excel Value (default), 1 = Python Object</param>
     /// <exception cref="InvalidOperationException">If the range cannot be resolved</exception>
@@ -56,7 +56,7 @@ public interface IPythonInExcelCommands
     /// <summary>
     /// Starts application-level calculation before polling, which can execute pending formulas
     /// in other workbooks owned by the Excel process. This is not an inspection-only action.
-    /// Reads back the computed result of a =PY() cell, polling until the Python code (which executes
+    /// Requires exactly one cell. Reads back its computed =PY() result, polling until the Python code (which executes
     /// asynchronously in Microsoft's cloud sandbox) finishes. Completion is detected deterministically
     /// from Excel's calculation state plus a per-cell #BUSY! guard, so a converged result is never
     /// confused with the in-flight #BUSY! placeholder. If the cloud backend is still busy at the
@@ -65,7 +65,7 @@ public interface IPythonInExcelCommands
     /// </summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="sheetName">Worksheet name</param>
-    /// <param name="rangeAddress">Cell address containing the PY() formula</param>
+    /// <param name="rangeAddress">Target address. SET-FORMULA accepts a cell or range. GET-RESULT requires exactly one cell.</param>
     /// <param name="maxWaitSeconds">Maximum seconds to poll for the cloud result before giving up (default: 30). Must be shorter than the session operation timeout. Returns as soon as the result is ready.</param>
     /// <exception cref="InvalidOperationException">If the range cannot be resolved</exception>
     [ServiceAction("get-result")]

@@ -757,14 +757,12 @@ internal sealed class ExcelController : IDisposable
             }
             if (settled)
             {
-                var registration = snapshot.Registration;
-                var end = registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited, ExitCode: not 0 } exit
-                    && exit.Identity == (registration.Excel ?? registration.ReleasedExcel)
-                    ? SessionEnd.ExcelExited : SessionEnd.Closed;
+                SessionEnd? observedEnd = null;
                 foreach (var removed in _sessions.Where(entry => entry.Value == worker
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
-                    _closedSessions.TryAdd(removed.Key, end);
+                    if (!_closedSessions.ContainsKey(removed.Key))
+                        _closedSessions.TryAdd(removed.Key, observedEnd ??= InferSettledSessionEnd(snapshot.Registration));
                     _sessions.TryRemove(removed);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
                         _paths.TryRemove(path);
@@ -772,6 +770,26 @@ internal sealed class ExcelController : IDisposable
             }
             return snapshot;
         }
+    }
+
+    private SessionEnd InferSettledSessionEnd(WorkerRegistration registration)
+    {
+        if ((registration.Excel ?? registration.ReleasedExcel) is not { } identity)
+            return SessionEnd.Closed;
+
+        var exit = registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } recorded
+            && recorded.Identity == identity ? recorded : null;
+        if (exit?.ExitCode is null)
+        {
+            lock (_recentExcelExitLock)
+                exit = _recentExcelExits.FirstOrDefault(observation => observation.Identity == identity) ?? exit;
+        }
+        if (exit is not null)
+            return exit.ExitCode == 0 ? SessionEnd.Closed : SessionEnd.ExcelExited;
+
+        // The worker can remove the session before its exit observation reaches the registry.
+        // An exact native probe proves exit, but cannot confirm a workbook close or save.
+        return OwnedProcessGuard.TryConfirmExited(identity) ? SessionEnd.ExcelExited : SessionEnd.Closed;
     }
 
     private bool RecoverRecordedWorkerStatus(ExcelWorkerClient worker, WorkerRegistration recorded)

@@ -1,9 +1,12 @@
+using System.Runtime.InteropServices;
 using Excel = Microsoft.Office.Interop.Excel;
 
 namespace Sbroenne.ExcelMcp.ComInterop.Session;
 
 internal static class WorkbookRefreshProbe
 {
+    private const int ExcelObjectRequired = unchecked((int)0x800A01A8);
+
     internal static WorkbookRefreshState Read(Excel.Application application, Excel.Workbook workbook)
     {
         if (!application.Ready || application.CalculationState == Excel.XlCalculationState.xlCalculating)
@@ -11,13 +14,15 @@ internal static class WorkbookRefreshProbe
             return WorkbookRefreshState.Busy;
         }
 
-        return HasRefreshingConnection(workbook) || HasRefreshingQueryTable(workbook)
+        var connections = ReadConnectionRefreshState(workbook);
+        return connections == WorkbookRefreshState.Refreshing || HasRefreshingQueryTable(workbook)
             ? WorkbookRefreshState.Refreshing
-            : WorkbookRefreshState.Ready;
+            : connections;
     }
 
-    private static bool HasRefreshingConnection(Excel.Workbook workbook)
+    private static WorkbookRefreshState ReadConnectionRefreshState(Excel.Workbook workbook)
     {
+        var state = WorkbookRefreshState.Ready;
         Excel.Connections? connections = null;
         try
         {
@@ -34,17 +39,19 @@ internal static class WorkbookRefreshProbe
                     if (connection.Type == Excel.XlConnectionType.xlConnectionTypeOLEDB)
                     {
                         oledb = connection.OLEDBConnection;
-                        if (oledb.Refreshing) return true;
+                        var observed = ReadOleDbConnection(oledb);
+                        if (observed == WorkbookRefreshState.Refreshing) return observed;
+                        if (observed == WorkbookRefreshState.Unknown) state = observed;
                     }
                     else if (connection.Type == Excel.XlConnectionType.xlConnectionTypeODBC)
                     {
                         odbc = connection.ODBCConnection;
-                        if (odbc.Refreshing) return true;
+                        if (odbc.Refreshing) return WorkbookRefreshState.Refreshing;
                     }
                     else if (connection.Type == Excel.XlConnectionType.xlConnectionTypeDATAFEED)
                     {
                         dataFeed = connection.DataFeedConnection;
-                        if (dataFeed.Refreshing) return true;
+                        if (dataFeed.Refreshing) return WorkbookRefreshState.Refreshing;
                     }
                 }
                 finally
@@ -55,11 +62,24 @@ internal static class WorkbookRefreshProbe
                     ComUtilities.Release(ref connection);
                 }
             }
-            return false;
+            return state;
         }
         finally
         {
             ComUtilities.Release(ref connections);
+        }
+    }
+
+    internal static WorkbookRefreshState ReadOleDbConnection(Excel.OLEDBConnection connection)
+    {
+        try
+        {
+            return connection.Refreshing ? WorkbookRefreshState.Refreshing : WorkbookRefreshState.Ready;
+        }
+        catch (COMException ex) when (ex.HResult == ExcelObjectRequired)
+        {
+            // Excel can deny this getter while a background refresh is settling.
+            return WorkbookRefreshState.Unknown;
         }
     }
 

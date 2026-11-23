@@ -81,6 +81,28 @@ public class PersistentServiceTableDaxTests(
             cells => Assert.All(cells, Assert.Null));
     }
 
+    [Theory]
+    [InlineData("C5:D5")]
+    [InlineData("C5,E5")]
+    public void CreateFromDax_OnMultipleCells_RejectsBeforeCreatingAConnection(string targetCell)
+    {
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_commands.SetValues(batch, sheet, "J1:K1", [["left", "right"]]));
+        var connections = CaptureConnectionNames();
+        var tables = JsonSerializer.Serialize(RequireSuccess(_tables.List(batch)).Tables);
+
+        var failure = Record.Exception(() =>
+            _tables.CreateFromDax(batch, sheet, $"DaxTable_{Guid.NewGuid():N}", SalesQuery, targetCell));
+
+        Assert.Equal(connections, CaptureConnectionNames());
+        Assert.Equal(tables, JsonSerializer.Serialize(RequireSuccess(_tables.List(batch)).Tables));
+        Assert.Equal(new object?[] { "left", "right" },
+            Assert.Single(RequireSuccess(_commands.GetValues(batch, sheet, "J1:K1")).Values));
+        var error = Assert.IsType<ArgumentException>(failure);
+        Assert.Contains("exactly one cell", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void CreateFromDax_WithLocalizedTableName_CreatesReadableTable()
     {

@@ -41,6 +41,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                RangeHelpers.RequireSingleCell(range, cellAddress);
                 hyperlinks = sheet.Hyperlinks;
 
                 string address = NormalizeHyperlinkAddress(url, subAddress);
@@ -99,6 +100,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                RangeHelpers.RequireSingleCell(range, cellAddress);
                 hyperlinks = range.Hyperlinks;
                 if (hyperlinks.Count == 0)
                 {
@@ -287,6 +289,7 @@ public partial class RangeCommands
                 }
 
                 range = sheet.Range[cellAddress];
+                RangeHelpers.RequireSingleCell(range, cellAddress);
                 hyperlinks = range.Hyperlinks;
 
                 int count = hyperlinks.Count;
