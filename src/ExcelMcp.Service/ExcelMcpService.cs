@@ -36,6 +36,7 @@ public sealed class ExcelMcpService : IDisposable
 {
     private readonly SessionManager _sessionManager = new();
     private const byte SavedAtClose = 1;
+    private const byte CloseUnconfirmedAfterExit = 2;
     private readonly ConcurrentDictionary<string, byte> _knownSessionIds = new(StringComparer.Ordinal);
     private readonly IPowerQueryTraceSettings _pqTraceSettings;
     private readonly DaemonHost _daemonHost;
@@ -670,11 +671,12 @@ public sealed class ExcelMcpService : IDisposable
         var closingBatch = _sessionManager.GetSessionForDiagnostics(request.SessionId);
         bool closed;
         var saved = false;
+        ExcelNativeProcessObservation? reconciledExit = null;
         try
         {
             _sessionManager.SetOperationContext(request.SessionId, request.Command, request.CallerCancellation);
             closed = SessionDiagnostics.MeasureCloseStage("session-close",
-                () => _sessionManager.CloseSession(request.SessionId, out saved, save: shouldSave));
+                () => _sessionManager.CloseSession(request.SessionId, out saved, out reconciledExit, save: shouldSave));
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
@@ -688,6 +690,8 @@ public sealed class ExcelMcpService : IDisposable
 
         if (closed)
         {
+            if (RecordUnconfirmedCloseAfterExit(request.SessionId, reconciledExit))
+                return CloseAfterUnconfirmedExit(request, reconciledExit);
             if (saved)
             {
                 _knownSessionIds[request.SessionId] = SavedAtClose;
@@ -699,7 +703,9 @@ public sealed class ExcelMcpService : IDisposable
         }
 
         if (_knownSessionIds.TryGetValue(request.SessionId, out var known))
-            return AlreadyClosedResponse(request, saved: known == SavedAtClose);
+            return known == CloseUnconfirmedAfterExit
+                ? CloseAfterUnconfirmedExit(request, observation: null)
+                : AlreadyClosedResponse(request, saved: known == SavedAtClose);
 
         return new ServiceResponse
         {
@@ -711,6 +717,27 @@ public sealed class ExcelMcpService : IDisposable
 
     private static bool RequestsCloseSave(ServiceRequest request) =>
         ServiceRegistry.DeserializeArgs<SessionCloseArgs>(request.Args)?.Save == true;
+
+    private bool RecordUnconfirmedCloseAfterExit(string sessionId, ExcelNativeProcessObservation? observation)
+    {
+        if (observation is not { State: ExcelNativeProcessState.Exited, ExitCode: not 0 }
+            || _sessionManager.GetSessionForDiagnostics(sessionId) is not null)
+            return false;
+
+        // Retirement after a crash does not establish a workbook close or override a confirmed save.
+        _knownSessionIds.TryUpdate(sessionId, CloseUnconfirmedAfterExit, 0);
+        return true;
+    }
+
+    private static ServiceResponse CloseAfterUnconfirmedExit(ServiceRequest request, ExcelNativeProcessObservation? observation) => new()
+    {
+        Success = false,
+        Command = request.Command,
+        SessionId = request.SessionId,
+        ErrorCategory = "ExcelProcessDied",
+        ErrorMessage = "Excel exited before closing could be confirmed. " + CloseDisconnectGuidance(observation),
+        PartialState = MergeNativeProcessDiagnostics("""{"outcome":"unknown"}""", observation)
+    };
 
     internal static ServiceResponse AlreadyClosedResponse(ServiceRequest request, bool saved)
     {
@@ -1246,6 +1273,7 @@ public sealed class ExcelMcpService : IDisposable
             {
                 var observation = GetNativeProcessObservation(batch);
                 CleanupDeadSession(sessionId);
+                RecordUnconfirmedCloseAfterExit(sessionId, observation);
                 return Task.FromResult(CreateExcelDisconnectedResponse(sessionId, ex,
                     $"Excel process for session '{sessionId}' is no longer running. Session has been cleaned up. Please reopen the file with a new session.", observation));
             }
@@ -1309,6 +1337,7 @@ public sealed class ExcelMcpService : IDisposable
         CleanupDeadSession(sessionId);
         // Looking up a dead session can remove it. Read the original batch's retained exit evidence.
         var exitObservation = GetNativeProcessObservation(diagnosticBatch);
+        RecordUnconfirmedCloseAfterExit(sessionId, exitObservation);
         return CreateExcelDisconnectedResponse(sessionId, exception,
             duringClose
                 ? "Excel disconnected during close and is no longer running. " + CloseDisconnectGuidance(exitObservation)
@@ -1850,6 +1879,8 @@ public sealed class ExcelMcpService : IDisposable
             out var exitObservation,
             allowTimedOutOperation))
         {
+            if (sessionError == SessionOperationError.ExcelProcessDied)
+                RecordUnconfirmedCloseAfterExit(sessionId, exitObservation);
             return new ServiceResponse
             {
                 Success = false,

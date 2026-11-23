@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -9,6 +10,43 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ExcelMcpServiceErrorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Close_AfterAnotherRequestRetiresADeadExcelSession_DoesNotConfirmClose(bool exitedBeforeRequest)
+    {
+        using var service = new ExcelMcpService();
+#pragma warning disable CA2201 // Models an Excel callback disconnect without launching Excel.
+        var error = new COMException("Synthetic fatal callback disconnect.", unchecked((int)0x800706BE));
+#pragma warning restore CA2201
+        var batch = new FakeBatch
+        {
+            ExecuteException = error,
+            IsAliveAfterExecuteException = false,
+            ProcessObservationAfterDeathCheck = new(new ExcelProcessIdentity(123, 456),
+                ExcelNativeProcessState.Exited, 17, null)
+        };
+        const string sessionId = "native-exit-before-stale-close";
+        RegisterSession(service, sessionId, batch);
+        GetPrivateField<ConcurrentDictionary<string, byte>>(service, "_knownSessionIds")[sessionId] = 0;
+        if (exitedBeforeRequest)
+            Assert.Same(error, Assert.Throws<COMException>(() => batch.Execute(static (_, _) => { })));
+
+        var operation = await service.ProcessAsync(new ServiceRequest { Command = "sheet.list", SessionId = sessionId });
+        Assert.Equal("ExcelProcessDied", operation.ErrorCategory);
+        Assert.DoesNotContain(sessionId, service.SessionManager.ActiveSessionIds);
+
+        var close = await service.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
+        Assert.False(close.Success);
+        Assert.Equal("ExcelProcessDied", close.ErrorCategory);
+        Assert.Equal(sessionId, close.SessionId);
+        using var partial = JsonDocument.Parse(close.PartialState!);
+        Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+        Assert.Equal(1, batch.ExecuteCalls);
+        Assert.Equal(1, batch.DisposeCalls);
+        Assert.Equal(0, batch.SaveCalls);
+    }
+
     [Theory]
     [InlineData("Exited", 17u, false)]
     [InlineData("Exited", 17u, true)]

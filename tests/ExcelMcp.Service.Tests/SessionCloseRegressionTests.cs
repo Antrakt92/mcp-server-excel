@@ -20,6 +20,86 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 [Trait("Speed", "Medium")]
 public sealed partial class SessionCloseRegressionTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(42)]
+    [InlineData(null)]
+    public async Task Close_ReconciledNativeExitDoesNotConfirmAnAbnormalClose(int? exitCode)
+    {
+        using var service = new ExcelMcpService();
+        const string sessionId = "exited-before-close";
+        var identity = new ExcelProcessIdentity(1234, 5678);
+        var batch = new FakeBatch
+        {
+            WorkbookPath = CreateFakeWorkbookPath(),
+            IsAlive = false,
+            TeardownConfirmed = true,
+            ProcessObservation = new(identity, ExcelNativeProcessState.Exited, (uint?)exitCode, null)
+        };
+        RegisterSession(service, sessionId, batch, addKnownSessionId: true);
+
+        var response = await CloseSessionAsync(service, sessionId);
+
+        if (exitCode == 0)
+        {
+            Assert.True(response.Success, response.ErrorMessage);
+            Assert.True((await CloseSessionAsync(service, sessionId)).Success);
+        }
+        else
+        {
+            Assert.False(response.Success);
+            Assert.Equal("ExcelProcessDied", response.ErrorCategory);
+            Assert.Equal(sessionId, response.SessionId);
+            using var partial = JsonDocument.Parse(response.PartialState!);
+            Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+            var observed = partial.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+            Assert.Equal(identity.ProcessId, observed.GetProperty("processId").GetInt32());
+            Assert.Equal("5678", observed.GetProperty("startedAtUtcFileTime").GetString());
+            Assert.Equal("Exited", observed.GetProperty("state").GetString());
+            Assert.Equal(exitCode, observed.GetProperty("exitCode") is { ValueKind: JsonValueKind.Number } code
+                ? code.GetInt32() : null);
+            var retry = await CloseSessionAsync(service, sessionId);
+            Assert.False(retry.Success);
+            Assert.Equal("ExcelProcessDied", retry.ErrorCategory);
+        }
+        using var result = JsonDocument.Parse(response.Result!);
+        Assert.Equal(JsonValueKind.Object, result.RootElement.GetProperty("closeTimingsMs").ValueKind);
+        Assert.DoesNotContain(sessionId, GetSessionManager(service).ActiveSessionIds);
+        Assert.Equal(0, batch.DisposeCalls);
+        Assert.Equal(0, batch.RefreshProbeCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Close_ExitObservedDuringSuccessfulTeardown_KeepsTheConfirmedReply(bool save)
+    {
+        using var service = new ExcelMcpService();
+        const string sessionId = "exit-during-confirmed-close";
+        var batch = new FakeBatch { WorkbookPath = CreateFakeWorkbookPath() };
+        var saveCalls = 0;
+        batch.BeforeSave = () => saveCalls++;
+        batch.BeforeDispose = () =>
+        {
+            batch.IsAlive = false;
+            batch.ProcessObservation = new(new ExcelProcessIdentity(1234, 5678),
+                ExcelNativeProcessState.Exited, 42, null);
+        };
+        RegisterSession(service, sessionId, batch, addKnownSessionId: true);
+
+        var close = await CloseSessionAsync(service, sessionId, save);
+
+        Assert.True(close.Success, close.ErrorMessage);
+        Assert.Null(close.PartialState);
+        Assert.DoesNotContain(sessionId, GetSessionManager(service).ActiveSessionIds);
+        var retry = await CloseSessionAsync(service, sessionId, save);
+        Assert.True(retry.Success, retry.ErrorMessage);
+        using var replay = JsonDocument.Parse(retry.Result!);
+        Assert.Equal(save, replay.RootElement.GetProperty("saved").GetBoolean());
+        Assert.Equal(save ? 1 : 0, saveCalls);
+        Assert.Equal(1, batch.DisposeCalls);
+    }
+
     [Fact(Timeout = 15000)]
     public async Task WorkerMonitor_RetainsSessionPublishedDuringControllerExit()
     {
@@ -887,7 +967,7 @@ public sealed partial class SessionCloseRegressionTests
         return (T)field!.GetValue(instance)!;
     }
 
-    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState, IExcelBatchTeardownState
+    private sealed class FakeBatch : IExcelBatch, IExcelBatchRefreshState, IExcelBatchTeardownState, IExcelBatchProcessObservation
     {
         public WorkbookRefreshState RefreshState { get; set; } = WorkbookRefreshState.Ready;
         public int RefreshProbeCalls { get; private set; }
@@ -912,6 +992,7 @@ public sealed partial class SessionCloseRegressionTests
         public Exception? SaveException { get; set; }
         public bool IsAlive { get; set; } = true;
         public bool TeardownConfirmed { get; set; }
+        public ExcelNativeProcessObservation? ProcessObservation { get; set; }
         public int DisposeCalls { get; private set; }
         public int ExecuteCalls { get; private set; }
         public bool BlockOperations { get; init; }
