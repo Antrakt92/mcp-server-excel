@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Service.Workers;
 using Xunit;
@@ -9,6 +10,99 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ExcelControllerTests
 {
+    [Theory(Timeout = 15000)]
+    [InlineData("missing", false, true)]
+    [InlineData("missing", true, true)]
+    [InlineData("stale-zero", false, true)]
+    [InlineData("matching-zero", false, false)]
+    [InlineData("previous-zero", false, false)]
+    [InlineData("live", false, false)]
+    public async Task Controller_SettledMissingSessionChecksExactProcessWhenExitRecordIsUnavailable(
+        string evidence, bool releasedIdentity, bool expectedUnconfirmed)
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-missing-exit-record-");
+        try
+        {
+            using var controller = new ExcelController(launcher: Launcher, registry: new WorkerRegistry(directory.FullName));
+            await StopNativeObservationPollingAsync(controller);
+            var current = WorkerProcess.Current;
+            var excel = new ExcelProcessIdentity(current.ProcessId, current.StartedAtUtcFileTime);
+            if (evidence != "live")
+            {
+                using var child = new ProductProcessLauncher(DotNetHost, ["--list-sdks"]).Start([]);
+                _ = child.Handle;
+                var process = WorkerProcess.From(child);
+                excel = new ExcelProcessIdentity(process.ProcessId, process.StartedAtUtcFileTime);
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(4));
+            }
+
+            const string sessionId = "retired-before-exit-record";
+            var generation = ExitRegistryControllerGeneration(controller);
+            var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}", current,
+                current, generation, WorkerRegistry.Build, excel);
+            var worker = new ExcelWorkerClient(registration, current, generation);
+            var workers = ExitRegistryWorkers(controller);
+            Assert.True(workers.TryAdd(registration.PipeName, worker));
+            try
+            {
+                var path = Path.Join(directory.FullName, "claimed.xlsx");
+                var sessions = Assert.IsType<ConcurrentDictionary<string, ExcelWorkerClient>>(
+                    typeof(ExcelController).GetField("_sessions", NativeObservationHidden)!.GetValue(controller));
+                Assert.True(sessions.TryAdd(sessionId, worker));
+                var apply = typeof(ExcelController).GetMethod("ApplyWorkerSnapshot", NativeObservationHidden)!;
+                worker.RecordSnapshot(new(registration, [new SessionDescriptor(sessionId, path)],
+                    new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[{"sessionId":"retired-before-exit-record"}],"count":1}""" },
+                    null, null, new Dictionary<string, IReadOnlyList<string>> { [sessionId] = [path] }, Revision: 1));
+                apply.Invoke(controller, [worker]);
+
+                var observation = evidence switch
+                {
+                    "stale-zero" => new ExcelNativeProcessObservation(
+                        excel with { StartedAtUtcFileTime = excel.StartedAtUtcFileTime - 1 },
+                        ExcelNativeProcessState.Exited, 0, null),
+                    "matching-zero" => new ExcelNativeProcessObservation(excel, ExcelNativeProcessState.Exited, 0, null),
+                    _ => null
+                };
+                var settled = registration with
+                {
+                    Excel = releasedIdentity ? null : excel,
+                    ReleasedExcel = releasedIdentity ? excel : null,
+                    LastExcelObservation = observation
+                };
+                if (evidence == "previous-zero")
+                    PublishNativeObservation(controller, excel, ExcelNativeProcessState.Exited, 0, null);
+                worker.RecordSnapshot(new(settled, [],
+                    new ServiceResponse { Success = true, Result = """{"success":true,"sessions":[],"count":0}""" },
+                    null, null, new Dictionary<string, IReadOnlyList<string>>(), Revision: 2));
+                apply.Invoke(controller, [worker]);
+                Assert.DoesNotContain(sessionId, sessions.Keys);
+
+                var close = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
+                Assert.Equal(!expectedUnconfirmed, close.Success);
+                if (expectedUnconfirmed)
+                {
+                    Assert.Equal("ServiceUnavailable", close.ErrorCategory);
+                    Assert.Contains("Excel process exited", close.ErrorMessage, StringComparison.Ordinal);
+                    using var state = JsonDocument.Parse(close.PartialState!);
+                    Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+                }
+                else
+                {
+                    using var result = JsonDocument.Parse(close.Result!);
+                    Assert.False(result.RootElement.GetProperty("saved").GetBoolean());
+                }
+            }
+            finally
+            {
+                workers.TryRemove(registration.PipeName, out _);
+            }
+        }
+        finally
+        {
+            directory.Delete();
+        }
+    }
+
     [Theory(Timeout = 15000)]
     [InlineData(false)]
     [InlineData(true)]
