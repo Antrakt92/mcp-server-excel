@@ -27,12 +27,14 @@ internal static class ProgramTransportTestHost
         Pipe serverToClientPipe,
         CancellationToken cancellationToken,
         string clientName,
-        Func<ServiceBridge.IServiceBridgeBackend>? serviceFactory = null)
+        Func<ServiceBridge.IServiceBridgeBackend>? serviceFactory = null,
+        Action<Task>? onServerStarted = null)
     {
         serviceFactory ??= () => new ServiceBridge.ExcelControllerBackend(new ExcelController(
             launcher: new ProductProcessLauncher(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
                 @"..\..\..\..\..\src\ExcelMcp.McpServer\bin\Release\net10.0-windows\Sbroenne.ExcelMcp.McpServer.exe")), [])));
         var serverTask = Program.RunAsync([], clientToServerPipe, serverToClientPipe, cancellationToken, serviceFactory);
+        onServerStarted?.Invoke(serverTask);
         var client = await ConnectClientWithRetryAsync(clientToServerPipe, serverToClientPipe, cancellationToken, clientName);
 
         return (client, serverTask);

@@ -217,18 +217,33 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
         ThrowPersistenceFailures(failure, deleteFailure);
     }
 
-    private async Task CheckPersistenceAsync(string path, bool discard)
+    [Fact]
+    public async Task Shutdown_ReaderStartupFailureClosesOnlyTheHandedOverFixture()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mcp-persistence-{Guid.NewGuid():N}.xlsx");
+        var startupFailure = new InvalidOperationException("Simulated failure before starting the reader.");
+        var failure = await Record.ExceptionAsync(() => CheckPersistenceAsync(path, discard: false, startupFailure));
+        var deleteFailure = Record.Exception(() => File.Delete(path));
+        Assert.Null(deleteFailure);
+        Assert.Same(startupFailure, failure);
+    }
+
+    private async Task CheckPersistenceAsync(string path, bool discard, Exception? readerStartupFailure = null)
     {
         using var shutdown = new CancellationTokenSource();
         var input = new Pipe();
         var outputPipe = new Pipe();
-        var host = await ProgramTransportTestHost.StartAsync(input, outputPipe, shutdown.Token, "PersistenceWriter");
+        McpClient? writerClient = null;
+        Task? writerTask = null;
         ExcelProcessIdentity? capturedExcel = null;
         var writeFailure = await Record.ExceptionAsync(async () =>
         {
-            var created = await CallAsync(host.Client, "file", new() { ["action"] = "create", ["file_path"] = path });
+            var host = await ProgramTransportTestHost.StartAsync(input, outputPipe, shutdown.Token, "PersistenceWriter",
+                onServerStarted: task => writerTask = task);
+            writerClient = host.Client;
+            var created = await CallAsync(writerClient, "file", new() { ["action"] = "create", ["file_path"] = path });
             var id = created.GetProperty("workbook_session_id").GetString()!;
-            var discovery = await CallAsync(host.Client, "file_read", new() { ["action"] = "discover" });
+            var discovery = await CallAsync(writerClient, "file_read", new() { ["action"] = "discover" });
             var fixture = Assert.Single(discovery.GetProperty("workbooks").EnumerateArray(),
                 workbook => workbook.GetProperty("location").GetString() == path);
             Assert.Equal(id, fixture.GetProperty("sessionId").GetString());
@@ -238,7 +253,7 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
             Assert.True(OwnedProcessGuard.MatchesLiveProcess(identity));
             capturedExcel = identity;
             output.WriteLine($"Test-owned Excel: {identity}.");
-            await CallAsync(host.Client, "range", new()
+            await CallAsync(writerClient, "range", new()
             {
                 ["action"] = "set-values",
                 ["workbook_session_id"] = id,
@@ -247,23 +262,35 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
                 ["values"] = new object[][] { ["saved-on-shutdown"] }
             });
             if (discard)
-                await CallAsync(host.Client, "file", new() { ["action"] = "close", ["workbook_session_id"] = id, ["save"] = false });
+                await CallAsync(writerClient, "file", new() { ["action"] = "close", ["workbook_session_id"] = id, ["save"] = false });
         });
         var writerStopFailure = await Record.ExceptionAsync(() =>
-            ProgramTransportTestHost.StopAsync(host.Client, input, outputPipe, host.ServerTask, output, shutdown));
-        ThrowPersistenceFailures(writeFailure, writerStopFailure);
+            ProgramTransportTestHost.StopAsync(writerClient, input, outputPipe, writerTask, output, shutdown));
+        if (writeFailure is not null || writerStopFailure is not null)
+        {
+            var writerCleanup = capturedExcel is { } identity && writerTask is { IsCompleted: true }
+                ? await Record.ExceptionAsync(() => CleanupFailedHandoverAsync(identity, path))
+                : null;
+            ThrowPersistenceFailures(writeFailure, writerStopFailure, writerCleanup);
+        }
         var writerExcel = Assert.IsType<ExcelProcessIdentity>(capturedExcel);
 
         using var readerShutdown = new CancellationTokenSource();
         var readerInput = new Pipe();
         var readerOutput = new Pipe();
-        var reader = await ProgramTransportTestHost.StartAsync(readerInput, readerOutput, readerShutdown.Token, "PersistenceReader");
+        McpClient? readerClient = null;
+        Task? readerTask = null;
         string? attachedId = null;
         var cleanupReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var readerStopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readerStopped = new TaskCompletionSource<(bool Stopped, bool Failed)>(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? cleanup = null;
         var readFailure = await Record.ExceptionAsync(async () =>
         {
+            if (readerStartupFailure is not null)
+                throw readerStartupFailure;
+            var reader = await ProgramTransportTestHost.StartAsync(readerInput, readerOutput, readerShutdown.Token,
+                "PersistenceReader", onServerStarted: task => readerTask = task);
+            readerClient = reader.Client;
             if (!discard)
             {
                 var discovery = await CallAsync(reader.Client, "file_read", new() { ["action"] = "discover" });
@@ -308,8 +335,8 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
         });
         var closeFailure = await Record.ExceptionAsync(async () =>
         {
-            if (attachedId is not null)
-                await CallAsync(reader.Client, "file", new()
+            if (readerClient is not null && attachedId is not null)
+                await CallAsync(readerClient, "file", new()
                 {
                     ["action"] = "close",
                     ["workbook_session_id"] = attachedId,
@@ -317,8 +344,12 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
                 });
         });
         var stopFailure = await Record.ExceptionAsync(() =>
-            ProgramTransportTestHost.StopAsync(reader.Client, readerInput, readerOutput, reader.ServerTask, output, readerShutdown));
-        readerStopped.SetResult(reader.ServerTask.IsCompleted);
+            ProgramTransportTestHost.StopAsync(readerClient, readerInput, readerOutput, readerTask, output, readerShutdown));
+        var stopped = readerTask is null or { IsCompleted: true };
+        var failed = readFailure is not null || closeFailure is not null || stopFailure is not null;
+        readerStopped.SetResult((stopped, failed));
+        if (cleanup is null && stopped && failed && !OwnedProcessGuard.TryConfirmExited(writerExcel))
+            cleanup = CleanupFailedHandoverAsync(writerExcel, path);
         var quitFailure = cleanup is not null
             ? await Record.ExceptionAsync(() => cleanup.WaitAsync(ComInteropConstants.StaThreadJoinTimeout))
             : null;
@@ -328,8 +359,19 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
         ThrowPersistenceFailures(readFailure, closeFailure, stopFailure, quitFailure, exitFailure);
     }
 
+    private static async Task CleanupFailedHandoverAsync(ExcelProcessIdentity identity, string path)
+    {
+        if (OwnedProcessGuard.TryConfirmExited(identity))
+            return;
+
+        await StartHandoverCleanup(identity, path, null, Task.FromResult((true, true)))
+            .WaitAsync(ComInteropConstants.StaThreadJoinTimeout);
+        Assert.True(SpinWait.SpinUntil(() => OwnedProcessGuard.TryConfirmExited(identity),
+            TimeSpan.FromSeconds(10)), $"The test-owned Excel process is still running: {identity}.");
+    }
+
     private static Task StartHandoverCleanup(ExcelProcessIdentity identity, string path,
-        TaskCompletionSource ready, Task<bool> readerStopped)
+        TaskCompletionSource? ready, Task<(bool Stopped, bool Failed)> readerStopped)
     {
         var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
@@ -347,14 +389,26 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
                 Assert.Equal(path, fixture.FullName, ignoreCase: true);
                 ComUtilities.Release(ref fixture);
                 ComUtilities.Release(ref books);
-                ready.SetResult();
+                ready?.SetResult();
 
                 // A normal attachment never owns Excel. Only the fixture owner may quit it when empty.
-                if (readerStopped.GetAwaiter().GetResult()
-                    && !OwnedProcessGuard.TryConfirmExited(identity))
+                var handover = readerStopped.GetAwaiter().GetResult();
+                if (handover.Stopped && !OwnedProcessGuard.TryConfirmExited(identity))
                 {
                     Assert.True(OwnedProcessGuard.MatchesLiveProcess(identity));
-                    var quit = ExcelShutdownService.CloseAndQuitAndReport(null, application, save: false, filePath: path);
+                    if (handover.Failed)
+                    {
+                        books = application.Workbooks;
+                        if (books.Count != 0)
+                        {
+                            Assert.Equal(1, books.Count);
+                            fixture = books.Item[Path.GetFileName(path)];
+                            Assert.Equal(path, fixture.FullName, ignoreCase: true);
+                        }
+                        ComUtilities.Release(ref books);
+                    }
+                    var quit = ExcelShutdownService.CloseAndQuitAndReport(fixture, application, save: false,
+                        filePath: path, releaseWorkbook: false);
                     application = null; // A completed close released the application reference.
                     Assert.True(quit,
                         $"The test-owned Excel could not be closed: {identity}.");
@@ -362,7 +416,7 @@ public sealed class McpSessionLifetimeTests(ITestOutputHelper output)
             }
             catch (Exception ex)
             {
-                ready.TrySetException(ex);
+                ready?.TrySetException(ex);
                 failure = ex;
             }
             finally
