@@ -72,9 +72,9 @@ safe-outputs:
   report-failure-as-issue: false
   report-failed-jobs: false
   report-incomplete: false
-  missing-tool:
+  report-missing-tool:
     create-issue: false
-  missing-data:
+  report-missing-data:
     create-issue: false
   threat-detection:
     runs-on: ubuntu-26.04
