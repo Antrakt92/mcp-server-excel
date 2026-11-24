@@ -1922,8 +1922,10 @@ public sealed class InProcessCliCommandTests
         Assert.Equal(string.Empty, error.ToString());
     }
 
-    [Fact]
-    public async Task Version_WritesFriendlyOutputToInjectedStreams()
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("-v")]
+    public async Task Version_WritesFriendlyOutputToInjectedStreams(string versionFlag)
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -1933,7 +1935,7 @@ public sealed class InProcessCliCommandTests
             error,
             latestVersionProvider: static () => Task.FromResult<string?>(null));
 
-        var exitCode = await Program.RunAsync(["--version"], runtime);
+        var exitCode = await Program.RunAsync(["--quiet", versionFlag], runtime);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Could not check for updates", output.ToString(), StringComparison.Ordinal);
@@ -1941,6 +1943,58 @@ public sealed class InProcessCliCommandTests
         var banner = error.ToString();
         Assert.False(string.IsNullOrWhiteSpace(banner));
         Assert.DoesNotContain(banner, output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("-v")]
+    public async Task BatchInputWithVersionFlag_DoesNotRunVersionCommand(string value)
+    {
+        var output = new StringWriter();
+        var factory = new RecordingClientFactory();
+        var versionChecks = 0;
+        var runtime = CreateRuntime(factory, output, new StringWriter(), latestVersionProvider: () =>
+        {
+            versionChecks++;
+            return Task.FromResult<string?>(null);
+        });
+
+        var exitCode = await Program.RunAsync(["--quiet", "batch", "--input", value], runtime);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, versionChecks);
+        Assert.Equal(0, factory.ConnectionCount);
+        using var json = JsonDocument.Parse(output.ToString());
+        Assert.Equal("InvalidInput", json.RootElement.GetProperty("error").GetProperty("category").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OperationResultWithoutPayload_ReportsInvalidResponse(bool batch)
+    {
+        var operationId = Guid.NewGuid();
+        var response = new ServiceResponse { Success = true };
+        var daemon = new RecordingDaemonConnection(response, new(DaemonConnectionPolicy.RunningState, Running: true));
+        var factory = new RecordingClientFactory(response);
+        var output = new StringWriter();
+        var runtime = CreateRuntime(factory, output, new StringWriter(),
+            $$$"""{"command":"session.operation-result","sessionId":"target","args":{"operationId":"{{{operationId}}}"}}""",
+            daemonConnection: daemon);
+
+        var exitCode = await Program.RunAsync(batch ? ["--quiet", "batch"] :
+            ["--quiet", "session", "operation-result", "--session", "target", "--operation-id", operationId.ToString()],
+            runtime);
+
+        Assert.Equal(1, exitCode);
+        var request = Assert.Single(batch ? factory.Requests : daemon.Requests);
+        Assert.Equal("session.operation-result", request.Command);
+        Assert.Equal("target", request.SessionId);
+        using var json = JsonDocument.Parse(output.ToString());
+        var root = json.RootElement;
+        Assert.False(root.GetProperty("success").GetBoolean());
+        Assert.Equal("InvalidResponse", root.GetProperty("error").GetProperty("category").GetString());
+        Assert.False(root.TryGetProperty("data", out _));
     }
 
     [Theory]

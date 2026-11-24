@@ -223,8 +223,9 @@ public partial class TableCommands
         {
             Excel.ListObject? table = null;
             Excel.ListColumns? listColumns = null;
-            Excel.ListRows? listRows = null;
             Excel.Range? dataBodyRange = null;
+            Excel.Range? entireBodyRows = null;
+            Excel.Range? worksheetRows = null;
             try
             {
                 table = FindTable(ctx.Book, tableName);
@@ -243,11 +244,21 @@ public partial class TableCommands
 
                 if (dataBodyRange is not null)
                 {
+                    Func<int, bool>? includeRow = null;
                     if (visibleOnly)
-                        listRows = table.ListRows;
-                    int listRowCount = listRows?.Count ?? 0;
-                    result.Data = BoundedRangeValueReader.Read(dataBodyRange, size, budget, ct,
-                        visibleOnly ? row => IsListRowVisible(listRows, listRowCount, row + 1) : null);
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        entireBodyRows = dataBodyRange.EntireRow;
+                        var rows = entireBodyRows.Rows;
+                        worksheetRows = rows;
+                        if (rows.Count != size.Rows)
+                            throw new InvalidOperationException("Excel returned a worksheet row count that differs from the table body.");
+
+                        // Aggregate Hidden can misreport mixed visibility. Read each actual
+                        // worksheet row through the one-based Rows collection.
+                        includeRow = row => IsWorksheetRowVisible(rows, row + 1);
+                    }
+                    result.Data = BoundedRangeValueReader.Read(dataBodyRange, size, budget, ct, includeRow);
                 }
 
                 for (int i = 1; i <= columnCount; i++)
@@ -275,7 +286,8 @@ public partial class TableCommands
             }
             finally
             {
-                ComUtilities.Release(ref listRows);
+                ComUtilities.Release(ref worksheetRows);
+                ComUtilities.Release(ref entireBodyRows);
                 ComUtilities.Release(ref listColumns);
                 ComUtilities.Release(ref dataBodyRange);
                 ComUtilities.Release(ref table);
@@ -283,23 +295,13 @@ public partial class TableCommands
         });
     }
 
-    private static bool IsListRowVisible(Excel.ListRows? listRows, int listRowCount, int index)
+    private static bool IsWorksheetRowVisible(Excel.Range rows, int index)
     {
-        if (listRows is null || index > listRowCount)
-        {
-            return true;
-        }
-
-        Excel.ListRow? listRow = null;
-        Excel.Range? rowRange = null;
-        Excel.Range? entireRow = null;
+        Excel.Range? row = null;
         try
         {
-            listRow = listRows[index];
-            rowRange = listRow.Range;
-            entireRow = rowRange.EntireRow;
-
-            object? hiddenValue = entireRow.Hidden;
+            row = rows[index];
+            object? hiddenValue = row.Hidden;
             bool hidden = hiddenValue switch
             {
                 bool b => b,
@@ -313,9 +315,7 @@ public partial class TableCommands
         }
         finally
         {
-            ComUtilities.Release(ref entireRow);
-            ComUtilities.Release(ref rowRange);
-            ComUtilities.Release(ref listRow);
+            ComUtilities.Release(ref row);
         }
     }
 }

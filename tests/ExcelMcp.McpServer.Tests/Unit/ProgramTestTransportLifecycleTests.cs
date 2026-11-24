@@ -186,10 +186,11 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("exception")]
-    [InlineData("invalid-json")]
-    [InlineData("missing-result")]
-    public async Task BackendFailure_UsesToolErrorWithoutPrivateDetails(string failureMode)
+    [InlineData("exception", "list")]
+    [InlineData("invalid-json", "list")]
+    [InlineData("missing-result", "list")]
+    [InlineData("missing-result", "operation-result")]
+    public async Task BackendFailure_UsesToolErrorWithoutPrivateDetails(string failureMode, string action)
     {
         using var cancellation = new CancellationTokenSource();
         var input = new Pipe();
@@ -199,10 +200,16 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             input, outputPipe, cancellation.Token, "ErrorPrivacyClient", () => backend);
         try
         {
-            var result = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?>
+            var args = new Dictionary<string, object?>
             {
-                ["action"] = "list"
-            });
+                ["action"] = action
+            };
+            if (action == "operation-result")
+            {
+                args["workbook_session_id"] = "owned-session";
+                args["operation_id"] = Guid.NewGuid().ToString();
+            }
+            var result = await host.Client.CallToolAsync("file_read", args);
             Assert.True(result.IsError);
             var text = Assert.Single(result.Content.OfType<TextContentBlock>()).Text;
             Assert.DoesNotContain("synthetic-private-detail", text, StringComparison.Ordinal);
@@ -212,12 +219,12 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 using var parsedText = JsonDocument.Parse(text);
                 Assert.True(JsonElement.DeepEquals(parsedText.RootElement, payload));
 
-                using var expected = JsonDocument.Parse("""
+                using var expected = JsonDocument.Parse($$"""
                     {
                         "success": false,
-                        "errorMessage": "Read operation 'session.list' returned no result.",
+                        "errorMessage": "Read operation 'session.{{action}}' returned no result.",
                         "errorCategory": "InvalidResponse",
-                        "command": "session.list"
+                        "command": "session.{{action}}"
                     }
                     """);
                 Assert.True(JsonElement.DeepEquals(expected.RootElement, payload), payload.GetRawText());

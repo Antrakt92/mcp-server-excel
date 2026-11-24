@@ -184,12 +184,12 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
     }
 
     [Theory]
-    [InlineData("columns", "B1:B400", "$B$1:$B$400", 400L)]
-    [InlineData("rows", "A2:AZ2", "$A$2:$AZ$2", 52L)]
-    [InlineData("columns", "B1:C400", "$B$1:$C$400", 800L)]
-    [InlineData("rows", "A2:AZ3", "$A$2:$AZ$3", 104L)]
-    public void SpecialCells_VisibleOnHiddenRectangle_DoesNotProbeCells(
-        string axis, string rangeAddress, string visibleAddress, long cellCount)
+    [InlineData("columns", "B1:B400", "$B$1:$B$400", 400L, 1)]
+    [InlineData("rows", "A2:AZ2", "$A$2:$AZ$2", 52L, 1)]
+    [InlineData("columns", "B1:C400", "$B$1:$C$400", 800L, 2)]
+    [InlineData("rows", "A2:AZ3", "$A$2:$AZ$3", 104L, 2)]
+    public void SpecialCells_VisibleOnHiddenRectangle_ProbesOnlyTheSmallerAxis(
+        string axis, string rangeAddress, string visibleAddress, long cellCount, int hiddenDimensions)
     {
         var sheetName = _fixture.CreateTestSheet(_fixture.BatchToken);
         foreach (string cellAddress in rangeAddress.Split(':'))
@@ -202,22 +202,18 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
         {
             Excel.Worksheet? sheet = null;
             Excel.Range? scope = null;
-            Excel.Range? dimension = null;
             Excel.Range? match = null;
             try
             {
                 sheet = ComUtilities.FindSheet(context.Book, sheetName);
                 Assert.NotNull(sheet);
                 scope = sheet.Range[rangeAddress];
-                dimension = axis == "columns" ? scope.EntireColumn : scope.EntireRow;
-                Assert.True(Assert.IsType<bool>((object)dimension.Hidden));
                 var failure = Assert.Throws<COMException>(() => match = scope.SpecialCells(Excel.XlCellType.xlCellTypeVisible));
                 Assert.Equal(unchecked((int)0x800A03EC), failure.HResult);
             }
             finally
             {
                 ComUtilities.Release(ref match);
-                ComUtilities.Release(ref dimension);
                 ComUtilities.Release(ref scope);
                 ComUtilities.Release(ref sheet);
             }
@@ -235,7 +231,7 @@ public sealed partial class PersistentServiceRangeDiscoveryTests
         {
             RangeCommands.VisibleFallbackProbeForTests = null;
         }
-        Assert.Equal(0, fallbackProbes);
+        Assert.Equal(hiddenDimensions, fallbackProbes);
 
         var shown = _fixture.Send("rangeformat.set-visibility", new { sheetName, rangeAddress, axis, hidden = false });
         Assert.True(shown.Success, shown.ErrorMessage);

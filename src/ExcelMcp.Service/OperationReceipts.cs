@@ -142,7 +142,8 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         lock (_gate)
         {
             foreach (var operation in _entries.Values)
-                if (operation.Worker?.Excel == observation.Identity && operation.NativeExit?.ExitCode is null)
+                if (operation.Worker?.Excel == observation.Identity
+                    && CloseHistory.IsStrongerNativeExit(observation, operation.NativeExit))
                     operation.NativeExit = observation;
         }
     }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
@@ -276,7 +277,7 @@ public sealed class SessionManager : IDisposable
     private readonly WorkbookPathReservations<string> _activeFilePaths = new();
     private readonly ConcurrentDictionary<string, string> _sessionFilePaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, int> _activeOperationCounts = new();
-    private readonly ConcurrentDictionary<string, object> _sessionLocks = new();
+    private readonly ConditionalWeakTable<IExcelBatch, object> _sessionLocks = new();
     private readonly ConcurrentDictionary<string, byte> _closingSessions = new();
     private readonly ConcurrentDictionary<string, ExceptionDispatchInfo> _teardownFailures = new();
     private readonly ConcurrentDictionary<string, byte> _readOnlyValidationSessions = new();
@@ -300,8 +301,10 @@ public sealed class SessionManager : IDisposable
     private void ThrowIfClosedToNewSessions() =>
         ObjectDisposedException.ThrowIf(_disposed || _closedToNewSessions, this);
 
-    private object GetSessionLock(string sessionId) =>
-        _sessionLocks.GetOrAdd(sessionId, static _ => new object());
+    // In-flight work keeps the same lock even after the session is removed.
+    // The lock is collected with the batch; a missing ID never creates one.
+    private object GetSessionLock(IExcelBatch batch) =>
+        _sessionLocks.GetValue(batch, static _ => new object());
 
     private void CleanupDeadFilePathOwner(string location)
     {
@@ -470,7 +473,7 @@ public sealed class SessionManager : IDisposable
             if (_manager._activeSessions.TryGetValue(sessionId, out var batch))
             {
                 ((ExcelBatch)batch).Close();
-                _manager.RemoveSessionTracking(sessionId, removeSessionLock: true);
+                _manager.RemoveSessionTracking(sessionId);
             }
         }
 
@@ -481,7 +484,7 @@ public sealed class SessionManager : IDisposable
                 return;
             if (TryConfirmFailedTeardown(batch))
             {
-                _manager.RemoveSessionTracking(sessionId, removeSessionLock: true);
+                _manager.RemoveSessionTracking(sessionId);
                 SessionId = null;
                 return;
             }
@@ -654,7 +657,7 @@ public sealed class SessionManager : IDisposable
                                     && ReferenceEquals(current, attached))
                                 {
                                     attached.Dispose();
-                                    RemoveSessionTracking(sessionId, removeSessionLock: true);
+                                    RemoveSessionTracking(sessionId);
                                 }
                             }
 
@@ -724,14 +727,14 @@ public sealed class SessionManager : IDisposable
             {
                 if (session is not AttachedWorkbookBatch attached || !ReferenceEquals(attached.Owner, application))
                     continue;
-                lock (GetSessionLock(sessionId))
+                lock (GetSessionLock(attached))
                 {
                     lock (_filePathReservationLock)
                     {
                         if (_activeSessions.TryGetValue(sessionId, out var current) && ReferenceEquals(current, attached))
                         {
                             attached.Dispose();
-                            RemoveSessionTracking(sessionId, removeSessionLock: true);
+                            RemoveSessionTracking(sessionId);
                         }
                     }
                 }
@@ -808,7 +811,7 @@ public sealed class SessionManager : IDisposable
         {
             var (ownedSessionId, owned, _) = ownedCandidates[index];
 
-            lock (GetSessionLock(ownedSessionId))
+            lock (GetSessionLock(owned))
             {
                 lock (_filePathReservationLock)
                     ValidateOwnedWorkbookLocations(ownedCandidates);
@@ -874,7 +877,7 @@ public sealed class SessionManager : IDisposable
                 return sessionId;
 
             BeforeStaleOwnedSessionLockHookForTests?.Invoke();
-            var sessionLock = GetSessionLock(sessionId);
+            var sessionLock = GetSessionLock(ownedSession);
             lock (sessionLock)
             {
                 if (_activeSessions.TryGetValue(sessionId, out var currentSession)
@@ -882,8 +885,7 @@ public sealed class SessionManager : IDisposable
                     && GetActiveOperationCount(sessionId) == 0
                     && ownedSession.DetachClosedOwnedWorkbook(location))
                 {
-                    RemoveSessionTracking(sessionId, removeSessionLock: false);
-                    _sessionLocks.TryRemove(sessionId, out _);
+                    RemoveSessionTracking(sessionId);
                     ownedCandidates.RemoveAll(entry => entry.SessionId == sessionId);
                     return null;
                 }
@@ -1222,7 +1224,7 @@ public sealed class SessionManager : IDisposable
         {
             if (!retained)
             {
-                RemoveSessionTracking(reservationId, removeSessionLock: true);
+                RemoveSessionTracking(reservationId);
                 ReleaseFilePathClaim(normalizedPath, reservationId);
             }
         }
@@ -1323,7 +1325,7 @@ public sealed class SessionManager : IDisposable
                 $"Excel startup failed and teardown remains unconfirmed. Session '{sessionId}' remains owned: {startupFailure.Message}",
                 failure);
         }
-        RemoveSessionTracking(sessionId, removeSessionLock: true);
+        RemoveSessionTracking(sessionId);
     }
 
 
@@ -1342,15 +1344,15 @@ public sealed class SessionManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (string.IsNullOrWhiteSpace(sessionId))
+        if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch))
         {
             return null;
         }
 
-        var sessionLock = GetSessionLock(sessionId);
+        var sessionLock = GetSessionLock(batch);
         lock (sessionLock)
         {
-            if (!_activeSessions.TryGetValue(sessionId, out var batch))
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(batch, current))
             {
                 return null;
             }
@@ -1381,7 +1383,7 @@ public sealed class SessionManager : IDisposable
             return;
         }
 
-        RemoveSessionTracking(sessionId, removeSessionLock: true);
+        RemoveSessionTracking(sessionId);
 
         // Dispose the batch (best effort - process is already dead)
         try
@@ -1394,7 +1396,7 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    private void RemoveSessionTracking(string sessionId, bool removeSessionLock)
+    private void RemoveSessionTracking(string sessionId)
     {
         _activeSessions.TryRemove(sessionId, out _);
 
@@ -1421,11 +1423,6 @@ public sealed class SessionManager : IDisposable
         _auditSessions.TryRemove(sessionId, out _);
         _readOnlyValidationSessions.TryRemove(sessionId, out _);
         _teardownFailures.TryRemove(sessionId, out _);
-
-        if (removeSessionLock)
-        {
-            _sessionLocks.TryRemove(sessionId, out _);
-        }
     }
 
     /// <summary>
@@ -1492,7 +1489,14 @@ public sealed class SessionManager : IDisposable
             return false;
         }
 
-        var sessionLock = GetSessionLock(sessionId);
+        if (!_activeSessions.TryGetValue(sessionId, out var selected))
+        {
+            errorMessage = $"Session '{sessionId}' not found";
+            error = SessionOperationError.NotFound;
+            return false;
+        }
+
+        var sessionLock = GetSessionLock(selected);
         lock (sessionLock)
         {
             if (_teardownFailures.TryGetValue(sessionId, out var teardownFailure))
@@ -1510,13 +1514,14 @@ public sealed class SessionManager : IDisposable
                 return false;
             }
 
-            if (!_activeSessions.TryGetValue(sessionId, out batch))
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(selected, current))
             {
                 errorMessage = $"Session '{sessionId}' not found";
                 error = SessionOperationError.NotFound;
                 return false;
             }
 
+            batch = selected;
             if (batch is ExcelBatch { HasFailedStartup: true } failedStartup)
             {
                 errorMessage = $"Excel startup for session '{sessionId}' failed: {failedStartup.OperationStatus.ErrorMessage}";
@@ -1593,10 +1598,13 @@ public sealed class SessionManager : IDisposable
     /// <param name="sessionId">Session ID</param>
     public void EndOperation(string sessionId)
     {
-        if (string.IsNullOrWhiteSpace(sessionId)) return;
-        var sessionLock = GetSessionLock(sessionId);
+        if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch)) return;
+        var sessionLock = GetSessionLock(batch);
         lock (sessionLock)
         {
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(batch, current))
+                return;
+
             while (_activeOperationCounts.TryGetValue(sessionId, out var count))
             {
                 var next = Math.Max(0, count - 1);
@@ -1785,17 +1793,16 @@ public sealed class SessionManager : IDisposable
         saved = false;
         reconciledExit = null;
 
-        if (string.IsNullOrWhiteSpace(sessionId))
+        if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch))
         {
             return false;
         }
 
-        var sessionLock = GetSessionLock(sessionId);
-        IExcelBatch batch;
+        var sessionLock = GetSessionLock(batch);
         var resolvedFailedTeardown = false;
         lock (sessionLock)
         {
-            if (!_activeSessions.TryGetValue(sessionId, out batch!))
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(batch, current))
             {
                 return false;
             }
@@ -1809,7 +1816,7 @@ public sealed class SessionManager : IDisposable
             if (!batch.IsExcelProcessAlive() && (!save || batch is ExcelBatch { HasFailedStartup: true })
                 && TryConfirmFailedTeardown(batch))
             {
-                RemoveSessionTracking(sessionId, removeSessionLock: false);
+                RemoveSessionTracking(sessionId);
                 resolvedFailedTeardown = true;
             }
             else if (_teardownFailures.TryGetValue(sessionId, out var teardownFailure))
@@ -1819,7 +1826,7 @@ public sealed class SessionManager : IDisposable
                     teardownFailure.Throw();
                 }
 
-                RemoveSessionTracking(sessionId, removeSessionLock: false);
+                RemoveSessionTracking(sessionId);
                 resolvedFailedTeardown = true;
             }
 
@@ -1863,7 +1870,6 @@ public sealed class SessionManager : IDisposable
 
         if (resolvedFailedTeardown)
         {
-            _sessionLocks.TryRemove(sessionId, out _);
             return true;
         }
 
@@ -1982,7 +1988,7 @@ public sealed class SessionManager : IDisposable
                         && ReferenceEquals(current, attached))
                     {
                         attached.Dispose();
-                        RemoveSessionTracking(attachedSessionId, removeSessionLock: true);
+                        RemoveSessionTracking(attachedSessionId);
                     }
                 }
             }
@@ -2080,7 +2086,7 @@ public sealed class SessionManager : IDisposable
             throw closeFailure;
         }
 
-        var sessionLock = GetSessionLock(sessionId);
+        var sessionLock = GetSessionLock(batch);
         lock (sessionLock)
         {
             lock (_filePathReservationLock)
@@ -2091,11 +2097,10 @@ public sealed class SessionManager : IDisposable
                 {
                     _openWorkbookSelections.TryRemove(attached.WorkbookId, out _);
                 }
-                RemoveSessionTracking(sessionId, removeSessionLock: false);
+                RemoveSessionTracking(sessionId);
             }
         }
 
-        _sessionLocks.TryRemove(sessionId, out _);
     }
 
     private void ReleaseClosedWorkbookReservations(string sessionId, ExcelBatch batch)
@@ -2164,11 +2169,11 @@ public sealed class SessionManager : IDisposable
     /// <returns>True if the session must remain discoverable, false otherwise</returns>
     public bool IsSessionRetained(string sessionId)
     {
-        if (string.IsNullOrWhiteSpace(sessionId)) return false;
-        var sessionLock = GetSessionLock(sessionId);
+        if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch)) return false;
+        var sessionLock = GetSessionLock(batch);
         lock (sessionLock)
         {
-            if (!_activeSessions.TryGetValue(sessionId, out var batch)) return false;
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(batch, current)) return false;
 
             if (batch.IsExcelProcessAlive() || batch is ExcelBatch { HasFailedStartup: true })
             {
@@ -2460,7 +2465,7 @@ public sealed class SessionManager : IDisposable
             var readOnlyValidation = _readOnlyValidationSessions.ContainsKey(sessionId);
             if (teardownFailed && TryConfirmFailedTeardown(session))
             {
-                RemoveSessionTracking(sessionId, removeSessionLock: true);
+                RemoveSessionTracking(sessionId);
                 continue;
             }
             try
@@ -2505,7 +2510,7 @@ public sealed class SessionManager : IDisposable
                 continue;
             }
             lock (_filePathReservationLock)
-                RemoveSessionTracking(sessionId, removeSessionLock: true);
+                RemoveSessionTracking(sessionId);
         }
 
         lock (_filePathReservationLock)

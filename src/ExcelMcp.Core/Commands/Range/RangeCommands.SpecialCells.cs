@@ -8,6 +8,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Range;
 
 public partial class RangeCommands
 {
+    internal const int MaxVisibleFallbackProbes = 4096;
     internal static Action? VisibleFallbackProbeForTests { get; set; }
 
     /// <inheritdoc />
@@ -270,53 +271,49 @@ public partial class RangeCommands
     {
         if (cellKind != SpecialCellKind.Visible)
             return ContainsMatchingCellInBulk(scope, cellKind, ct, formulaErrors);
+        Excel.Range? entireRows = null;
+        Excel.Range? entireColumns = null;
         Excel.Range? rows = null;
         Excel.Range? columns = null;
         try
         {
             ct.ThrowIfCancellationRequested();
-            rows = scope.EntireRow;
-            object? rowsHidden = rows.Hidden;
-            if (rowsHidden is true)
-                return false;
-
-            columns = scope.EntireColumn;
-            object? columnsHidden = columns.Hidden;
-            if (columnsHidden is true)
-                return false;
+            entireRows = scope.EntireRow;
+            rows = entireRows.Rows;
+            entireColumns = scope.EntireColumn;
+            columns = entireColumns.Columns;
+            int rowCount = rows.Count;
+            int columnCount = columns.Count;
+            if (rowCount < 1 || columnCount < 1)
+                throw new InvalidOperationException("Excel returned no dimensions for the visibility check.");
+            int remaining = MaxVisibleFallbackProbes;
 
             // A rectangle contains a visible cell exactly when both axes contain a visible member.
-            // A mixed aggregate needs a separate check of its own axis, not of every cell.
-            return (rowsHidden is false || ContainsVisibleMember(rows, true, ct))
-                && (columnsHidden is false || ContainsVisibleMember(columns, false, ct));
+            // Excel may return a Boolean for an axis with mixed visibility, so verify each member.
+            return rowCount <= columnCount
+                ? ContainsVisibleMember(rows, rowCount, ref remaining, ct)
+                    && ContainsVisibleMember(columns, columnCount, ref remaining, ct)
+                : ContainsVisibleMember(columns, columnCount, ref remaining, ct)
+                    && ContainsVisibleMember(rows, rowCount, ref remaining, ct);
         }
         finally
         {
             ComUtilities.Release(ref columns);
+            ComUtilities.Release(ref entireColumns);
             ComUtilities.Release(ref rows);
+            ComUtilities.Release(ref entireRows);
         }
     }
 
-    private static bool ContainsVisibleMember(Excel.Range dimension, bool rows, CancellationToken ct)
+    private static bool ContainsVisibleMember(Excel.Range members, int count, ref int remaining, CancellationToken ct)
     {
-        Excel.Range? members = null;
-        try
-        {
-            members = rows ? dimension.Rows : dimension.Columns;
-            return ContainsVisibleMember(members, ct);
-        }
-        finally
-        {
-            ComUtilities.Release(ref members);
-        }
-    }
-
-    private static bool ContainsVisibleMember(Excel.Range members, CancellationToken ct)
-    {
-        int count = members.Count;
         for (int index = 1; index <= count; index++)
         {
             ct.ThrowIfCancellationRequested();
+            if (remaining == 0)
+                throw new InvalidOperationException(
+                    "Excel could not verify whether the range contains visible cells within the visibility check limit.");
+            remaining--;
             Excel.Range? member = null;
             try
             {

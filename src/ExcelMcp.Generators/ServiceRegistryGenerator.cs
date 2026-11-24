@@ -131,6 +131,7 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             if (compilation.GetTypeByMetadataName(typeName) is { } type)
                 Emit(command, type, true);
         sb.AppendLine("""
+                   ["session.operation-result"] = new(true, []),
                    ["service.status"] = new(true, []),
             """);
         sb.AppendLine("""

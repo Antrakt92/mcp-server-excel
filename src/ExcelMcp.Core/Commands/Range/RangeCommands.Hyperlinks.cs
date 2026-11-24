@@ -113,18 +113,20 @@ public partial class RangeCommands
                 string effectiveAddress = url != null
                     ? NormalizeHyperlinkAddress(url, effectiveSubAddress)
                     : existingAddress;
-                string effectiveDisplayText = displayText ?? hyperlink.TextToDisplay ?? string.Empty;
-                string? effectiveTooltip = tooltip ?? hyperlink.ScreenTip;
 
                 if (string.IsNullOrWhiteSpace(effectiveAddress) && string.IsNullOrWhiteSpace(effectiveSubAddress))
                 {
                     throw new ArgumentException("A hyperlink must retain either an external address or an internal subAddress.");
                 }
 
-                if (url != null || subAddress != null)
+                if (url is not null || subAddress is not null)
                 {
-                    hyperlink.Delete();
+                    string effectiveDisplayText = displayText ?? hyperlink.TextToDisplay ?? string.Empty;
+                    string? effectiveTooltip = tooltip ?? hyperlink.ScreenTip;
                     ComUtilities.Release(ref hyperlink);
+                    ct.ThrowIfCancellationRequested();
+                    // Excel replaces the link at the same anchor. Deleting it explicitly
+                    // first would remove the original before Excel accepts the new target.
                     hyperlink = hyperlinks.Add(
                         Anchor: range,
                         Address: effectiveAddress,
@@ -134,15 +136,11 @@ public partial class RangeCommands
                 }
                 else
                 {
-                    if (displayText != null)
-                    {
+                    ct.ThrowIfCancellationRequested();
+                    if (displayText is not null)
                         hyperlink.TextToDisplay = displayText;
-                    }
-
-                    if (tooltip != null)
-                    {
+                    if (tooltip is not null)
                         hyperlink.ScreenTip = tooltip;
-                    }
                 }
 
                 result.Success = true;
@@ -236,15 +234,16 @@ public partial class RangeCommands
                     {
                         hyperlink = hyperlinks[i];
                         range = hyperlink.Range;
+                        string address = hyperlink.Address ?? string.Empty;
 
                         result.Hyperlinks.Add(new HyperlinkInfo
                         {
                             CellAddress = range.Address[false, false],
-                            Address = hyperlink.Address ?? string.Empty,
+                            Address = address,
                             SubAddress = hyperlink.SubAddress,
                             DisplayText = hyperlink.TextToDisplay ?? string.Empty,
                             ScreenTip = hyperlink.ScreenTip,
-                            IsInternal = string.IsNullOrEmpty(hyperlink.Address)
+                            IsInternal = address.Length == 0
                         });
                     }
                     finally
@@ -299,15 +298,16 @@ public partial class RangeCommands
                     try
                     {
                         hyperlink = hyperlinks[1]; // Get first hyperlink in cell
+                        string address = hyperlink.Address ?? string.Empty;
 
                         result.Hyperlinks.Add(new HyperlinkInfo
                         {
                             CellAddress = cellAddress,
-                            Address = hyperlink.Address ?? string.Empty,
+                            Address = address,
                             SubAddress = hyperlink.SubAddress,
                             DisplayText = hyperlink.TextToDisplay ?? string.Empty,
                             ScreenTip = hyperlink.ScreenTip,
-                            IsInternal = string.IsNullOrEmpty(hyperlink.Address)
+                            IsInternal = address.Length == 0
                         });
                     }
                     finally

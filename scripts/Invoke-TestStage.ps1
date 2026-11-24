@@ -89,7 +89,8 @@ function Invoke-TestStage {
         [string]$HangTimeout = '5m',
         [hashtable]$Environment = @{},
         [switch]$ListTests,
-        [switch]$ReconcileCases
+        [switch]$ReconcileCases,
+        [switch]$SuppressTestList
     )
     $root = Split-Path -Parent $PSScriptRoot
     $projectPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Project)
@@ -103,7 +104,7 @@ function Invoke-TestStage {
     $expected = $null
     if ($ReconcileCases -and -not $ListTests) {
         Invoke-TestStage -Project $projectPath -Filter $Filter -ResultsDirectory $resultsPath -Name "$Name-discovery" `
-            -DeadlineSeconds $DeadlineSeconds -HangTimeout $HangTimeout -Environment $Environment -ListTests
+            -DeadlineSeconds $DeadlineSeconds -HangTimeout $HangTimeout -Environment $Environment -ListTests -SuppressTestList
         $expected = @(Get-DiscoveredTestCases (Get-Content (Join-Path $resultsPath "$Name-discovery.stdout.log") -Raw))
     }
     $settings = Join-Path $resultsPath "$Name.runsettings"
@@ -131,15 +132,20 @@ function Invoke-TestStage {
     Write-Host "Live logs: $outputPath ; $errorPath"
     try {
         $result = Invoke-NativeCommand -Executable dotnet -Arguments $arguments -DeadlineSeconds $DeadlineSeconds `
-            -Environment $stageEnvironment -OutputPath $outputPath -ErrorPath $errorPath -ProgressName $Name -AllowFailure
+            -Environment $stageEnvironment -OutputPath $outputPath -ErrorPath $errorPath -OutputTailCharacters 8192 `
+            -ProgressName $Name -AllowFailure
     } catch [TimeoutException] {
         $message = "$Name exceeded the $DeadlineSeconds-second hard deadline. Evidence: $resultsPath."
         Set-Content -LiteralPath (Join-Path $resultsPath "$Name.deadline.log") -Value "$message`n$_"
         throw [TimeoutException]::new($message, $_.Exception)
     }
-    Write-Host $result.Output
+    if ($result.ExitCode -ne 0) {
+        throw "$Name failed with exit code $($result.ExitCode). Full logs: $outputPath ; $errorPath.`nStdout tail:`n$($result.Output)`nStderr tail:`n$($result.Error)"
+    }
     if ($result.Error) { [Console]::Error.WriteLine($result.Error) }
-    if ($result.ExitCode -ne 0) { throw "$Name failed with exit code $($result.ExitCode). Evidence: $resultsPath.`n$($result.Output)`n$($result.Error)" }
+    if ($ListTests -and -not $SuppressTestList) {
+        Get-Content -LiteralPath $outputPath | ForEach-Object { Write-Host $_ }
+    }
     if (-not $ListTests) {
         $check = @{ Path = $report }
         if ($ReconcileCases) { $check.ExpectedCases = $expected }
