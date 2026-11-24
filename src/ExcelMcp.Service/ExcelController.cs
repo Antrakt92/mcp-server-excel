@@ -57,6 +57,7 @@ internal sealed class ExcelController : IDisposable
     internal Action<string, string>? BeforeRecordPathPublicationHookForTests { get; set; }
     internal Func<ExcelWorkerClient, Task>? BeforeWorkerSnapshotReadForTests { get; set; }
     internal Action<ExcelWorkerClient>? AfterExitedWorkerSnapshotRemovalForTests { get; set; }
+    internal Action<string>? BeforeSettledSessionRemovalForTests { get; set; }
 
     internal ExcelController(
         Func<ServiceRequest, Func<Task<ServiceResponse>>, Task<ServiceResponse>>? trackRequest = null,
@@ -497,9 +498,9 @@ internal sealed class ExcelController : IDisposable
                 }
                 if (response.Success && request.Command == "session.close" && request.SessionId is { } closed)
                 {
-                    _sessions.TryRemove(closed, out _);
                     foreach (var path in _paths.Where(path => path.Value.SessionId == closed))
                         _paths.TryRemove(path.Key, out _);
+                    _sessions.TryRemove(closed, out _);
                 }
                 if (worker.StatusError is null && worker.Snapshot is { StatusError: null } snapshot
                     && !HasPendingWork(snapshot) && (response.Success || response.PartialState is null))
@@ -749,11 +750,8 @@ internal sealed class ExcelController : IDisposable
                     foreach (var ownedPath in RecordedPaths(snapshot, session.SessionId))
                         RecordPath(worker, ownedPath, session.SessionId);
 
-            _publishedSnapshots[worker.Registration.PipeName] = snapshot;
             foreach (var session in sessions)
             {
-                if (_newWorkers.ContainsKey(snapshot.Registration.PipeName))
-                    _sessions[session.SessionId] = worker;
                 if (settled)
                 {
                     var currentPaths = RecordedPaths(snapshot, session.SessionId);
@@ -780,11 +778,18 @@ internal sealed class ExcelController : IDisposable
                 {
                     if (!_closedSessions.ContainsKey(removed.Key))
                         _closedSessions.TryAdd(removed.Key, observedEnd ??= InferSettledSessionEnd(snapshot.Registration));
-                    _sessions.TryRemove(removed);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
                         _paths.TryRemove(path);
+                    BeforeSettledSessionRemovalForTests?.Invoke(removed.Key);
+                    _sessions.TryRemove(removed);
                 }
             }
+            // Once a settled row disappears, a targeted retry must see its
+            // terminal outcome and its claims must already be released.
+            _publishedSnapshots[worker.Registration.PipeName] = snapshot;
+            if (_newWorkers.ContainsKey(snapshot.Registration.PipeName))
+                foreach (var session in sessions)
+                    _sessions[session.SessionId] = worker;
             return snapshot;
         }
     }

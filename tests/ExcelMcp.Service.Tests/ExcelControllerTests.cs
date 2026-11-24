@@ -1012,6 +1012,13 @@ public sealed partial class ExcelControllerTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             while (controller.Sessions.Count == 0)
                 await Task.Delay(25, timeout.Token);
+            var beforeRemoval = new TaskCompletionSource<IReadOnlyList<SessionDescriptor>>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            controller.BeforeSettledSessionRemovalForTests = removed =>
+            {
+                if (removed == session)
+                    beforeRemoval.TrySetResult(controller.Sessions);
+            };
             var retired = registration with
             {
                 LastExcelObservation = new(excel, ExcelNativeProcessState.Exited, exitCode, null)
@@ -1019,6 +1026,8 @@ public sealed partial class ExcelControllerTests
             worker.RecordSnapshot(new WorkerSnapshot(retired, [],
                 new ServiceResponse { Success = true, Result = """{"sessions":[]}""" }, null, null,
                 new Dictionary<string, IReadOnlyList<string>>(), Revision: long.MaxValue));
+            var beforeRetirement = await beforeRemoval.Task.WaitAsync(timeout.Token);
+            Assert.Equal(session, Assert.Single(beforeRetirement).SessionId);
             while (controller.Sessions.Count != 0)
                 await Task.Delay(25, timeout.Token);
 
