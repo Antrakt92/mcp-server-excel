@@ -167,6 +167,38 @@ public sealed partial class PersistentServiceRangeHyperlinksTests
     }
 
     [Fact]
+    public void UpdateHyperlink_PreservesLabelAndTooltipAcrossInternalAndExternalTargets()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        const string url = "https://example.com/guide";
+        string internalTarget = $"'{sheetName}'!D5";
+        Assert.True(_commands.AddHyperlink(batch, sheetName, "A1", url,
+            displayText: "Original label", tooltip: "Original tooltip").Success);
+
+        Assert.True(_commands.UpdateHyperlink(batch, sheetName, "A1", url: string.Empty, subAddress: internalTarget).Success);
+        var internalRead = _commands.GetHyperlink(batch, sheetName, "A1");
+        Assert.True(internalRead.Success, internalRead.ErrorMessage);
+        var internalLink = Assert.Single(internalRead.Hyperlinks);
+        Assert.True(internalLink.IsInternal);
+        Assert.Equal(internalTarget, internalLink.SubAddress);
+        Assert.Equal("Original label", internalLink.DisplayText);
+        Assert.Equal("Original tooltip", internalLink.ScreenTip);
+        Assert.Equal("A1", Assert.Single(_commands.ListHyperlinks(batch, sheetName).Hyperlinks).CellAddress);
+
+        Assert.True(_commands.UpdateHyperlink(batch, sheetName, "A1", url: url, subAddress: string.Empty).Success);
+        var externalRead = _commands.GetHyperlink(batch, sheetName, "A1");
+        Assert.True(externalRead.Success, externalRead.ErrorMessage);
+        var externalLink = Assert.Single(externalRead.Hyperlinks);
+        Assert.False(externalLink.IsInternal);
+        Assert.Equal(url, externalLink.Address);
+        Assert.True(string.IsNullOrEmpty(externalLink.SubAddress));
+        Assert.Equal("Original label", externalLink.DisplayText);
+        Assert.Equal("Original tooltip", externalLink.ScreenTip);
+        Assert.Equal("A1", Assert.Single(_commands.ListHyperlinks(batch, sheetName).Hyperlinks).CellAddress);
+    }
+
+    [Fact]
     public void ListHyperlinks_IncludesInternalTargetMetadata()
     {
         var batch = _fixture.BatchToken;

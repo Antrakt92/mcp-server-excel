@@ -349,6 +349,32 @@ public sealed partial class PersistentServiceRangeSearchTests
             row => AssertPersonRow(row, "Charlie", 30));
     }
 
+    [Theory]
+    [InlineData("A1:B3", 0, "between 1 and 2")]
+    [InlineData("A1:B3", 3, "between 1 and 2")]
+    [InlineData("A1:B3,D1:E3", 1, "one rectangular range")]
+    public async Task Sort_RejectsKeysAndScopesOutsideTheRectangle(string rangeAddress, int columnIndex, string message)
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        Assert.True(_commands.SetValues(batch, sheetName, "A1:E3",
+            [["name", "rank", "outside", "other", "score"], ["Z", 2, 9, "B", 8], ["A", 1, 7, "C", 6]]).Success);
+        var read = new { sheetName, rangeAddress = "A1:E3" };
+        var before = _fixture.Send("range.get-values", read);
+        Assert.True(before.Success, before.ErrorMessage);
+        var failure = await _fixture.SendForFailureAsync("rangeedit.sort", new
+        {
+            sheetName,
+            rangeAddress,
+            sortColumns = new[] { new { columnIndex, ascending = true } }
+        });
+        Assert.Equal("InvalidInput", failure.ErrorCategory);
+        Assert.Contains(message, failure.ErrorMessage, StringComparison.Ordinal);
+        var after = _fixture.Send("range.get-values", read);
+        Assert.True(after.Success, after.ErrorMessage);
+        Assert.Equal(before.Result, after.Result);
+    }
+
     private static void AssertPersonRow(List<object?> row, string name, double age)
     {
         Assert.Equal(3, row.Count);

@@ -178,9 +178,13 @@ public partial class RangeCommands
     /// <inheritdoc />
     public OperationResult Sort(IExcelBatch batch, string sheetName, string rangeAddress, List<SortColumn> sortColumns, bool hasHeaders = true)
     {
+        if (sortColumns.Count is < 1 or > 3)
+            throw new ArgumentException("Specify one to three sort columns.", nameof(sortColumns));
+
         return batch.Execute((ctx, ct) =>
         {
             Excel.Range? range = null;
+            Excel.Areas? areas = null;
             Excel.Range? columns = null;
             Excel.Range? key1 = null;
             Excel.Range? key2 = null;
@@ -193,19 +197,15 @@ public partial class RangeCommands
                     throw new InvalidOperationException(specificError ?? RangeHelpers.GetResolveError(sheetName, rangeAddress));
                 }
 
-                if (sortColumns.Count == 0)
-                {
-                    throw new ArgumentException("At least one sort column must be specified", nameof(sortColumns));
-                }
-
-                // Excel COM supports up to 3 sort keys
-                if (sortColumns.Count > 3)
-                {
-                    throw new ArgumentException("Excel COM API supports maximum 3 sort columns", nameof(sortColumns));
-                }
-
-                // Get sort key ranges
+                areas = range.Areas;
+                if (areas.Count != 1)
+                    throw new ArgumentException("Sort requires one rectangular range.", nameof(rangeAddress));
                 columns = range.Columns;
+                int width = columns.Count;
+                // Excel's column indexer can return a column outside its parent range.
+                if (sortColumns.Any(column => column is null || column.ColumnIndex < 1 || column.ColumnIndex > width))
+                    throw new ArgumentException($"Sort column indices must be between 1 and {width} for this range.", nameof(sortColumns));
+
                 key1 = (Excel.Range)columns[sortColumns[0].ColumnIndex];
                 if (sortColumns.Count >= 2) key2 = (Excel.Range)columns[sortColumns[1].ColumnIndex];
                 if (sortColumns.Count >= 3) key3 = (Excel.Range)columns[sortColumns[2].ColumnIndex];
@@ -239,6 +239,7 @@ public partial class RangeCommands
                 ComUtilities.Release(ref key2);
                 ComUtilities.Release(ref key1);
                 ComUtilities.Release(ref columns);
+                ComUtilities.Release(ref areas);
                 ComUtilities.Release(ref range);
             }
         });

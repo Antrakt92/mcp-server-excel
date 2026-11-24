@@ -40,7 +40,6 @@ public partial class RangeCommands
                 }
 
                 range = sheet.UsedRange;
-                result.RangeAddress = range.Address;
 
                 ReadValueGrid(ctx, range, result, ct);
 
@@ -79,7 +78,6 @@ public partial class RangeCommands
 
                 RangeHelpers.RequireSingleCell(cell, cellAddress);
                 region = cell.CurrentRegion;
-                result.RangeAddress = region.Address;
 
                 ReadValueGrid(ctx, region, result, ct);
 

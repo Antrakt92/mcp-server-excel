@@ -325,7 +325,7 @@ public static class WorkbookPackageComparison
                 if (reader.NamespaceURI != ns)
                     throw new InvalidDataException("The sheet has unsupported leading extension metadata.");
                 // sheetPr is the first optional child. Stop before reading sheet cells.
-                if (reader.Depth != 1 || reader.LocalName != "sheetPr" || reader.NamespaceURI != ns)
+                if (reader.Depth != 1 || reader.LocalName != "sheetPr")
                     return null;
                 string? codeName = reader.GetAttribute("codeName");
                 if (codeName?.Length > 512)
