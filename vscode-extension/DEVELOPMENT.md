@@ -28,7 +28,7 @@ vscode-extension/
 └── icon.png                  # Marketplace icon
 ```
 
-The packaging toolchain pins MSAL Node 7.1.2 under Azure Identity 4.14.0 to fix
+The packaging toolchain pins MSAL Node 7.2.3 under Azure Identity 4.14.x to fix
 [CVE-2026-109461](https://github.com/AzureAD/microsoft-authentication-library-for-js/security/advisories/GHSA-xcx6-jx8p-x3h5).
 This override affects development dependencies only. Remove it when Azure
 Identity declares a patched MSAL version itself. `tests/packaging-auth.test.ts`
@@ -37,7 +37,7 @@ and Azure Identity's code, client-secret and interactive request adaptation.
 These tests do not establish live tenant authentication; the package command
 separately exercises vsce and verifies the resulting VSIX contents.
 
-VSCE's minimatch dependency is pinned to 11.0.3 within the VSCE dependency tree
+VSCE's minimatch dependency is pinned to 11.0.4 within the VSCE dependency tree
 to address [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249).
 This also affects packaging tools only. Remove the override when VSCE declares
 a patched minimatch version. `tests/packaging-files.test.ts` exercises VSCE's
