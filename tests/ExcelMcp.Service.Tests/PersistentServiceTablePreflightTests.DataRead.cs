@@ -76,4 +76,26 @@ public sealed partial class PersistentServiceTablePreflightTests
         Assert.Equal(expected.SelectMany(row => row), visible.Data.SelectMany(row => row));
         Assert.Equal(before.Data.SelectMany(row => row), all.Data.SelectMany(row => row));
     }
+
+    [Fact]
+    public void GetData_VisibleOffsetRowsStillIncludeEveryHiddenTableColumn()
+    {
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_rangeCommands.SetValues(batch, sheet, "D8:E12",
+            [["Item", "Tag"], ["First", "A"], ["Second", "B"], ["Third", "C"], ["Fourth", "D"]]));
+        RequireSuccess(_tableCommands.Create(batch, sheet, "OffsetVisibility", "D8:E12", true));
+        RequireSuccess(_rangeCommands.SetVisibility(batch, sheet, "D8:E8", VisibilityAxis.Columns, hidden: true));
+        RequireSuccess(_rangeCommands.SetVisibility(batch, sheet, "D9", VisibilityAxis.Rows, hidden: true));
+        RequireSuccess(_rangeCommands.SetVisibility(batch, sheet, "D11", VisibilityAxis.Rows, hidden: true));
+
+        var visible = RequireSuccess(_tableCommands.GetData(batch, "OffsetVisibility", visibleOnly: true));
+
+        Assert.Equal(["Item", "Tag"], visible.Headers);
+        Assert.Equal(2, visible.ColumnCount);
+        Assert.Equal(2, visible.RowCount);
+        Assert.Collection(visible.Data,
+            row => Assert.Equal(["Second", "B"], row),
+            row => Assert.Equal(["Fourth", "D"], row));
+    }
 }
