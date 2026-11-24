@@ -18,7 +18,7 @@ internal sealed class CloseHistory
     private readonly LinkedList<Entry> _entries = new();
 
     internal (bool CloseConfirmed, bool SaveConfirmed) Record(
-        Target target, ServiceResponse response, JsonObject? priorStatus = null)
+        Target target, ServiceResponse response, JsonObject? priorStatus = null, bool onlyIfMissing = false)
     {
         var recordingFailures = new List<Failure>();
         var close = response;
@@ -39,7 +39,11 @@ internal sealed class CloseHistory
             while (previous is not null && previous.Value.Workbook != target)
                 previous = previous.Previous;
             if (previous is not null)
+            {
+                if (onlyIfMissing)
+                    return (confirmed, saved);
                 _entries.Remove(previous);
+            }
 
             // A later retry can add confirmation; it cannot erase the previous failure.
             var failure = close.Success ? previous?.Value.LastFailure

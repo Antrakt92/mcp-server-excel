@@ -24,6 +24,7 @@ public sealed class OperationReceiptsTests
         var session = Guid.NewGuid().ToString("N");
         const string command = "vba.invoke";
         Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var operation));
+        receipts.RecordRequestedProcedure(operation, """{"procedureName":"TimeLogs.CommitThenRefresh","arguments":[{"value":"private fixture value"}]}""");
         Assert.Equal("controllerAccepted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
 
         var self = WorkerProcess.Current;
@@ -65,9 +66,12 @@ public sealed class OperationReceiptsTests
         Assert.Equal("ExcelDisconnected", after.GetProperty("result").GetProperty("errorCategory").GetString());
         Assert.Contains("controller bookkeeping", after.GetProperty("recordingError").GetString(), StringComparison.Ordinal);
         var evidence = after.GetProperty("operationEvidence");
+        Assert.Equal("TimeLogs.CommitThenRefresh", evidence.GetProperty("requestedProcedure").GetString());
+        Assert.DoesNotContain("private fixture value", after.GetRawText(), StringComparison.Ordinal);
         Assert.Equal("serviceResponseRecorded", evidence.GetProperty("phase").GetString());
         Assert.Equal("134381234567890123", evidence.GetProperty("startedAtUtcFileTime").GetString());
         Assert.Equal("0x800706BE", evidence.GetProperty("workerFailure").GetProperty("hresult").GetString());
+        Assert.Equal("0x800706BE", evidence.GetProperty("initialFailure").GetProperty("hresult").GetString());
         Assert.Equal(0xC0000005u, evidence.GetProperty("nativeExit").GetProperty("exitCode").GetUInt32());
         Assert.Equal(OperationReceipts.Admission.Duplicate, receipts.TryBegin(id, command, session, out _));
 
@@ -78,6 +82,31 @@ public sealed class OperationReceiptsTests
         Assert.Equal("controllerDispatchStarted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
         receipts.ObserveWorkerEvidence(worker with { OperationEvidence = admitted with { DispatchId = reused.DispatchId.ToString("N") } });
         Assert.Equal("workerAdmitted", Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("phase").GetString());
+    }
+
+    [Theory]
+    [InlineData("vba.invoke", """{"procedureName":"Book.xlsm!Module.Run"}""")]
+    [InlineData("vba.invoke", """{"procedureName":"Module.Run","ProcedureName":"Other.Run"}""")]
+    [InlineData("vba.invoke", """{"ProcedureName":"Module.Run"}""")]
+    [InlineData("vba.invoke", """{"procedureName":"Module..Run"}""")]
+    [InlineData("vba.invoke", """{"procedureName":null}""")]
+    [InlineData("vba.invoke", """{"procedureName":"Module.Run\n"}""")]
+    [InlineData("vba.invoke", """{"procedureName":""")]
+    [InlineData("session.save", """{"procedureName":"Module.Run"}""")]
+    public void ProcedureMetadataOmitsUnrecognizedSelectorsWithoutReplacingTheFailure(string command, string args)
+    {
+        var receipts = new OperationReceipts();
+        var id = Guid.NewGuid();
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, "session", out var operation));
+        receipts.RecordRequestedProcedure(operation, args);
+        var failure = new ServiceResponse { ErrorCategory = "InvalidInput", ErrorMessage = "The original failure." };
+        var response = receipts.IncludeEvidenceInFailure(operation, failure);
+        Assert.Equal(failure.ErrorMessage, response.ErrorMessage);
+        using var partial = JsonDocument.Parse(response.PartialState!);
+        Assert.False(partial.RootElement.GetProperty("diagnostics").GetProperty("operationEvidence")
+            .TryGetProperty("requestedProcedure", out _));
+        Assert.False(Lookup(receipts, id, "session").GetProperty("operationEvidence")
+            .TryGetProperty("requestedProcedure", out _));
     }
 
     [Theory]

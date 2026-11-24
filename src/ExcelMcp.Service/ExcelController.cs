@@ -35,7 +35,8 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, byte> _newWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
     private enum SessionEnd { Closed, SavedAndClosed, WorkerExited, ExcelExited }
-    private readonly ConcurrentDictionary<string, SessionEnd> _closedSessions = new(StringComparer.Ordinal);
+    private readonly record struct EndedSession(SessionEnd Reason, ExcelProcessIdentity? Excel = null);
+    private readonly ConcurrentDictionary<string, EndedSession> _closedSessions = new(StringComparer.Ordinal);
     private readonly CloseHistory _closeHistory = new();
     private readonly OperationReceipts _operationReceipts = new();
     private readonly SemaphoreSlim _packageComparisons = new(1, 1);
@@ -236,6 +237,8 @@ internal sealed class ExcelController : IDisposable
         {
             request.CallerCancellation.ThrowIfCancellationRequested();
             ServiceRegistry.ValidateCommandArguments(request.Command, request.Args);
+            if (tracked is not null)
+                _operationReceipts.RecordRequestedProcedure(tracked, request.Args);
             if (request.Command.StartsWith("session.", StringComparison.Ordinal))
                 ExcelMcpService.ValidateSessionActionArguments(request.Command["session.".Length..], request.Args);
             if (request.Command == "service.ping")
@@ -338,16 +341,12 @@ internal sealed class ExcelController : IDisposable
                 }
             }
             else if (request.Command == "session.close" && request.SessionId is { } closedId
-                && _closedSessions.TryGetValue(closedId, out var end) && end is SessionEnd.Closed or SessionEnd.SavedAndClosed)
-                return ExcelMcpService.AlreadyClosedResponse(request, saved: end == SessionEnd.SavedAndClosed)
+                && _closedSessions.TryGetValue(closedId, out var end) && end.Reason is SessionEnd.Closed or SessionEnd.SavedAndClosed)
+                return ExcelMcpService.AlreadyClosedResponse(request, saved: end.Reason == SessionEnd.SavedAndClosed)
                     .WithCloseTimings(new Dictionary<string, double>());
             else if (!ExcelMcpService.IsSessionlessCommand(request.Command) && request.SessionId is { } lostId
-                && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd is SessionEnd.WorkerExited or SessionEnd.ExcelExited)
-                return CreateWorkerError(request,
-                    new IOException(lostEnd == SessionEnd.ExcelExited
-                        ? "The workbook's Excel process exited. Its last outcome could not be confirmed; no work was repeated."
-                        : "The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
-                    sent: true, nativeExitObserved: lostEnd == SessionEnd.ExcelExited);
+                && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd.Reason is SessionEnd.WorkerExited or SessionEnd.ExcelExited)
+                return LostSessionResponse(request, lostId, lostEnd);
             else
             {
                 lock (_utilityLock)
@@ -444,9 +443,9 @@ internal sealed class ExcelController : IDisposable
                 {
                     // The reply confirms the close even if publishing its status failed.
                     // Worker release and path cleanup still depend on their own evidence.
-                    var end = confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed;
+                    var end = new EndedSession(confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed);
                     _closedSessions.AddOrUpdate(closeTarget.SessionId, end, (_, previous) =>
-                        previous == SessionEnd.SavedAndClosed ? previous : end);
+                        previous.Reason == SessionEnd.SavedAndClosed ? previous : end);
                 }
             }
             if (!execution.Accepted)
@@ -576,6 +575,24 @@ internal sealed class ExcelController : IDisposable
                     : "The worker response could not be confirmed. Work may still be running; do not repeat edits automatically."
             }, ServiceProtocol.JsonOptions)
         };
+
+    private ServiceResponse LostSessionResponse(ServiceRequest request, string sessionId, EndedSession session)
+    {
+        var exit = session.Excel is { } excel ? FindNativeExit(excel) : null;
+        var excelExited = session.Reason == SessionEnd.ExcelExited || exit is not null;
+        if (exit is null && excelExited && session.Excel is { } identity)
+            exit = new(identity, ExcelNativeProcessState.Exited, null, null);
+
+        var response = CreateWorkerError(request,
+            new IOException(excelExited
+                ? "The workbook's Excel process exited. Its last outcome could not be confirmed; no work was repeated."
+                : "The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
+            sent: true, nativeExitObserved: excelExited);
+        if (request.Command == "session.close")
+            _closeHistory.Record(new(sessionId, session.Excel), response, onlyIfMissing: true);
+        return exit is null ? response : response.WithPartialState(
+            ExcelMcpService.MergeNativeProcessDiagnostics(response.PartialState, exit)!);
+    }
 
     private static bool HasPendingWork(WorkerSnapshot snapshot) =>
         snapshot.PendingOperation is not null
@@ -757,7 +774,7 @@ internal sealed class ExcelController : IDisposable
             }
             if (settled)
             {
-                SessionEnd? observedEnd = null;
+                EndedSession? observedEnd = null;
                 foreach (var removed in _sessions.Where(entry => entry.Value == worker
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
@@ -772,24 +789,31 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
-    private SessionEnd InferSettledSessionEnd(WorkerRegistration registration)
+    private EndedSession InferSettledSessionEnd(WorkerRegistration registration)
     {
         if ((registration.Excel ?? registration.ReleasedExcel) is not { } identity)
-            return SessionEnd.Closed;
+            return new(SessionEnd.Closed);
 
         var exit = registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } recorded
             && recorded.Identity == identity ? recorded : null;
         if (exit?.ExitCode is null)
-        {
-            lock (_recentExcelExitLock)
-                exit = _recentExcelExits.FirstOrDefault(observation => observation.Identity == identity) ?? exit;
-        }
-        if (exit is not null)
-            return exit.ExitCode == 0 ? SessionEnd.Closed : SessionEnd.ExcelExited;
+            exit = FindNativeExit(identity) ?? exit;
 
         // The worker can remove the session before its exit observation reaches the registry.
         // An exact native probe proves exit, but cannot confirm a workbook close or save.
-        return OwnedProcessGuard.TryConfirmExited(identity) ? SessionEnd.ExcelExited : SessionEnd.Closed;
+        if (exit is null && OwnedProcessGuard.TryConfirmExited(identity))
+            exit = new(identity, ExcelNativeProcessState.Exited, null, null);
+        if (exit is null || exit.ExitCode == 0)
+            return new(SessionEnd.Closed);
+
+        RememberNativeExit(exit);
+        return new(SessionEnd.ExcelExited, identity);
+    }
+
+    private ExcelNativeProcessObservation? FindNativeExit(ExcelProcessIdentity identity)
+    {
+        lock (_recentExcelExitLock)
+            return _recentExcelExits.FirstOrDefault(observation => observation.Identity == identity);
     }
 
     private bool RecoverRecordedWorkerStatus(ExcelWorkerClient worker, WorkerRegistration recorded)
@@ -806,7 +830,7 @@ internal sealed class ExcelController : IDisposable
             if ((current.Excel != observation.Identity && current.ReleasedExcel != observation.Identity)
                 || (recorded.Excel != observation.Identity && recorded.ReleasedExcel != observation.Identity))
                 throw new InvalidOperationException("The retained native observation does not match the known Excel process identity.");
-            RememberNativeExit(recorded);
+            RememberRegisteredNativeExit(recorded);
         }
         if (!recorded.ReleaseConfirmed)
             return false;
@@ -834,7 +858,7 @@ internal sealed class ExcelController : IDisposable
             _operationReceipts.ObserveWorkerEvidence(recorded);
             if (recorded.LastExcelObservation is { State: ExcelNativeProcessState.Exited } exit
                 && (current.Excel == exit.Identity || current.ReleasedExcel == exit.Identity))
-                RememberNativeExit(recorded);
+                RememberRegisteredNativeExit(recorded);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
         {
@@ -845,7 +869,7 @@ internal sealed class ExcelController : IDisposable
     private void PublishProcessIdentity(WorkerRegistration registration)
     {
         _operationReceipts.ObserveWorkerEvidence(registration);
-        RememberNativeExit(registration);
+        RememberRegisteredNativeExit(registration);
         if (registration.ReleasedExcel is { } finished)
             ExcelProcessReleased?.Invoke(finished);
         if (registration is { OwnsExcel: true, Excel: { } excel })
@@ -856,27 +880,30 @@ internal sealed class ExcelController : IDisposable
         }
     }
 
-    private void RememberNativeExit(WorkerRegistration registration)
+    private void RememberRegisteredNativeExit(WorkerRegistration registration)
     {
         if (registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } observation
             && (registration.Excel == observation.Identity || registration.ReleasedExcel == observation.Identity))
+            RememberNativeExit(observation);
+    }
+
+    private void RememberNativeExit(ExcelNativeProcessObservation observation)
+    {
+        lock (_recentExcelExitLock)
         {
-            lock (_recentExcelExitLock)
+            _operationReceipts.ObserveNativeExit(observation);
+            var recorded = _recentExcelExits.First;
+            while (recorded is not null && recorded.Value.Identity != observation.Identity)
+                recorded = recorded.Next;
+            if (recorded is null)
             {
-                _operationReceipts.ObserveNativeExit(observation);
-                var recorded = _recentExcelExits.First;
-                while (recorded is not null && recorded.Value.Identity != observation.Identity)
-                    recorded = recorded.Next;
-                if (recorded is null)
-                {
-                    _recentExcelExits.AddLast(observation);
-                    if (_recentExcelExits.Count > 16)
-                        _recentExcelExits.RemoveFirst();
-                }
-                else if (recorded.Value.ExitCode is null)
-                {
-                    recorded.Value = observation;
-                }
+                _recentExcelExits.AddLast(observation);
+                if (_recentExcelExits.Count > 16)
+                    _recentExcelExits.RemoveFirst();
+            }
+            else if (recorded.Value.ExitCode is null)
+            {
+                recorded.Value = observation;
             }
         }
     }
@@ -1147,6 +1174,7 @@ internal sealed class ExcelController : IDisposable
             worker = candidate;
             if (!explicitDiscovery && registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
                 return;
+            var confirmedExcel = explicitDiscovery ? null : registration.Excel;
             if (!explicitDiscovery && registration.Excel is null
                 && (worker.Snapshot?.Sessions.Count > 0 || _sessions.Values.Contains(worker)
                     || _paths.Values.Any(path => path.Token == registration.PipeName)))
@@ -1185,8 +1213,13 @@ internal sealed class ExcelController : IDisposable
                 }
             }
             var sessions = _sessions.Where(entry => entry.Value == worker).Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
+            if (sessions.Count > 0 && confirmedExcel is { } exited)
+                RememberNativeExit(new(exited, ExcelNativeProcessState.Exited, null, null));
+            var end = confirmedExcel is { } identity
+                ? new EndedSession(SessionEnd.ExcelExited, identity)
+                : new EndedSession(SessionEnd.WorkerExited, registration.Excel ?? registration.ReleasedExcel);
             foreach (var session in sessions)
-                _closedSessions.TryAdd(session, SessionEnd.WorkerExited);
+                _closedSessions.TryAdd(session, end);
             foreach (var path in _paths.Where(entry => entry.Value.Token == registration.PipeName
                 || entry.Value.SessionId is { } session && sessions.Contains(session)))
                 _paths.TryRemove(path);

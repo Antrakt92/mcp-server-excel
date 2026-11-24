@@ -77,6 +77,18 @@ public sealed partial class ExcelControllerTests
                 apply.Invoke(controller, [worker]);
                 Assert.DoesNotContain(sessionId, sessions.Keys);
 
+                if (releasedIdentity)
+                {
+                    var history = Assert.IsType<CloseHistory>(typeof(ExcelController)
+                        .GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
+                    history.Record(new(sessionId, excel), new ServiceResponse
+                    {
+                        ErrorCategory = "Busy",
+                        ExceptionType = "ExcelBusyException",
+                        HResult = "0x800706BA"
+                    });
+                }
+
                 var close = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
                 Assert.Equal(!expectedUnconfirmed, close.Success);
                 if (expectedUnconfirmed)
@@ -85,6 +97,48 @@ public sealed partial class ExcelControllerTests
                     Assert.Contains("Excel process exited", close.ErrorMessage, StringComparison.Ordinal);
                     using var state = JsonDocument.Parse(close.PartialState!);
                     Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+                    var native = state.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+                    Assert.Equal(excel.ProcessId, native.GetProperty("processId").GetInt32());
+                    Assert.Equal(excel.StartedAtUtcFileTime, long.Parse(native.GetProperty("startedAtUtcFileTime").GetString()!,
+                        System.Globalization.CultureInfo.InvariantCulture));
+                    Assert.Equal("Exited", native.GetProperty("state").GetString());
+                    Assert.Equal(JsonValueKind.Null, native.GetProperty("exitCode").ValueKind);
+                    var list = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" });
+                    Assert.True(list.Success, list.ErrorMessage);
+                    using var listed = JsonDocument.Parse(list.Result!);
+                    var attempt = Assert.Single(listed.RootElement.GetProperty("recentCloseAttempts").EnumerateArray());
+                    Assert.Equal(sessionId, attempt.GetProperty("sessionId").GetString());
+                    Assert.True(attempt.GetProperty("sessionReleased").GetBoolean());
+                    Assert.False(attempt.GetProperty("closeConfirmed").GetBoolean());
+                    Assert.False(attempt.GetProperty("saveConfirmed").GetBoolean());
+                    Assert.Equal(native.GetRawText(), attempt.GetProperty("nativeExit").GetRawText());
+                    var failure = attempt.GetProperty("lastFailure");
+                    Assert.Equal(releasedIdentity ? "Busy" : "ServiceUnavailable", failure.GetProperty("category").GetString());
+                    if (releasedIdentity)
+                        Assert.Equal("0x800706BA", failure.GetProperty("hresult").GetString());
+
+                    var operationId = Guid.NewGuid().ToString("D");
+                    var invoke = await controller.ProcessAsync(new ServiceRequest
+                    {
+                        Command = "vba.invoke",
+                        SessionId = sessionId,
+                        OperationId = operationId,
+                        Args = """{"procedureName":"Probe.Check"}"""
+                    });
+                    Assert.False(invoke.Success);
+                    using var invokeState = JsonDocument.Parse(invoke.PartialState!);
+                    Assert.Equal("Probe.Check", invokeState.RootElement.GetProperty("diagnostics")
+                        .GetProperty("operationEvidence").GetProperty("requestedProcedure").GetString());
+                    var lookup = await controller.ProcessAsync(new ServiceRequest
+                    {
+                        Command = OperationReceipts.LookupCommand,
+                        SessionId = sessionId,
+                        Args = JsonSerializer.Serialize(new { operationId })
+                    });
+                    Assert.True(lookup.Success, lookup.ErrorMessage);
+                    using var receipt = JsonDocument.Parse(lookup.Result!);
+                    Assert.Equal("Probe.Check", receipt.RootElement.GetProperty("operationEvidence")
+                        .GetProperty("requestedProcedure").GetString());
                 }
                 else
                 {
