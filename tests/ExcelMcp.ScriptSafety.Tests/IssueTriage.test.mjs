@@ -321,14 +321,14 @@ test('generated workflow makes the validated target available to the agent and i
         const lock = source.replace(/\r?\n/g, newline);
         assert.match(job(lock, 'agent'), /needs:[\s\S]*? - pre_activation/);
         assert.match(job(lock, 'agent'), /timeout-minutes: 20/);
-        assert.match(job(lock, 'pre_activation'), /issue_number: \$\{\{ steps.target.outputs.issue_number \}\}/);
+        assert.match(job(lock, 'pre_activation'), /issue_number: (["']?)\$\{\{ steps\.target\.outputs\.issue_number \}\}\1\s*$/m);
         assert.match(job(lock, 'publish_triage'), /needs.detection.outputs.detection_success == 'true'/);
         assert.match(job(lock, 'publish_triage'), /GH_TOKEN: \$\{\{ secrets.COPILOT_ASSIGN_TOKEN \}\}/);
         assert.doesNotMatch(job(lock, 'agent'), /COPILOT_ASSIGN_TOKEN|issues: write|contents: write/);
         assert.match(lock, /group: issue-triage-\$\{\{ github.event.issue.number \|\| inputs.issue_number \}\}/);
         const manifest = JSON.parse(lock.split('\n').find(line => line.startsWith('# gh-aw-manifest: ')).slice(18));
         assert.deepEqual(manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools,
-            ['missing_data', 'missing_tool', 'noop', 'publish_triage']);
+            ['noop', 'publish_triage', 'report_missing_data', 'report_missing_tool']);
         assert.ok(manifest.actions.every(action => /^[a-f0-9]{40}$/.test(action.sha)));
     }
 });

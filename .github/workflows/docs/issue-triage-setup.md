@@ -144,7 +144,7 @@ comments. Failure details remain in its run logs.
 Use the already pinned compiler release; compile only this workflow:
 
 ```powershell
-gh aw compile issue-triage --gh-aw-ref a68f5a9436d2a014dbd1d1d48ff86c4bdec7424a --validate --no-check-update
+gh aw compile issue-triage --gh-aw-ref 399a445fe2d8926c616b54b1b82a16b5b2be4445 --validate --no-check-update
 node --test tests\ExcelMcp.ScriptSafety.Tests\IssueTriage.test.mjs
 dotnet test tests\ExcelMcp.ScriptSafety.Tests\ExcelMcp.ScriptSafety.Tests.csproj `
     -c Release --filter "FullyQualifiedName~IssueTriage|FullyQualifiedName~ValidationAreaTests"
