@@ -794,10 +794,10 @@ internal sealed class ExcelController : IDisposable
         if ((registration.Excel ?? registration.ReleasedExcel) is not { } identity)
             return new(SessionEnd.Closed);
 
-        var exit = registration.LastExcelObservation is { State: ExcelNativeProcessState.Exited } recorded
-            && recorded.Identity == identity ? recorded : null;
-        if (exit?.ExitCode is null)
-            exit = FindNativeExit(identity) ?? exit;
+        var exit = FindNativeExit(identity);
+        if (registration.LastExcelObservation is { } recorded && recorded.Identity == identity
+            && CloseHistory.IsStrongerNativeExit(recorded, exit))
+            exit = recorded;
 
         // The worker can remove the session before its exit observation reaches the registry.
         // An exact native probe proves exit, but cannot confirm a workbook close or save.
@@ -901,7 +901,7 @@ internal sealed class ExcelController : IDisposable
                 if (_recentExcelExits.Count > 16)
                     _recentExcelExits.RemoveFirst();
             }
-            else if (recorded.Value.ExitCode is null)
+            else if (CloseHistory.IsStrongerNativeExit(observation, recorded.Value))
             {
                 recorded.Value = observation;
             }

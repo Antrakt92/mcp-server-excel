@@ -86,7 +86,10 @@ public sealed partial class ExcelControllerTests
         await StopNativeObservationPollingAsync(controller);
         const long creationTime = 134_381_234_567_890_123;
         var identity = new ExcelProcessIdentity(123, creationTime);
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, null, null);
         PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, null, 5);
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, null, null);
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, null, 87);
         var current = WorkerProcess.Current;
         var registration = new WorkerRegistration($"observation-{Guid.NewGuid():N}", current, current,
             "generation", WorkerRegistry.Build, null);
@@ -122,6 +125,12 @@ public sealed partial class ExcelControllerTests
         {
             workers.TryRemove(registration.PipeName, out _);
         }
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, 0xC0000005u, null);
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, 0, null);
+        using var upgraded = NativeObservationSessionList(controller);
+        var upgradedExit = Assert.Single(upgraded.RootElement.GetProperty("recentExcelExits").EnumerateArray());
+        Assert.Equal(0xC0000005u, upgradedExit.GetProperty("exitCode").GetUInt32());
+        Assert.Equal(JsonValueKind.Null, upgradedExit.GetProperty("nativeError").ValueKind);
     }
 
     [Theory]

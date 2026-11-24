@@ -109,6 +109,14 @@ internal sealed class CloseHistory
         ["hresult"] = failure.HResult
     };
 
+    // An exact exit probe can arrive after a failed exit-code read. Keep that
+    // failure until a matching observation supplies a numeric exit code.
+    internal static bool IsStrongerNativeExit(ExcelNativeProcessObservation candidate,
+        ExcelNativeProcessObservation? previous) =>
+        candidate.State == ExcelNativeProcessState.Exited
+        && (previous is null || previous.Identity == candidate.Identity && previous.ExitCode is null
+            && (candidate.ExitCode is not null || previous.NativeError is null && candidate.NativeError is not null));
+
     internal static JsonObject NativeDiagnostic(ExcelNativeProcessObservation observation) => new()
     {
         ["processId"] = observation.Identity.ProcessId,

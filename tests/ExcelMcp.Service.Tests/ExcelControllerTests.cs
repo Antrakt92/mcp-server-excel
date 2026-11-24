@@ -1200,9 +1200,12 @@ public sealed partial class ExcelControllerTests
     public async Task Controller_CancelledStartupReleasesItsEmptyWorkerAndAllowsRetry(string command)
     {
         var path = Path.Combine(Path.GetTempPath(), $"excelmcp-missing-{Guid.NewGuid():N}.xlsx");
-        var registry = new WorkerRegistry();
-        var existing = registry.Read().Select(record => record.PipeName).ToHashSet();
-        using var controller = new ExcelController(launcher: Launcher);
+        WorkerProcess? started = null;
+        using var controller = new ExcelController(launcher: Launcher, initializeWorker: worker =>
+        {
+            started ??= worker.Registration.Worker;
+            return worker.InitializeAsync();
+        });
         using var cancellation = new CancellationTokenSource();
         var opening = controller.ProcessAsync(new ServiceRequest
         {
@@ -1219,12 +1222,11 @@ public sealed partial class ExcelControllerTests
         Assert.Equal("Cancelled", cancelled.ErrorCategory);
         Assert.Empty(controller.Sessions);
         Assert.False(File.Exists(path));
+        var ownedWorker = Assert.IsType<WorkerProcess>(started);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-        while (registry.Read().Any(record => record.Controller == WorkerProcess.Current
-            && !existing.Contains(record.PipeName) && record.Worker.IsAlive()) && !deadline.IsCancellationRequested)
+        while (ownedWorker.IsAlive() && !deadline.IsCancellationRequested)
             await Task.Delay(50);
-        Assert.DoesNotContain(registry.Read(), record =>
-            record.Controller == WorkerProcess.Current && !existing.Contains(record.PipeName) && record.Worker.IsAlive());
+        Assert.False(ownedWorker.IsAlive(), $"Cancelled worker {ownedWorker.ProcessId} is still running.");
         var retried = await controller.ProcessAsync(new ServiceRequest
         {
             Command = "session.open",

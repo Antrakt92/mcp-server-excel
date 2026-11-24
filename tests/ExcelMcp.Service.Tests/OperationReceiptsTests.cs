@@ -58,7 +58,14 @@ public sealed class OperationReceiptsTests
         var before = Lookup(receipts, id, session);
         Assert.False(before.GetProperty("operationEvidence").TryGetProperty("nativeExit", out _));
         receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, null, null));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, null, 5));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, null, 87));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, null, null));
+        var exitWithoutCode = Lookup(receipts, id, session).GetProperty("operationEvidence").GetProperty("nativeExit");
+        Assert.Equal(JsonValueKind.Null, exitWithoutCode.GetProperty("exitCode").ValueKind);
+        Assert.Equal(5, exitWithoutCode.GetProperty("nativeError").GetInt32());
         receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, 0xC0000005u, null));
+        receipts.ObserveNativeExit(new(excel, ExcelNativeProcessState.Exited, 0, null));
 
         var after = Lookup(receipts, id, session);
         Assert.Equal("unknown", after.GetProperty("state").GetString());
