@@ -9,6 +9,7 @@ function Invoke-NativeCommand {
         [hashtable]$Environment = @{},
         [string]$OutputPath,
         [string]$ErrorPath,
+        [ValidateRange(0, 65536)][int]$OutputTailCharacters = 0,
         [string]$ProgressName,
         [switch]$AllowFailure
     )
@@ -52,12 +53,19 @@ public static extern bool GetExitCodeProcess(System.IntPtr process, out uint exi
 [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
 public static extern bool CloseHandle(System.IntPtr handle);
 public static async System.Threading.Tasks.Task<string> CaptureOutput(
-    System.IO.StreamReader reader, System.IO.StreamWriter log) {
+    System.IO.StreamReader reader, System.IO.StreamWriter log, int tailCharacters) {
     var output = new System.Text.StringBuilder();
     var buffer = new char[4096];
+    // Only limit returned text when the complete stream also has a live log.
+    int limit = log == null ? 0 : tailCharacters;
     int count;
     while ((count = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0) {
         output.Append(buffer, 0, count);
+        if (limit > 0 && output.Length > limit) {
+            int discard = output.Length - limit;
+            if (char.IsLowSurrogate(output[discard])) discard++;
+            output.Remove(0, discard);
+        }
         if (log != null) {
             await log.WriteAsync(buffer, 0, count).ConfigureAwait(false);
         }
@@ -130,8 +138,8 @@ public static async System.Threading.Tasks.Task<string> CaptureOutput(
         foreach ($pipe in $pipes) { $pipe.DisposeLocalCopyOfClientHandle() }
         $pipes[0].Dispose()
         foreach ($pipe in @($pipes[1], $pipes[2])) { $readers.Add([IO.StreamReader]::new($pipe, [Text.Encoding]::UTF8)) }
-        $stdout = [ExcelMcpValidation.JobApi]::CaptureOutput($readers[0], $logs[0])
-        $stderr = [ExcelMcpValidation.JobApi]::CaptureOutput($readers[1], $logs[1])
+        $stdout = [ExcelMcpValidation.JobApi]::CaptureOutput($readers[0], $logs[0], $OutputTailCharacters)
+        $stderr = [ExcelMcpValidation.JobApi]::CaptureOutput($readers[1], $logs[1], $OutputTailCharacters)
         if ([ExcelMcpValidation.JobApi]::ResumeThread($native.Thread) -eq [uint32]::MaxValue) {
             throw [ComponentModel.Win32Exception]::new()
         }
