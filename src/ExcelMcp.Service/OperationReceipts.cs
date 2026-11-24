@@ -15,6 +15,7 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
     internal const string LookupCommand = "session.operation-result";
     private static readonly TimeSpan Retention = TimeSpan.FromMinutes(15);
     private const int MaximumResultBytes = 8192;
+    private const int MaximumProcedureNameLength = 511;
     private readonly Lock _gate = new();
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly Dictionary<Guid, Operation> _entries = [];
@@ -68,6 +69,45 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
             if (observedExit is { State: ExcelNativeProcessState.Exited } && observedExit.Identity == registration.Excel)
                 operation.NativeExit = observedExit;
         }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "Optional receipt metadata is omitted if a JSON value cannot be decoded. The command still uses normal validation.")]
+    internal void RecordRequestedProcedure(Operation operation, string? args)
+    {
+        if (operation.Command != "vba.invoke" || args is null)
+            return;
+
+        string? procedureName = null;
+        try
+        {
+            using var document = JsonDocument.Parse(args);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return;
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!property.Name.Equals("procedureName", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (procedureName is not null || property.Name != "procedureName" || property.Value.ValueKind != JsonValueKind.String)
+                    return;
+
+                procedureName = property.Value.GetString();
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return;
+        }
+
+        if (procedureName is not { Length: > 0 and <= MaximumProcedureNameLength }
+            || !procedureName.Split('.').All(part => part.Length > 0 && char.IsLetter(part[0])
+                && part.All(character => char.IsLetterOrDigit(character) || character == '_')))
+            return;
+
+        lock (_gate)
+            operation.RequestedProcedure = procedureName;
     }
 
     internal void ObserveWorkerEvidence(WorkerRegistration registration)
@@ -156,6 +196,8 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
             ["phase"] = operation.Checkpoint?.Phase
                 ?? (operation.Worker is null ? "controllerAccepted" : "controllerDispatchStarted")
         };
+        if (operation.RequestedProcedure is { } requestedProcedure)
+            result["requestedProcedure"] = requestedProcedure;
         if (operation.Worker?.Excel is { } excel)
         {
             result["processId"] = excel.ProcessId;
@@ -283,6 +325,7 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         internal Guid DispatchId { get; } = Guid.NewGuid();
         internal string Command { get; } = command;
         internal string SessionId { get; } = sessionId;
+        internal string? RequestedProcedure { get; set; }
         internal DateTimeOffset StartedAt { get; } = startedAt;
         internal DateTimeOffset? FinishedAt { get; set; }
         internal string State { get; set; } = "pending";

@@ -955,6 +955,12 @@ public sealed partial class ExcelControllerTests
             Assert.NotNull(closed.PartialState);
             using var partial = JsonDocument.Parse(closed.PartialState);
             Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+            var native = partial.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+            Assert.Equal(identity.ProcessId, native.GetProperty("processId").GetInt32());
+            Assert.Equal(identity.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                native.GetProperty("startedAtUtcFileTime").GetString());
+            Assert.Equal("Exited", native.GetProperty("state").GetString());
+            Assert.Equal(JsonValueKind.Null, native.GetProperty("exitCode").ValueKind);
         }
         finally
         {
@@ -1036,6 +1042,9 @@ public sealed partial class ExcelControllerTests
             using var state = JsonDocument.Parse(Assert.IsType<string>(close.PartialState));
             Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
             Assert.DoesNotContain("still be running", state.RootElement.GetProperty("message").GetString());
+            var native = state.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+            Assert.Equal(excel.ProcessId, native.GetProperty("processId").GetInt32());
+            Assert.Equal(exitCode, native.GetProperty("exitCode").Deserialize<uint?>());
         });
         var cleanup = await Record.ExceptionAsync(() =>
             process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)));

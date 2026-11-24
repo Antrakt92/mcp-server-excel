@@ -187,14 +187,37 @@ reply if the late response is lost.
 HRESULT when available. `nativeExit` can appear later, matched by exact PID and
 creation time. An exit can follow later operations or normal cleanup. Its code
 alone gives no evidence about which command caused it or what was saved.
-An absent `nativeExit` means there is no matching observation.
-Use `recentCloseAttempts` separately for a subsequent close error.
+An absent `nativeExit` means the controller has no matching observation yet.
+Read `session list` or `file_read list`, then check the receipt again after the
+controller observes the exit. Use `recentCloseAttempts` for a subsequent close
+error. A close request after the controller has released a lost session can
+report the process exit while both `saveConfirmed` and `closeConfirmed` stay false.
 
+For a tracked `vba.invoke`, `requestedProcedure` is the unqualified selector
+provided by the caller, when it can be represented as a bounded VBA identifier
+or dotted identifier. It identifies the request. It does not show which VBA
+statement or nested procedure was running when COM disconnected.
+
+The selector is kept in the controller receipt, outside the worker checkpoint.
 The worker checkpoint carries no workbook paths, VBA source, inputs or result
 payloads. Each worker keeps its latest checkpoint, so an earlier phase may be
 unavailable if the checkpoint was replaced before the controller observed it.
 The controller receipt remains bounded and process-local. Use separate VBA
 phase marks for individual operations inside a macro when debugging a fixture.
+
+### Match a Windows crash report
+
+For a confirmed Excel process exit, inspect the local Windows **Application**
+log around the incident for source **Application Error**, event **1000**. Match
+`AppName` (`EXCEL.EXE`), `ProcessId`, and `ProcessCreationTime` in the event XML
+to the receipt's process identity. The event's PID and creation time may be in
+hexadecimal. Compare them numerically with the decimal `processId` and
+`startedAtUtcFileTime`. PID alone can match a recycled process.
+
+If there is an exact match, record the event time, `ExceptionCode`, and
+`IntegratorReportId` when present. A missing or delayed event leaves the report
+unconfirmed. Keep the event details local and omit raw messages and paths from
+shared diagnostics. See [Microsoft's Application Error guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/troubleshoot-application-service-crashing-behavior).
 
 ## Rebuild or report a problem
 

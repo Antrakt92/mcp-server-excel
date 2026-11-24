@@ -1386,7 +1386,7 @@ public sealed class ExcelMcpService : IDisposable
     private static ExcelNativeProcessObservation? GetNativeProcessObservation(IExcelBatch? batch) =>
         (batch as IExcelBatchProcessObservation)?.ProcessObservation;
 
-    private static string? MergeNativeProcessDiagnostics(string? partialState, ExcelNativeProcessObservation? observation)
+    internal static string? MergeNativeProcessDiagnostics(string? partialState, ExcelNativeProcessObservation? observation)
     {
         if (observation is null)
             return partialState;
@@ -1400,14 +1400,7 @@ public sealed class ExcelMcpService : IDisposable
             diagnostics = new System.Text.Json.Nodes.JsonObject();
             state["diagnostics"] = diagnostics;
         }
-        diagnostics["nativeProcess"] = new System.Text.Json.Nodes.JsonObject
-        {
-            ["processId"] = observation.Identity.ProcessId,
-            ["startedAtUtcFileTime"] = observation.Identity.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["state"] = observation.State.ToString(),
-            ["exitCode"] = observation.ExitCode is { } exitCode ? System.Text.Json.Nodes.JsonValue.Create(exitCode) : null,
-            ["nativeError"] = observation.NativeError is { } error ? System.Text.Json.Nodes.JsonValue.Create(error) : null
-        };
+        diagnostics["nativeProcess"] = CloseHistory.NativeDiagnostic(observation);
         return state.ToJsonString(ServiceProtocol.JsonOptions);
     }
 
