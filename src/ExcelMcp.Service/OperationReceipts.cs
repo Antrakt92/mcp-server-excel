@@ -155,8 +155,54 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         if (response.Success)
             return;
 
+        var blocker = ReadSaveBlocker(operation, response);
         lock (_gate)
+        {
             operation.InitialFailure ??= new(response.ErrorCategory, response.ExceptionType, response.HResult);
+            operation.FirstBlocker ??= blocker;
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
+        Justification = "A malformed optional dialog observation does not change the original tracked operation result.")]
+    private static ExcelOperationBlocker? ReadSaveBlocker(Operation operation, ServiceResponse response)
+    {
+        if (operation.Command != "session.save" || response.Command != operation.Command
+            || response.SessionId != operation.SessionId || response.PartialState is not { } partialState)
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(partialState);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("operation", out var status)
+                || status.ValueKind != JsonValueKind.Object
+                || !status.TryGetProperty("command", out var command)
+                || command.ValueKind != JsonValueKind.String || command.GetString() != operation.Command
+                || !TryReadUtc(status, "startedAtUtc", out var startedAt)
+                || startedAt < operation.StartedAt.UtcDateTime
+                || !status.TryGetProperty("firstBlocker", out var blocker)
+                || blocker.ValueKind != JsonValueKind.Object
+                || !blocker.TryGetProperty("kind", out var kindProperty)
+                || kindProperty.ValueKind != JsonValueKind.String
+                || kindProperty.GetString() is not string kind
+                || kind is not ("officeModal" or "vbeModal")
+                || !TryReadUtc(blocker, "observedAtUtc", out var observedAt) || observedAt < startedAt)
+                return null;
+
+            return new(kind, observedAt);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryReadUtc(JsonElement element, string propertyName, out DateTime utc)
+    {
+        utc = default;
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            && property.TryGetDateTime(out utc) && utc.Kind == DateTimeKind.Utc;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
@@ -208,6 +254,8 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
             result["workerFailure"] = FormatFailure(new(checkpoint.ErrorCategory, checkpoint.ExceptionType, checkpoint.HResult));
         if (operation.InitialFailure is { } initial)
             result["initialFailure"] = FormatFailure(initial);
+        if (operation.FirstBlocker is { } blocker)
+            result["firstBlocker"] = JsonSerializer.SerializeToNode(blocker, ServiceProtocol.JsonOptions);
         if (operation.NativeExit is { } nativeExit)
             result["nativeExit"] = CloseHistory.NativeDiagnostic(nativeExit);
         return result;
@@ -336,5 +384,6 @@ internal sealed class OperationReceipts(TimeProvider? timeProvider = null, int c
         internal WorkerOperationEvidence? Checkpoint { get; set; }
         internal ExcelNativeProcessObservation? NativeExit { get; set; }
         internal Failure? InitialFailure { get; set; }
+        internal ExcelOperationBlocker? FirstBlocker { get; set; }
     }
 }

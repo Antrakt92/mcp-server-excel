@@ -1030,6 +1030,8 @@ public sealed partial class SessionCloseRegressionTests
 
         public bool TryConfirmOwnedProcessTeardown() => TeardownConfirmed;
 
+        public bool TryConfirmOwnedProcessTeardownFromStatus() => TeardownConfirmed;
+
         public void Dispose()
         {
             BeforeDispose?.Invoke();

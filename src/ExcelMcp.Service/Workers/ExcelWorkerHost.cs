@@ -301,11 +301,13 @@ internal sealed class ExcelWorkerHost : IDisposable
             throw new ArgumentException("Invalid Excel operation identifier.");
         if (!await _execution.WaitAsync(0, cancellationToken))
             return Completed(Failure(call.Request, "Busy",
-                "Another request is still running in this Excel application. No new work was started."), accepted: false);
+                "Another request is still running in this Excel application. No new work was started."), accepted: false,
+                priorSaveBlocker: ReadPriorSaveBlocker(call.Request));
         WorkerOperationEvidence? admitted = null;
         WorkerProcess? admittingController = null;
         try
         {
+            var priorSaveBlocker = ReadPriorSaveBlocker(call.Request);
             lock (_stateLock)
             {
                 if (_releasing)
@@ -313,7 +315,8 @@ internal sealed class ExcelWorkerHost : IDisposable
                         "The Excel worker is being released. No work was started."), accepted: false);
                 if (_service.SessionManager.HasPendingExecution)
                     return Completed(Failure(call.Request, "Busy",
-                        "An earlier Excel operation is still pending. No new work was started."), accepted: false);
+                        "An earlier Excel operation is still pending. No new work was started."), accepted: false,
+                        priorSaveBlocker: priorSaveBlocker);
                 _pendingOperation = call.OperationId;
                 _pendingCommand = call.Request.Command;
                 if (_registration.Generation == call.Generation && _registration.Controller.ProcessId == clientId
@@ -374,7 +377,8 @@ internal sealed class ExcelWorkerHost : IDisposable
                 // read can still see the previous rows with no pending native work.
                 _pendingOperation = null;
                 _pendingCommand = null;
-                return new(response, true, SnapshotCore(), HasLateNativeCompletion: lateCompletion is not null);
+                return new(response, true, SnapshotCore(), HasLateNativeCompletion: lateCompletion is not null,
+                    PriorSaveBlocker: priorSaveBlocker);
             }
         }
 
@@ -389,10 +393,15 @@ internal sealed class ExcelWorkerHost : IDisposable
         }
     }
 
-    private WorkerExecution Completed(ServiceResponse response, bool accepted)
+    private ExcelOperationBlocker? ReadPriorSaveBlocker(ServiceRequest request) =>
+        request is { Command: "session.close", SessionId: { } sessionId }
+        && _service.SessionManager.GetOperationStatus(sessionId, reconcilePaths: false) is { Command: "session.save" } save
+            ? save.FirstBlocker : null;
+
+    private WorkerExecution Completed(ServiceResponse response, bool accepted, ExcelOperationBlocker? priorSaveBlocker = null)
     {
         lock (_stateLock)
-            return new(response, accepted, SnapshotCore());
+            return new(response, accepted, SnapshotCore(), PriorSaveBlocker: priorSaveBlocker);
     }
 
     private void CompleteRelease()

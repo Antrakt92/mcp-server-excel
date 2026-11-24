@@ -37,6 +37,8 @@ internal sealed class ExcelController : IDisposable
     private enum SessionEnd { Closed, SavedAndClosed, WorkerExited, ExcelExited }
     private readonly record struct EndedSession(SessionEnd Reason, ExcelProcessIdentity? Excel = null);
     private readonly ConcurrentDictionary<string, EndedSession> _closedSessions = new(StringComparer.Ordinal);
+    // Active close outcomes must survive eviction from the bounded diagnostic history.
+    private readonly Dictionary<string, ExcelProcessIdentity> _unconfirmedCloseAttempts = new(StringComparer.Ordinal);
     private readonly CloseHistory _closeHistory = new();
     private readonly OperationReceipts _operationReceipts = new();
     private readonly SemaphoreSlim _packageComparisons = new(1, 1);
@@ -337,7 +339,8 @@ internal sealed class ExcelController : IDisposable
                     trackedOwner = owner.Registration;
                 if (request.Command == "session.close")
                 {
-                    closeTarget = new(sessionId, owner.Registration.Excel);
+                    var registration = owner.Registration;
+                    closeTarget = new(sessionId, registration.Excel ?? registration.ReleasedExcel);
                     priorCloseStatus = owner.BuildStatusDiagnostic(_publishedSnapshots.GetValueOrDefault(owner.Registration.PipeName));
                 }
             }
@@ -393,6 +396,8 @@ internal sealed class ExcelController : IDisposable
                     _operationReceipts.BindWorker(tracked, trackedOwner,
                         _recentExcelExits.FirstOrDefault(exit => exit.Identity == trackedOwner.Excel));
             }
+            if (closeTarget is not null)
+                RememberCloseDispatch(closeTarget, worker);
             sent = true;
             ServiceResponse response;
             using (testTimings?.BeginStage("controllerWorkerRequest"))
@@ -413,7 +418,7 @@ internal sealed class ExcelController : IDisposable
                 _abandonedWorkers[worker.Registration.PipeName] = 0;
             var failure = CreateWorkerError(request, ex, sent);
             if (!sent && closeTarget is not null)
-                _closeHistory.Record(closeTarget, failure, priorCloseStatus);
+                RecordCloseAttempt(closeTarget, failure, priorCloseStatus);
             return failure;
         }
         finally
@@ -431,24 +436,16 @@ internal sealed class ExcelController : IDisposable
         CloseHistory.Target? closeTarget = null, JsonObject? priorCloseStatus = null, Guid? dispatchId = null)
     {
         ServiceResponse? completedResponse = null;
+        ExcelOperationBlocker? priorSaveBlocker = null;
         try
         {
             var execution = await worker.ExecuteWithAdmissionAsync(request, request.CallerCancellation,
                 dispatchId, dispatchId is null ? null : _operationReceipts.ObserveWorkerEvidence);
             var response = execution.Response;
             completedResponse = response;
+            priorSaveBlocker = execution.PriorSaveBlocker;
             if (closeTarget is not null)
-            {
-                var confirmation = _closeHistory.Record(closeTarget, response, priorCloseStatus);
-                if (execution.Accepted && confirmation.CloseConfirmed)
-                {
-                    // The reply confirms the close even if publishing its status failed.
-                    // Worker release and path cleanup still depend on their own evidence.
-                    var end = new EndedSession(confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed);
-                    _closedSessions.AddOrUpdate(closeTarget.SessionId, end, (_, previous) =>
-                        previous.Reason == SessionEnd.SavedAndClosed ? previous : end);
-                }
-            }
+                RecordCloseAttempt(closeTarget, response, priorCloseStatus, priorSaveBlocker, accepted: execution.Accepted);
             if (!execution.Accepted)
                 foreach (var path in reservedPaths)
                     _paths.TryRemove(new KeyValuePair<string, PathReservation>(path, reservation));
@@ -543,8 +540,44 @@ internal sealed class ExcelController : IDisposable
             System.Diagnostics.Trace.TraceError("Excel worker request failed: {0}", ex);
             var failure = CreateWorkerError(request, ex, sent: true, completed: completedResponse);
             if (closeTarget is not null)
-                _closeHistory.Record(closeTarget, failure, priorCloseStatus);
+                RecordCloseAttempt(closeTarget, failure, priorCloseStatus, priorSaveBlocker);
             return failure;
+        }
+    }
+
+    private void RememberCloseDispatch(CloseHistory.Target target, ExcelWorkerClient worker)
+    {
+        if (target.Excel is not { } identity)
+            return;
+
+        lock (_shutdownLock)
+            if (_sessions.TryGetValue(target.SessionId, out var owner) && owner == worker
+                && !_closedSessions.ContainsKey(target.SessionId))
+                _unconfirmedCloseAttempts[target.SessionId] = identity;
+    }
+
+    private void RecordCloseAttempt(CloseHistory.Target target, ServiceResponse response, JsonObject? priorStatus,
+        ExcelOperationBlocker? priorSaveBlocker = null, bool accepted = false)
+    {
+        lock (_shutdownLock)
+        {
+            var confirmation = _closeHistory.Record(target, response, priorStatus, priorSaveBlocker: priorSaveBlocker);
+            if (accepted && confirmation.CloseConfirmed)
+            {
+                // A completed reply can confirm the close independently of worker status publication.
+                var confirmedEnd = new EndedSession(confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed);
+                _closedSessions.AddOrUpdate(target.SessionId, confirmedEnd, (_, previous) =>
+                    previous.Reason == SessionEnd.SavedAndClosed ? previous : confirmedEnd);
+                _unconfirmedCloseAttempts.Remove(target.SessionId);
+                return;
+            }
+
+            // A status poll can infer a normal exit before the failed close reply arrives.
+            if (!confirmation.CloseConfirmed && target.Excel is { } identity
+                && _closedSessions.TryGetValue(target.SessionId, out var end)
+                && end is { Reason: SessionEnd.Closed } && end.Excel == identity
+                && _closeHistory.HasUnconfirmedFailure(target))
+                _closedSessions.TryUpdate(target.SessionId, new(SessionEnd.ExcelExited, identity), end);
         }
     }
 
@@ -777,7 +810,15 @@ internal sealed class ExcelController : IDisposable
                     && !snapshot.Sessions.Any(session => session.SessionId == entry.Key)))
                 {
                     if (!_closedSessions.ContainsKey(removed.Key))
-                        _closedSessions.TryAdd(removed.Key, observedEnd ??= InferSettledSessionEnd(snapshot.Registration));
+                    {
+                        var end = observedEnd ??= InferSettledSessionEnd(snapshot.Registration);
+                        if (end is { Reason: SessionEnd.Closed, Excel: { } identity }
+                            && (_unconfirmedCloseAttempts.TryGetValue(removed.Key, out var dispatched) && dispatched == identity
+                                || _closeHistory.HasUnconfirmedFailure(new(removed.Key, identity))))
+                            end = new(SessionEnd.ExcelExited, identity);
+                        _closedSessions.TryAdd(removed.Key, end);
+                    }
+                    _unconfirmedCloseAttempts.Remove(removed.Key);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
                         _paths.TryRemove(path);
                     BeforeSettledSessionRemovalForTests?.Invoke(removed.Key);
@@ -808,11 +849,11 @@ internal sealed class ExcelController : IDisposable
         // An exact native probe proves exit, but cannot confirm a workbook close or save.
         if (exit is null && OwnedProcessGuard.TryConfirmExited(identity))
             exit = new(identity, ExcelNativeProcessState.Exited, null, null);
-        if (exit is null || exit.ExitCode == 0)
+        if (exit is null)
             return new(SessionEnd.Closed);
 
         RememberNativeExit(exit);
-        return new(SessionEnd.ExcelExited, identity);
+        return new(exit.ExitCode == 0 ? SessionEnd.Closed : SessionEnd.ExcelExited, identity);
     }
 
     private ExcelNativeProcessObservation? FindNativeExit(ExcelProcessIdentity identity)
@@ -1177,13 +1218,19 @@ internal sealed class ExcelController : IDisposable
                 || candidate.Registration.Worker != registration.Worker || registration.Worker.IsAlive())
                 return;
             worker = candidate;
-            if (!explicitDiscovery && registration.Excel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
-                return;
             var confirmedExcel = explicitDiscovery ? null : registration.Excel;
-            if (!explicitDiscovery && registration.Excel is null
+            if (confirmedExcel is { } excel && !OwnedProcessGuard.TryConfirmExited(excel))
+                return;
+            if (!explicitDiscovery && confirmedExcel is null
                 && (worker.Snapshot?.Sessions.Count > 0 || _sessions.Values.Contains(worker)
                     || _paths.Values.Any(path => path.Token == registration.PipeName)))
-                return;
+            {
+                // The release record can arrive before the snapshot clears its session rows.
+                // A released identity may still be live after an intentional detach.
+                if (registration.ReleasedExcel is not { } released || !OwnedProcessGuard.TryConfirmExited(released))
+                    return;
+                confirmedExcel = released;
+            }
             if (!explicitDiscovery)
             {
                 try
@@ -1233,7 +1280,10 @@ internal sealed class ExcelController : IDisposable
 
             // Once the session disappears from status, requests must see its lost outcome and released claims.
             foreach (var session in sessions)
+            {
                 _sessions.TryRemove(session, out _);
+                _unconfirmedCloseAttempts.Remove(session);
+            }
             _workers.TryRemove(registration.PipeName, out _);
             _newWorkers.TryRemove(registration.PipeName, out _);
             _abandonedWorkers.TryRemove(registration.PipeName, out _);
@@ -1328,7 +1378,8 @@ internal sealed class ExcelController : IDisposable
             else if (!worker.Registration.Worker.IsAlive())
                 RetireExitedWorker(worker.Registration);
             else if (_abandonedWorkers.ContainsKey(worker.Registration.PipeName)
-                || worker.Registration.Excel is { } excel && OwnedProcessGuard.TryConfirmExited(excel))
+                || (worker.Registration.Excel ?? worker.Registration.ReleasedExcel) is { } excel
+                    && OwnedProcessGuard.TryConfirmExited(excel))
                 await ReleaseEmptyWorkerAsync(worker);
         }
         catch (Win32Exception error) when (error.NativeErrorCode == WorkerProcess.ErrorAccessDenied)

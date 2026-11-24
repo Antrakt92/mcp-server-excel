@@ -150,6 +150,113 @@ public sealed class OperationReceiptsTests
     }
 
     [Fact]
+    public async Task LateSuccessfulSaveRetainsTheFirstConfirmedBlockerAndTheInitialTimeout()
+    {
+        using var controller = new ExcelController(launcher: new("unused.exe", []));
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var receipts = Assert.IsType<OperationReceipts>(typeof(ExcelController).GetField("_operationReceipts", hidden)!.GetValue(controller));
+        var id = Guid.NewGuid();
+        var session = Guid.NewGuid().ToString("N");
+        const string command = "session.save";
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var operation));
+
+        var started = operation.StartedAt.UtcDateTime;
+        var firstObservation = started.AddSeconds(1);
+        var original = SaveBlockerResponse(command, session, command, "vbeModal", started, firstObservation);
+        var wrapped = original.WithCompletionFailure(new ServiceRequest { Command = command, SessionId = session },
+            new IOException("Could not record the timeout"));
+        receipts.ObserveInitialFailure(operation, wrapped);
+        receipts.ObserveInitialFailure(operation,
+            SaveBlockerResponse(command, session, command, "officeModal", started, firstObservation.AddSeconds(1)));
+
+        var before = Lookup(receipts, id, session);
+        Assert.Equal("pending", before.GetProperty("state").GetString());
+        Assert.Equal("vbeModal", before.GetProperty("operationEvidence").GetProperty("firstBlocker").GetProperty("kind").GetString());
+
+        var saved = Task.FromResult<ServiceResponse?>(new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" });
+        var capture = typeof(ExcelController).GetMethod("RecordLateOutcomeAsync", hidden)!;
+        await (Task)capture.Invoke(controller, [operation, saved, wrapped])!;
+
+        var receipt = Lookup(receipts, id, session);
+        Assert.Equal("completed", receipt.GetProperty("state").GetString());
+        Assert.True(receipt.GetProperty("result").GetProperty("saved").GetBoolean());
+        var evidence = receipt.GetProperty("operationEvidence");
+        Assert.Equal("TimeoutException", evidence.GetProperty("initialFailure").GetProperty("exceptionType").GetString());
+        var blocker = evidence.GetProperty("firstBlocker");
+        Assert.Equal("vbeModal", blocker.GetProperty("kind").GetString());
+        Assert.Equal(firstObservation, blocker.GetProperty("observedAtUtc").GetDateTime());
+        Assert.Equal(["kind", "observedAtUtc"], blocker.EnumerateObject().Select(property => property.Name).ToArray());
+        Assert.DoesNotContain("private fixture dialog text", receipt.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("session.save", "session.save", "session.save", "source", "officeModal", 0, 1, true)]
+    [InlineData("vba.invoke", "vba.invoke", "session.save", "source", "vbeModal", 0, 1, false)]
+    [InlineData("session.save", "session.close", "session.save", "source", "vbeModal", 0, 1, false)]
+    [InlineData("session.save", "session.save", "session.close", "source", "vbeModal", 0, 1, false)]
+    [InlineData("session.save", "session.save", "session.save", "other", "vbeModal", 0, 1, false)]
+    [InlineData("session.save", "session.save", "session.save", "source", "unknown", 0, 1, false)]
+    [InlineData("session.save", "session.save", "session.save", "source", "vbeModal", -1, 1, false)]
+    [InlineData("session.save", "session.save", "session.save", "source", "vbeModal", 0, -1, false)]
+    public void OnlyMatchingSaveStateSuppliesBoundedDialogEvidence(
+        string receiptCommand, string responseCommand, string statusCommand, string responseSession,
+        string kind, int startOffset, int observedOffset, bool accepted)
+    {
+        var clock = new ReceiptClock();
+        var receipts = new OperationReceipts(clock);
+        var id = Guid.NewGuid();
+        const string session = "source";
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, receiptCommand, session, out var operation));
+
+        var utc = clock.Now.UtcDateTime;
+        var response = SaveBlockerResponse(responseCommand, responseSession, statusCommand, kind,
+            utc.AddSeconds(startOffset), utc.AddSeconds(observedOffset));
+        receipts.ObserveInitialFailure(operation, response);
+        var evidence = Lookup(receipts, id, session).GetProperty("operationEvidence");
+
+        Assert.Equal("Timeout", evidence.GetProperty("initialFailure").GetProperty("category").GetString());
+        Assert.Equal(accepted, evidence.TryGetProperty("firstBlocker", out var blocker));
+        if (accepted)
+        {
+            Assert.Equal(kind, blocker.GetProperty("kind").GetString());
+            Assert.Equal(utc.AddSeconds(observedOffset), blocker.GetProperty("observedAtUtc").GetDateTime());
+        }
+    }
+
+    [Fact]
+    public void SaveBlockerRequiresAnExplicitUtcTimestamp()
+    {
+        var receipts = new OperationReceipts(new ReceiptClock());
+        var id = Guid.NewGuid();
+        const string session = "target";
+        const string command = "session.save";
+        Assert.Equal(OperationReceipts.Admission.Accepted, receipts.TryBegin(id, command, session, out var operation));
+        var utc = operation.StartedAt.UtcDateTime;
+        var observed = DateTime.SpecifyKind(utc.AddSeconds(1), DateTimeKind.Unspecified);
+        receipts.ObserveInitialFailure(operation, SaveBlockerResponse(command, session, command, "vbeModal", utc, observed));
+        Assert.False(Lookup(receipts, id, session).GetProperty("operationEvidence").TryGetProperty("firstBlocker", out _));
+    }
+
+    private static ServiceResponse SaveBlockerResponse(
+        string command, string session, string statusCommand, string kind, DateTime started, DateTime observed) => new()
+        {
+            Command = command,
+            SessionId = session,
+            ErrorCategory = "Timeout",
+            ExceptionType = "TimeoutException",
+            ErrorMessage = "Waiting on Excel.",
+            PartialState = JsonSerializer.Serialize(new
+            {
+                operation = new
+                {
+                    command = statusCommand,
+                    startedAtUtc = started,
+                    firstBlocker = new { kind, observedAtUtc = observed, text = "private fixture dialog text" }
+                }
+            })
+        };
+
+    [Fact]
     public void Controller_RecoversRecordedEvidenceOnlyFromTheKnownWorkerGeneration()
     {
         const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;

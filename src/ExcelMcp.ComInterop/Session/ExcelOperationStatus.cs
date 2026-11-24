@@ -13,7 +13,14 @@ public sealed record ExcelOperationStatus(
     public string? Command { get; init; }
     /// <summary>When the currently reported operation started, in UTC.</summary>
     public DateTime StartedAtUtc { get; init; }
+    /// <summary>The first blocking dialog verified while the save operation was still running.</summary>
+    public ExcelOperationBlocker? FirstBlocker { get; init; }
+
+    internal string? FirstBlockerSessionId { get; init; }
 }
+
+/// <summary>Bounded dialog evidence without window handles or text.</summary>
+public sealed record ExcelOperationBlocker(string Kind, DateTime ObservedAtUtc);
 
 /// <summary>A startup wait expired, but its session still owns the Excel instance.</summary>
 public sealed class SessionStartupPendingException(string sessionId, string message, Exception cause)

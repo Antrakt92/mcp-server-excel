@@ -63,14 +63,24 @@ public sealed class CloseHistoryTests
         var history = new CloseHistory();
         var identity = new ExcelProcessIdentity(42, 1234);
         var target = new CloseHistory.Target("close-session", identity);
+        var blocker = new ExcelOperationBlocker("vbeModal", new DateTime(2026, 11, 24, 10, 16, 0, DateTimeKind.Utc));
         history.Record(target, new ServiceResponse
         {
             ErrorCategory = "Busy",
             ExceptionType = "ExcelBusyException",
             ErrorMessage = "Private workbook path",
             HResult = "0x800706B5"
-        });
+        }, priorSaveBlocker: blocker);
+        history.Record(target, new ServiceResponse { ErrorCategory = "Busy", HResult = "0x800706B5" },
+            priorSaveBlocker: new("officeModal", blocker.ObservedAtUtc.AddSeconds(1)));
 
+        history.Record(target, new ServiceResponse
+        {
+            ErrorCategory = "SessionUnavailable",
+            PartialState = """{"outcome":"unknown","reconciledFailedClose":true}"""
+        });
+        Assert.True(history.HasUnconfirmedFailure(target));
+        Assert.False(history.HasUnconfirmedFailure(new(target.SessionId, new ExcelProcessIdentity(42, 1235))));
         var unconfirmed = Assert.IsType<JsonObject>(Assert.Single(history.Snapshot(
             [new(new ExcelProcessIdentity(42, 1235), ExcelNativeProcessState.Exited, 0, null)], _ => false)));
         Assert.Null(unconfirmed["nativeExit"]);
@@ -86,6 +96,8 @@ public sealed class CloseHistoryTests
         Assert.False(settled["saveConfirmed"]!.GetValue<bool>());
         Assert.Equal("Busy", settled["lastFailure"]!["category"]!.GetValue<string>());
         Assert.Equal("0x800706B5", settled["lastFailure"]!["hresult"]!.GetValue<string>());
+        Assert.Equal("vbeModal", settled["priorSaveBlocker"]!["kind"]!.GetValue<string>());
+        Assert.Equal(blocker.ObservedAtUtc, settled["priorSaveBlocker"]!["observedAtUtc"]!.GetValue<DateTime>());
         Assert.DoesNotContain("Private workbook path", settled.ToJsonString());
     }
 

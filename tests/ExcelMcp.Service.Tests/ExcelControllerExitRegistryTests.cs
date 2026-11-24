@@ -11,14 +11,17 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 public sealed partial class ExcelControllerTests
 {
     [Theory(Timeout = 15000)]
-    [InlineData("missing", false, true)]
-    [InlineData("missing", true, true)]
-    [InlineData("stale-zero", false, true)]
-    [InlineData("matching-zero", false, false)]
-    [InlineData("previous-zero", false, false)]
-    [InlineData("live", false, false)]
+    [InlineData("missing", false, null, true)]
+    [InlineData("missing", true, null, true)]
+    [InlineData("stale-zero", false, null, true)]
+    [InlineData("matching-zero", false, null, false)]
+    [InlineData("matching-zero", false, "late-failure", true)]
+    [InlineData("matching-zero", false, "pending", true)]
+    [InlineData("matching-zero", false, "evicted-failure", true)]
+    [InlineData("previous-zero", false, null, false)]
+    [InlineData("live", false, null, false)]
     public async Task Controller_SettledMissingSessionChecksExactProcessWhenExitRecordIsUnavailable(
-        string evidence, bool releasedIdentity, bool expectedUnconfirmed)
+        string evidence, bool releasedIdentity, string? closeAttempt, bool expectedUnconfirmed)
     {
         var directory = Directory.CreateTempSubdirectory("excelmcp-missing-exit-record-");
         try
@@ -55,6 +58,27 @@ public sealed partial class ExcelControllerTests
                     null, null, new Dictionary<string, IReadOnlyList<string>> { [sessionId] = [path] }, Revision: 1));
                 apply.Invoke(controller, [worker]);
 
+                var closeTarget = new CloseHistory.Target(sessionId, excel);
+                var recordClose = typeof(ExcelController).GetMethod("RecordCloseAttempt", NativeObservationHidden)!;
+                var failure = new ServiceResponse
+                {
+                    ErrorCategory = "Busy",
+                    ExceptionType = "ExcelBusyException",
+                    HResult = "0x800706BA"
+                };
+                if (closeAttempt is "pending" or "evicted-failure")
+                    typeof(ExcelController).GetMethod("RememberCloseDispatch", NativeObservationHidden)!
+                        .Invoke(controller, [closeTarget, worker]);
+                if (closeAttempt == "evicted-failure")
+                {
+                    recordClose.Invoke(controller, [closeTarget, failure, null, null, true]);
+                    var history = Assert.IsType<CloseHistory>(typeof(ExcelController)
+                        .GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
+                    for (var i = 0; i < 16; i++)
+                        history.Record(new($"other-session-{i}", excel), failure);
+                    Assert.False(history.HasUnconfirmedFailure(closeTarget));
+                }
+
                 var observation = evidence switch
                 {
                     "stale-zero" => new ExcelNativeProcessObservation(
@@ -77,17 +101,9 @@ public sealed partial class ExcelControllerTests
                 apply.Invoke(controller, [worker]);
                 Assert.DoesNotContain(sessionId, sessions.Keys);
 
-                if (releasedIdentity)
-                {
-                    var history = Assert.IsType<CloseHistory>(typeof(ExcelController)
-                        .GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
-                    history.Record(new(sessionId, excel), new ServiceResponse
-                    {
-                        ErrorCategory = "Busy",
-                        ExceptionType = "ExcelBusyException",
-                        HResult = "0x800706BA"
-                    });
-                }
+                var originalFailureAvailable = releasedIdentity || closeAttempt == "late-failure";
+                if (originalFailureAvailable)
+                    recordClose.Invoke(controller, [closeTarget, failure, null, null, true]);
 
                 var close = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
                 Assert.Equal(!expectedUnconfirmed, close.Success);
@@ -102,20 +118,24 @@ public sealed partial class ExcelControllerTests
                     Assert.Equal(excel.StartedAtUtcFileTime, long.Parse(native.GetProperty("startedAtUtcFileTime").GetString()!,
                         System.Globalization.CultureInfo.InvariantCulture));
                     Assert.Equal("Exited", native.GetProperty("state").GetString());
-                    Assert.Equal(JsonValueKind.Null, native.GetProperty("exitCode").ValueKind);
+                    if (evidence == "matching-zero")
+                        Assert.Equal(0u, native.GetProperty("exitCode").GetUInt32());
+                    else
+                        Assert.Equal(JsonValueKind.Null, native.GetProperty("exitCode").ValueKind);
                     var list = await controller.ProcessAsync(new ServiceRequest { Command = "session.list" });
                     Assert.True(list.Success, list.ErrorMessage);
                     using var listed = JsonDocument.Parse(list.Result!);
-                    var attempt = Assert.Single(listed.RootElement.GetProperty("recentCloseAttempts").EnumerateArray());
+                    var attempt = Assert.Single(listed.RootElement.GetProperty("recentCloseAttempts").EnumerateArray(),
+                        entry => entry.GetProperty("sessionId").GetString() == sessionId);
                     Assert.Equal(sessionId, attempt.GetProperty("sessionId").GetString());
                     Assert.True(attempt.GetProperty("sessionReleased").GetBoolean());
                     Assert.False(attempt.GetProperty("closeConfirmed").GetBoolean());
                     Assert.False(attempt.GetProperty("saveConfirmed").GetBoolean());
                     Assert.Equal(native.GetRawText(), attempt.GetProperty("nativeExit").GetRawText());
-                    var failure = attempt.GetProperty("lastFailure");
-                    Assert.Equal(releasedIdentity ? "Busy" : "ServiceUnavailable", failure.GetProperty("category").GetString());
-                    if (releasedIdentity)
-                        Assert.Equal("0x800706BA", failure.GetProperty("hresult").GetString());
+                    var lastFailure = attempt.GetProperty("lastFailure");
+                    Assert.Equal(originalFailureAvailable ? "Busy" : "ServiceUnavailable", lastFailure.GetProperty("category").GetString());
+                    if (originalFailureAvailable)
+                        Assert.Equal("0x800706BA", lastFailure.GetProperty("hresult").GetString());
 
                     var operationId = Guid.NewGuid().ToString("D");
                     var invoke = await controller.ProcessAsync(new ServiceRequest
@@ -139,6 +159,16 @@ public sealed partial class ExcelControllerTests
                     using var receipt = JsonDocument.Parse(lookup.Result!);
                     Assert.Equal("Probe.Check", receipt.RootElement.GetProperty("operationEvidence")
                         .GetProperty("requestedProcedure").GetString());
+
+                    if (closeAttempt == "pending")
+                    {
+                        var completed = new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" };
+                        recordClose.Invoke(controller, [closeTarget, completed, null, null, true]);
+                        var confirmed = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
+                        Assert.True(confirmed.Success, confirmed.ErrorMessage);
+                        using var confirmation = JsonDocument.Parse(confirmed.Result!);
+                        Assert.True(confirmation.RootElement.GetProperty("saved").GetBoolean());
+                    }
                 }
                 else
                 {

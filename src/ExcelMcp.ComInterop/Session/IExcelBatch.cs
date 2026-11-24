@@ -161,6 +161,9 @@ public interface IExcelBatch : IDisposable
 internal interface IExcelBatchTeardownState
 {
     bool TryConfirmOwnedProcessTeardown();
+
+    // Worker status must not wait for an in-progress batch teardown.
+    bool TryConfirmOwnedProcessTeardownFromStatus() => false;
 }
 
 internal interface IExcelBatchProcessObservation

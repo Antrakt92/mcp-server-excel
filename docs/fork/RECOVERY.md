@@ -148,6 +148,7 @@ keeps up to 16 session/process pairs in the current controller.
 
 - `recordingFailures` reports errors publishing the worker or controller result separately.
 - `priorStatusDiagnostic` preserves a worker status failure reported before dispatch, even if the close request succeeds.
+- `priorSaveBlocker` records the first confirmed dialog observed during the preceding save of that session. It reports the dialog kind (`officeModal` or `vbeModal`) and time, without dialog text. The same observation is available as `operation.firstBlocker` while the save status is retained. A VBE dialog observation does not identify the underlying VBA error.
 
 If a session has `closeReadiness: "unconfirmed"`, a worker status refresh
 failed. The row can retain `canClose: false` while the owning worker is still
@@ -158,7 +159,7 @@ process observation. Keep the existing close safeguards and confirm the
 original session ID before sending a targeted close.
 
 A false confirmation field means that evidence is unavailable. An observed exit
-can appear after a failed close, so use the separate observations and check the
+can appear after a failed close, including a normal exit with code zero. Check the
 file on disk before retrying a save. This history is not a recovery handle and
 expires when the controller restarts.
 ### Tracked commands after a lost reply

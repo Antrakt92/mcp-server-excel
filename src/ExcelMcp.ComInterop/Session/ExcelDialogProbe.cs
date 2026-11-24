@@ -8,6 +8,15 @@ namespace Sbroenne.ExcelMcp.ComInterop.Session;
 
 internal static class ExcelDialogProbe
 {
+    private const string VbeWindowClass = "wndclass_desked_gsk";
+
+    internal enum DialogKind
+    {
+        None,
+        OfficeModal,
+        VbeModal
+    }
+
     internal readonly record struct WindowSnapshot(
         nint Handle, nint Owner, int ProcessId, bool Visible, bool Enabled, string ClassName, string Title = "");
 
@@ -102,7 +111,8 @@ internal static class ExcelDialogProbe
         }, nint.Zero);
 
         var confirmed = Inspect(identity, logger, includeEnabledOwnerOfficeDialog);
-        if (confirmed.State != WorkbookRefreshState.DialogOpen || confirmed.Dialog != inspection.Dialog)
+        if (confirmed.State != WorkbookRefreshState.DialogOpen || confirmed.Dialog != inspection.Dialog ||
+            confirmed.Kind != inspection.Kind)
             return "Dialog text could not be read because the owned blocking window changed during inspection.";
         if (text.Length == 0)
             return "Dialog text could not be read: Windows exposed no readable title or message labels within the bounded read.";
@@ -150,7 +160,8 @@ internal static class ExcelDialogProbe
     private static extern bool ShowWindowAsync(nint window, int command);
 
     internal readonly record struct Inspection(
-        WorkbookRefreshState State, IReadOnlyList<WindowSnapshot> Windows, nint Dialog);
+        WorkbookRefreshState State, IReadOnlyList<WindowSnapshot> Windows, nint Dialog,
+        DialogKind Kind = DialogKind.None);
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Win32 readiness probe handles only process/window inspection failures, logs the original exception, and returns Unknown so save and close remain blocked rather than reporting readiness.")]
@@ -199,12 +210,13 @@ internal static class ExcelDialogProbe
                 logger.LogWarning("Excel dialog window inspection failed; readiness remains unknown");
                 return new(WorkbookRefreshState.Unknown, [], 0);
             }
-            var state = Classify(ownedProcess.ProcessId, windows, out var dialog, includeEnabledOwnerOfficeDialog);
+            var state = Classify(ownedProcess.ProcessId, windows, out var dialog, out var kind,
+                includeEnabledOwnerOfficeDialog);
             if (state == WorkbookRefreshState.Unknown)
             {
                 logger.LogWarning("Excel's main window could not be found; dialog readiness remains unknown");
             }
-            return new(state, windows, dialog);
+            return new(state, windows, dialog, kind);
         }
         catch (Exception ex) when (ex is Win32Exception or ArgumentException or InvalidOperationException)
         {
@@ -221,11 +233,21 @@ internal static class ExcelDialogProbe
         IReadOnlyList<WindowSnapshot> windows,
         out nint dialog,
         bool includeEnabledOwnerOfficeDialog = false)
+        => Classify(processId, windows, out dialog, out _, includeEnabledOwnerOfficeDialog);
+
+    internal static WorkbookRefreshState Classify(
+        int processId,
+        IReadOnlyList<WindowSnapshot> windows,
+        out nint dialog,
+        out DialogKind kind,
+        bool includeEnabledOwnerOfficeDialog = false)
     {
         dialog = nint.Zero;
+        kind = DialogKind.None;
         var roots = windows.Where(window => window.ProcessId == processId && window.ClassName == "XLMAIN").ToArray();
         if (roots.Length == 0) return WorkbookRefreshState.Unknown;
         var byHandle = windows.ToDictionary(window => window.Handle);
+
         foreach (var root in roots)
         {
             foreach (var window in windows)
@@ -241,6 +263,7 @@ internal static class ExcelDialogProbe
                     if (owner == root.Handle)
                     {
                         dialog = window.Handle;
+                        kind = IsVbeModal(window, processId, byHandle) ? DialogKind.VbeModal : DialogKind.OfficeModal;
                         return WorkbookRefreshState.DialogOpen;
                     }
                     if (!byHandle.TryGetValue(owner, out var parent)) break;
@@ -248,7 +271,36 @@ internal static class ExcelDialogProbe
                 }
             }
         }
+        // The editor can remain modal while XLMAIN is enabled or outside its owner chain.
+        foreach (var window in windows)
+        {
+            if (!IsVbeModal(window, processId, byHandle))
+                continue;
+
+            dialog = window.Handle;
+            kind = DialogKind.VbeModal;
+            return WorkbookRefreshState.DialogOpen;
+        }
         return WorkbookRefreshState.Ready;
+    }
+
+    private static bool IsVbeModal(
+        WindowSnapshot window, int processId, Dictionary<nint, WindowSnapshot> byHandle)
+    {
+        if (window.ProcessId != processId || !window.Visible || !window.Enabled ||
+            window.ClassName != "#32770")
+            return false;
+
+        var owner = window.Owner;
+        for (var depth = 0; owner != nint.Zero && depth < byHandle.Count; depth++)
+        {
+            if (!byHandle.TryGetValue(owner, out var parent) || parent.ProcessId != processId)
+                break;
+            if (parent.ClassName == VbeWindowClass)
+                return !parent.Enabled;
+            owner = parent.Owner;
+        }
+        return false;
     }
 
     private delegate bool WindowCallback(nint window, nint data);
