@@ -21,8 +21,7 @@ internal sealed class Program
     private static async Task<int> Main(string[] args)
     {
         var command = args.FirstOrDefault(arg => !QuietFlags.Contains(arg, StringComparer.OrdinalIgnoreCase));
-        if (!string.Equals(command, "batch", StringComparison.OrdinalIgnoreCase) ||
-            args.Any(arg => VersionFlags.Contains(arg, StringComparer.OrdinalIgnoreCase)))
+        if (!string.Equals(command, "batch", StringComparison.OrdinalIgnoreCase))
             return await RunEntryPointAsync(args);
 
         using var cancellation = new CancellationTokenSource();
@@ -134,9 +133,14 @@ internal sealed class Program
             return CliErrorOutput.WriteError(_CliCategoryMetadata.BatchStdinOnlyMessage);
         }
 
-        if (filteredArgs.Any(arg => VersionFlags.Contains(arg, StringComparer.OrdinalIgnoreCase)))
+        if (filteredArgs.Length == 1 && VersionFlags.Contains(filteredArgs[0], StringComparer.OrdinalIgnoreCase))
         {
             return await HandleVersionAsync();
+        }
+        if (filteredArgs.Any(arg => VersionFlags.Contains(arg, StringComparer.OrdinalIgnoreCase)))
+        {
+            return CliErrorOutput.WriteError(
+                "Use --version by itself. For a literal option value that starts with a dash, use --option=value.");
         }
 
         if (ActionHelp.TryWrite(filteredArgs))
