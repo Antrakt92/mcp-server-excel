@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sbroenne.ExcelMcp.ComInterop.Session;
@@ -16,6 +17,40 @@ namespace Sbroenne.ExcelMcp.ComInterop.Tests.Unit;
 [Collection("Sequential")]
 public sealed class SessionManagerTeardownFailureTests
 {
+    [Fact]
+    public void MissingAndRetiredSessionIdsDoNotAllocateLocks()
+    {
+        using var manager = new SessionManager();
+        for (var index = 0; index < 32; index++)
+        {
+            var missing = $"missing-{index}";
+            Assert.Null(manager.GetSession(missing));
+            Assert.False(manager.TryBeginOperation(missing, out _, out var message, out var error));
+            Assert.Equal(SessionOperationError.NotFound, error);
+            Assert.Contains(missing, message, StringComparison.Ordinal);
+            Assert.False(manager.CloseSession(missing));
+            Assert.False(manager.IsSessionRetained(missing));
+            manager.EndOperation(missing);
+        }
+
+        var locks = GetField<ConditionalWeakTable<IExcelBatch, object>>(manager, "_sessionLocks");
+        Assert.Empty(locks);
+
+        const string sessionId = "retired";
+        var batch = new ConfigurableFailingBatch(false, false);
+        RegisterSession(manager, sessionId, Path.Combine(Path.GetTempPath(), "retired.xlsx"), batch);
+        Assert.True(manager.TryBeginOperation(sessionId, out var selected, out _));
+        Assert.Same(batch, selected);
+        Assert.True(locks.TryGetValue(batch, out var acquired));
+
+        Assert.True(manager.CloseSession(sessionId, save: false, force: true));
+        manager.EndOperation(sessionId);
+        Assert.Null(manager.GetSession(sessionId));
+        var retained = Assert.Single(locks);
+        Assert.Same(batch, retained.Key);
+        Assert.Same(acquired, retained.Value);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
