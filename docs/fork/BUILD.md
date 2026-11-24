@@ -88,17 +88,17 @@ Existing fork 3.0.0 release
 archives and their verification receipts retain their original upstream 2.6.0
 base; source synchronization does not rebuild or replace published assets.
 
-## Deferred tooling updates
+## Toolchain compatibility
 
-Reviewed on 2026-11-01. These candidates are separate from the compatible
-dependency updates in this branch.
+Build the .NET 10 targets with SDK 10.0.404. Keep Roslyn 5.9.0 and the
+compiler-facing Immutable and Reflection.Metadata packages on their compatible
+versions. SDK 11 and newer Roslyn pins require a separate migration of the
+analyzer build and tests.
 
-| Tool | Current choice | Remaining check |
-| --- | --- | --- |
-| Introduction video HyperFrames CLI | 0.8.214 | 0.8.226 introduces Undici 7.25.0, affected by [GHSA-vmh5-mc38-953g](https://github.com/advisories/GHSA-vmh5-mc38-953g). Recheck the resolved tool graph before accepting a later version. The locked local CLI avoids untracked `npx` downloads. |
-| World Bank video HyperFrames CLI | 0.8.223, locked; undici overridden to 7.30.1 | Install/audit and CLI smoke passed. Full build, browser checks and rendering require the five original footage clips, deliberately omitted from a clean checkout. |
-| Agentic workflow compiler | 0.89.21 | The 1.0.1 compiler adds `actions: read` to the generated completion job. Review the permission and diagnostics behavior before adopting that migration; regenerate from the Markdown source rather than patching generated YAML. |
+Both video projects pin HyperFrames 0.9.87. Project checks and short preview
+renders passed for the tracked assets. The World Bank video uses the tracked
+substitute clips unless the original footage has been prepared locally.
 
-The introduction video's 0.8.214 check and one-second 4K compatibility render
-passed with an advisory-free tool graph. This does not establish full-film frame
-parity or validate the World Bank video.
+Issue Triage is compiled from its Markdown source with gh-aw 1.2.2. See the
+[setup instructions](../../.github/workflows/docs/issue-triage-setup.md) for
+the exact compiler ref and validation commands.
