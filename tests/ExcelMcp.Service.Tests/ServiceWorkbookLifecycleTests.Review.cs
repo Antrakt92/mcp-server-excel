@@ -1514,14 +1514,20 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 });
                 Assert.False(retried.Success);
                 Assert.Equal("SessionUnavailable", retried.ErrorCategory);
-                Assert.Contains("saving its workbook could not be confirmed", retried.ErrorMessage,
-                    StringComparison.OrdinalIgnoreCase);
+                using var recovered = JsonDocument.Parse(retried.PartialState!);
+                Assert.Equal("unknown", recovered.RootElement.GetProperty("outcome").GetString());
+                Assert.True(recovered.RootElement.GetProperty("reconciledFailedClose").GetBoolean());
+                var native = recovered.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+                Assert.Equal(identity.ProcessId, native.GetProperty("processId").GetInt32());
+                Assert.Equal(0u, native.GetProperty("exitCode").GetUInt32());
                 sessions.TryRemove(ownedId, out _);
                 Assert.DoesNotContain(identity, SessionManager.GetTrackedExcelProcesses());
                 Assert.DoesNotContain(ownedId, service.SessionManager.ActiveSessionIds);
                 Assert.False(service.SessionManager.TryGetFilePath(ownedId, out _));
 
-                await CloseSessionAsync(service, ownedId, save: false);
+                var replay = await service.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = ownedId });
+                Assert.False(replay.Success);
+                Assert.Equal("SessionUnavailable", replay.ErrorCategory);
                 var reopenedId = await OpenSessionAsync(service, path);
                 sessions[reopenedId] = 0;
                 Assert.Null(await ReadMarkerAsync(service, reopenedId));

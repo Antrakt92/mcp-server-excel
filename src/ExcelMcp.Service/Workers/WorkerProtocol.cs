@@ -135,7 +135,7 @@ internal sealed record WorkerOperationEvidence(
 internal sealed record WorkerClaim(WorkerProcess Controller, string Generation, string Build);
 internal sealed record WorkerCall(string OperationId, string Generation, ServiceRequest Request);
 internal sealed record WorkerExecution(ServiceResponse Response, bool Accepted, WorkerSnapshot Snapshot,
-    bool HasLateNativeCompletion = false);
+    bool HasLateNativeCompletion = false, ExcelOperationBlocker? PriorSaveBlocker = null);
 internal sealed record WorkerRelease(ServiceResponse Response, WorkerSnapshot Snapshot);
 internal sealed record WorkerStatusFailure(string Message, WorkerStatusDiagnostic? Diagnostic = null);
 internal sealed record WorkerStatusDiagnostic(string Stage, string ExceptionType,

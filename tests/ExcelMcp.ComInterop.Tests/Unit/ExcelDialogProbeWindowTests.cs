@@ -332,6 +332,7 @@ public sealed class ExcelDialogProbeWindowTests
             SetField(batch, "_logger", NullLogger<ExcelBatch>.Instance);
             SetField(batch, "_operationTimeout", TimeSpan.FromSeconds(3));
             SetField(batch, "_workbookPath", "dialog-test.xlsx");
+            SetField(batch, "_statusLock", new object());
             var timeout = batch.CreateOperationTimeoutException(expiredWhileQueued: false);
             Assert.Contains("had a dialog open", timeout.Message, StringComparison.Ordinal);
             Assert.Contains(title, timeout.Message, StringComparison.Ordinal);
@@ -406,7 +407,7 @@ public sealed class ExcelDialogProbeWindowTests
             SetField(batch, "_windowControlLock", new Lock());
             var started = Stopwatch.GetTimestamp();
             SetField(batch, "_startupCompletion", Task.CompletedTask);
-            SetField(batch, "_statusLock", new Lock());
+            SetField(batch, "_statusLock", new object());
             SetField(batch, "_operationState", "running");
             var detailRead = Task.Run(() => batch.DialogDetails);
             while (!detailRead.IsCompleted && Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(5))

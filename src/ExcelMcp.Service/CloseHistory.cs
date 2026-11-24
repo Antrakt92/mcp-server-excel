@@ -11,14 +11,16 @@ internal sealed class CloseHistory
     internal sealed record Target(string SessionId, ExcelProcessIdentity? Excel);
     private sealed record Failure(string? Category, string? ExceptionType, string? HResult);
     private sealed record Entry(Target Workbook, bool CloseConfirmed, bool SaveConfirmed,
-        Failure? LastFailure, IReadOnlyList<Failure> RecordingFailures, JsonObject? PriorStatus);
+        Failure? LastFailure, IReadOnlyList<Failure> RecordingFailures, JsonObject? PriorStatus,
+        ExcelOperationBlocker? PriorSaveBlocker);
 
     private const int Capacity = 16;
     private readonly Lock _gate = new();
     private readonly LinkedList<Entry> _entries = new();
 
     internal (bool CloseConfirmed, bool SaveConfirmed) Record(
-        Target target, ServiceResponse response, JsonObject? priorStatus = null, bool onlyIfMissing = false)
+        Target target, ServiceResponse response, JsonObject? priorStatus = null, bool onlyIfMissing = false,
+        ExcelOperationBlocker? priorSaveBlocker = null)
     {
         var recordingFailures = new List<Failure>();
         var close = response;
@@ -32,7 +34,7 @@ internal sealed class CloseHistory
         }
 
         confirmed &= close.Success;
-        bool saved = confirmed && HasSaveConfirmation(close.Result);
+        bool saved = confirmed && HasTrueFlag(close.Result, "saved");
         lock (_gate)
         {
             var previous = _entries.Last;
@@ -46,16 +48,23 @@ internal sealed class CloseHistory
             }
 
             // A later retry can add confirmation; it cannot erase the previous failure.
-            var failure = close.Success ? previous?.Value.LastFailure
-                : new Failure(close.ErrorCategory, close.ExceptionType, close.HResult);
+            var failure = previous?.Value.LastFailure;
+            if (!close.Success && (failure is null || !HasTrueFlag(close.PartialState, "reconciledFailedClose")))
+                failure = new Failure(close.ErrorCategory, close.ExceptionType, close.HResult);
             _entries.AddLast(new Entry(target, confirmed || previous?.Value.CloseConfirmed == true,
                 saved || previous?.Value.SaveConfirmed == true, failure,
                 recordingFailures.Count > 0 ? recordingFailures : previous?.Value.RecordingFailures ?? [],
-                priorStatus ?? previous?.Value.PriorStatus));
+                priorStatus ?? previous?.Value.PriorStatus, previous?.Value.PriorSaveBlocker ?? priorSaveBlocker));
             if (_entries.Count > Capacity)
                 _entries.RemoveFirst();
         }
         return (confirmed, saved);
+    }
+
+    internal bool HasUnconfirmedFailure(Target target)
+    {
+        lock (_gate)
+            return _entries.Any(entry => entry.Workbook == target && !entry.CloseConfirmed && entry.LastFailure is not null);
     }
 
     internal JsonArray Snapshot(IEnumerable<ExcelNativeProcessObservation> nativeExits, Func<string, bool> sessionReleased)
@@ -78,6 +87,9 @@ internal sealed class CloseHistory
                     ["lastFailure"] = entry.LastFailure is { } failure ? FailureDiagnostic(failure) : null,
                     ["recordingFailures"] = new JsonArray(entry.RecordingFailures.Select(value => (JsonNode)FailureDiagnostic(value)).ToArray()),
                     ["priorStatusDiagnostic"] = entry.PriorStatus?.DeepClone(),
+                    ["priorSaveBlocker"] = entry.PriorSaveBlocker is { } blocker
+                        ? new JsonObject { ["kind"] = blocker.Kind, ["observedAtUtc"] = blocker.ObservedAtUtc }
+                        : null,
                     ["nativeExit"] = exit is null ? null : NativeDiagnostic(exit)
                 });
             }
@@ -85,7 +97,7 @@ internal sealed class CloseHistory
         }
     }
 
-    private static bool HasSaveConfirmation(string? result)
+    private static bool HasTrueFlag(string? result, string flag)
     {
         if (result is null)
             return false;
@@ -93,8 +105,8 @@ internal sealed class CloseHistory
         {
             using var document = JsonDocument.Parse(result);
             return document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("saved", out var saved)
-                && saved.ValueKind == JsonValueKind.True;
+                && document.RootElement.TryGetProperty(flag, out var value)
+                && value.ValueKind == JsonValueKind.True;
         }
         catch (JsonException)
         {

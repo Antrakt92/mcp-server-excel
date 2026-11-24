@@ -633,7 +633,8 @@ public sealed class SessionManagerTeardownFailureTests
     [Fact]
     public void Dispose_DoesNotInvokeSaveEvenWhenSaveWouldFail()
     {
-        using var manager = new SessionManager();
+        var reconciled = new List<string>();
+        using var manager = new SessionManager(logger: null, reconciled.Add);
         var failingBatch = new ConfigurableFailingBatch(saveFails: true, disposeFails: false);
         var healthyBatch = new ConfigurableFailingBatch(saveFails: false, disposeFails: false);
         RegisterSession(manager, "failing-save", Path.GetFullPath("failing-save.xlsx"), failingBatch);
@@ -656,15 +657,25 @@ public sealed class SessionManagerTeardownFailureTests
         Assert.Equal(1, failingBatch.DisposeCallCount);
         Assert.Equal(1, healthyBatch.DisposeCallCount);
         Assert.Equal(0, manager.ActiveSessionCount);
+        Assert.Empty(reconciled);
     }
 
     [Fact]
     public void CloseSession_OneShotDisposeFailure_RemainsQuarantinedUntilCleanupConfirmed()
     {
-        using var manager = new SessionManager();
         var batch = new OneShotFailingBatch();
         const string sessionId = "one-shot-dispose-failure";
         var filePath = Path.GetFullPath("one-shot-dispose-failure.xlsx");
+        var published = new List<string>();
+        SessionManager? observedManager = null;
+        using var manager = new SessionManager(logger: null, id =>
+        {
+            Assert.Same(batch, observedManager!.GetSessionForDiagnostics(id));
+            Assert.True(observedManager.TryGetFilePath(id, out var claimedPath));
+            Assert.Equal(filePath, claimedPath);
+            published.Add(id);
+        });
+        observedManager = manager;
         RegisterSession(manager, sessionId, filePath, batch);
 
         var firstFailure = Assert.Throws<InvalidOperationException>(
@@ -681,11 +692,65 @@ public sealed class SessionManagerTeardownFailureTests
         Assert.False(manager.TryBeginOperation(sessionId, out _, out var errorMessage));
         Assert.Contains("quarantined", errorMessage, StringComparison.OrdinalIgnoreCase);
 
+        Assert.Empty(published);
         batch.ConfirmOwnedCleanup();
 
-        Assert.True(manager.CloseSession(sessionId));
+        Assert.True(manager.CloseSession(sessionId, out var saved, out _, out var reconciledFailedClose));
+        Assert.False(saved);
+        Assert.True(reconciledFailedClose);
+        Assert.Equal(sessionId, Assert.Single(published));
         Assert.Equal(0, manager.ActiveSessionCount);
         Assert.False(manager.TryGetFilePath(sessionId, out _));
+    }
+
+    [Fact]
+    public void StatusReceipt_QuarantinedRowRetainsPathUntilTeardownAndExitEvidenceAreRecorded()
+    {
+        var batch = new OneShotFailingBatch();
+        const string sessionId = "quarantine-status";
+        var filePath = batch.WorkbookPath;
+        var identity = new ExcelProcessIdentity(1234, 5678);
+        var exit = new ExcelNativeProcessObservation(identity, ExcelNativeProcessState.Exited, 0, null);
+        var recorded = new List<ExcelNativeProcessObservation>();
+        var reconciled = new List<string>();
+        SessionManager? observedManager = null;
+        using var manager = new SessionManager(logger: null, id =>
+        {
+            Assert.Equal(exit, Assert.Single(recorded));
+            Assert.Equal(filePath, Assert.Single(observedManager!.GetOwnedFilePathKeys(id)));
+            reconciled.Add(id);
+        });
+        observedManager = manager;
+        RegisterSession(manager, sessionId, filePath, batch);
+        Assert.Throws<InvalidOperationException>(() => manager.CloseSession(sessionId));
+        batch.ObserveNativeExit(exit);
+
+        void Record(ExcelNativeProcessObservation observation)
+        {
+            Assert.Equal(filePath, Assert.Single(manager.GetOwnedFilePathKeys(sessionId)));
+            recorded.Add(observation);
+        }
+
+        Assert.Equal(sessionId, Assert.Single(manager.GetActiveSessionStatus(Record)).SessionId);
+        Assert.Equal(filePath, Assert.Single(manager.GetOwnedFilePathKeys(sessionId)));
+        Assert.Empty(recorded);
+        Assert.Empty(reconciled);
+
+        batch.ConfirmOwnedCleanup();
+
+        Assert.Equal(sessionId, Assert.Single(manager.GetActiveSessions(statusOnly: true)).SessionId);
+        Assert.Throws<IOException>(() => manager.GetActiveSessionStatus(
+            _ => throw new IOException("receipt unavailable")));
+        Assert.Equal(filePath, Assert.Single(manager.GetOwnedFilePathKeys(sessionId)));
+        Assert.Empty(reconciled);
+
+        Assert.Empty(manager.GetActiveSessionStatus(Record));
+        Assert.Equal(sessionId, Assert.Single(reconciled));
+        Assert.Equal(exit, Assert.Single(recorded));
+        Assert.Empty(manager.GetOwnedFilePathKeys(sessionId));
+        Assert.False(manager.TryGetFilePath(sessionId, out _));
+        Assert.DoesNotContain(sessionId, manager.ActiveSessionIds);
+        Assert.Equal(1, batch.DisposeCallCount);
     }
 
     private static void RegisterSession(
@@ -710,10 +775,13 @@ public sealed class SessionManagerTeardownFailureTests
                 .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(manager));
 
-    private sealed class OneShotFailingBatch : IExcelBatch, IExcelBatchTeardownState, IExcelBatchRefreshState
+    private sealed class OneShotFailingBatch :
+        IExcelBatch, IExcelBatchTeardownState, IExcelBatchRefreshState, IExcelBatchProcessObservation
     {
         public WorkbookRefreshState GetRefreshState() => WorkbookRefreshState.Ready;
         private bool _cleanupConfirmed;
+
+        public ExcelNativeProcessObservation? ProcessObservation { get; private set; }
 
         public int DisposeCallCount { get; private set; }
 
@@ -741,11 +809,15 @@ public sealed class SessionManagerTeardownFailureTests
             }
         }
 
+        public void ObserveNativeExit(ExcelNativeProcessObservation observation) => ProcessObservation = observation;
+
         public void ConfirmOwnedCleanup() => _cleanupConfirmed = true;
 
         public bool TryConfirmOwnedProcessTeardown() => _cleanupConfirmed;
 
-        public bool IsExcelProcessAlive() => !_cleanupConfirmed;
+        public bool TryConfirmOwnedProcessTeardownFromStatus() => _cleanupConfirmed;
+
+        public bool IsExcelProcessAlive() => !_cleanupConfirmed && ProcessObservation is null;
 
         public void UpdateWorkbookPath(string workbookPath) =>
             throw new NotSupportedException();

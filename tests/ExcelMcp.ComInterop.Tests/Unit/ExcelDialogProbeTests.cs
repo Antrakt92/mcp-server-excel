@@ -61,7 +61,105 @@ public sealed class ExcelDialogProbeTests
             new(1, 0, 42, true, false, "XLMAIN"),
             new(2, 1, dialogProcessId, true, true, "ProxyModalWindow")
         ];
-        Assert.Equal(WorkbookRefreshState.DialogOpen, ExcelDialogProbe.Classify(42, windows));
+        Assert.Equal(WorkbookRefreshState.DialogOpen,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal((nint)2, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.OfficeModal, kind);
+    }
+
+    [Theory]
+    [InlineData("Microsoft Visual Basic for Applications")]
+    [InlineData("Microsoft Visual Basic pour Applications")]
+    [InlineData("")]
+    public void DisabledVbeOwner_DetectsNativeDialogWhenExcelMainWindowIsEnabled(string title)
+    {
+        ExcelDialogProbe.WindowSnapshot[] windows =
+        [
+            new(1, 0, 42, false, true, "XLMAIN"),
+            new(2, 0, 42, false, false, "wndclass_desked_gsk"),
+            new(3, 2, 42, false, false, "OwnedPopup"),
+            new(4, 3, 42, true, true, "#32770", title)
+        ];
+
+        Assert.Equal(WorkbookRefreshState.DialogOpen,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal((nint)4, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.VbeModal, kind);
+    }
+
+    [Fact]
+    public void VbeDialogAlsoRootedInExcel_RetainsItsClassification()
+    {
+        ExcelDialogProbe.WindowSnapshot[] windows =
+        [
+            new(1, 0, 42, true, false, "XLMAIN"),
+            new(2, 1, 42, true, false, "wndclass_desked_gsk"),
+            new(3, 2, 42, true, true, "#32770")
+        ];
+
+        Assert.Equal(WorkbookRefreshState.DialogOpen,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal((nint)3, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.VbeModal, kind);
+    }
+
+    [Fact]
+    public void OrdinaryExcelDialog_RemainsSelectedWhenASeparateVbeDialogIsPresent()
+    {
+        ExcelDialogProbe.WindowSnapshot[] windows =
+        [
+            new(1, 0, 42, true, false, "XLMAIN"),
+            new(2, 0, 42, true, false, "wndclass_desked_gsk"),
+            new(3, 2, 42, true, true, "#32770"),
+            new(4, 1, 99, true, true, "ProxyModalWindow")
+        ];
+
+        Assert.Equal(WorkbookRefreshState.DialogOpen,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal((nint)4, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.OfficeModal, kind);
+    }
+
+    [Theory]
+    [InlineData(true, true, true, "#32770")]
+    [InlineData(false, true, true, "UnrecognizedPopup")]
+    [InlineData(false, false, true, "#32770")]
+    [InlineData(false, true, false, "#32770")]
+    public void VbeDialogRequiresDisabledEditorAndVisibleEnabledNativeDialog(
+        bool editorEnabled, bool dialogVisible, bool dialogEnabled, string dialogClass)
+    {
+        ExcelDialogProbe.WindowSnapshot[] windows =
+        [
+            new(1, 0, 42, true, true, "XLMAIN"),
+            new(2, 0, 42, true, editorEnabled, "wndclass_desked_gsk"),
+            new(3, 2, 42, dialogVisible, dialogEnabled, dialogClass, "Microsoft Visual Basic")
+        ];
+
+        Assert.Equal(WorkbookRefreshState.Ready,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal(nint.Zero, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.None, kind);
+    }
+
+    [Theory]
+    [InlineData(99, 42, 42)]
+    [InlineData(42, 99, 42)]
+    [InlineData(42, 42, 99)]
+    public void VbeDialogRequiresSameProcessForEntireOwnerChain(
+        int editorProcessId, int intermediaryProcessId, int dialogProcessId)
+    {
+        ExcelDialogProbe.WindowSnapshot[] windows =
+        [
+            new(1, 0, 42, true, true, "XLMAIN"),
+            new(2, 0, editorProcessId, false, false, "wndclass_desked_gsk"),
+            new(3, 2, intermediaryProcessId, false, false, "OwnedPopup"),
+            new(4, 3, dialogProcessId, true, true, "#32770")
+        ];
+
+        Assert.Equal(WorkbookRefreshState.Ready,
+            ExcelDialogProbe.Classify(42, windows, out var handle, out var kind));
+        Assert.Equal(nint.Zero, handle);
+        Assert.Equal(ExcelDialogProbe.DialogKind.None, kind);
     }
 
     [Fact]

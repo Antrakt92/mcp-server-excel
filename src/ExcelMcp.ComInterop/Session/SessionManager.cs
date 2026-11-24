@@ -279,7 +279,9 @@ public sealed class SessionManager : IDisposable
     private readonly ConcurrentDictionary<string, int> _activeOperationCounts = new();
     private readonly ConditionalWeakTable<IExcelBatch, object> _sessionLocks = new();
     private readonly ConcurrentDictionary<string, byte> _closingSessions = new();
-    private readonly ConcurrentDictionary<string, ExceptionDispatchInfo> _teardownFailures = new();
+    private sealed record TeardownFailure(ExceptionDispatchInfo Error, bool FromFailedClose = false);
+    private readonly ConcurrentDictionary<string, TeardownFailure> _teardownFailures = new();
+    private readonly Action<string>? _onFailedCloseReconciled;
     private readonly ConcurrentDictionary<string, byte> _readOnlyValidationSessions = new();
     private readonly ConcurrentDictionary<string, byte> _auditSessions = new();
     private readonly ConcurrentDictionary<string, bool> _showExcelFlags = new();
@@ -395,9 +397,14 @@ public sealed class SessionManager : IDisposable
     /// Creates a new SessionManager with optional logging.
     /// </summary>
     /// <param name="logger">Optional logger for diagnostics</param>
-    public SessionManager(ILogger<SessionManager>? logger = null)
+    public SessionManager(ILogger<SessionManager>? logger = null) : this(logger, null)
+    {
+    }
+
+    internal SessionManager(ILogger<SessionManager>? logger, Action<string>? onFailedCloseReconciled)
     {
         _logger = logger ?? NullLogger<SessionManager>.Instance;
+        _onFailedCloseReconciled = onFailedCloseReconciled;
     }
 
     internal TemporaryBatchOwnership OwnTemporaryBatches(string command, CancellationToken cancellation) =>
@@ -1213,7 +1220,7 @@ public sealed class SessionManager : IDisposable
             {
                 retained = true;
                 if (batch is not IExcelBatchCloseState { ShutdownCommitted: false })
-                    _teardownFailures[reservationId] = ExceptionDispatchInfo.Capture(ex);
+                    _teardownFailures[reservationId] = new(ExceptionDispatchInfo.Capture(ex));
                 RevealForRecovery(reservationId);
                 throw new SessionRetainedException(reservationId,
                     $"Workbook access validation did not complete teardown. Session '{reservationId}' remains owned: {ex.Message}", ex);
@@ -1319,7 +1326,7 @@ public sealed class SessionManager : IDisposable
         {
             var failure = new AggregateException(
                 "Excel startup and its teardown both failed.", startupFailure, teardownFailure);
-            _teardownFailures[sessionId] = ExceptionDispatchInfo.Capture(failure);
+            _teardownFailures[sessionId] = new(ExceptionDispatchInfo.Capture(failure));
             RevealForRecovery(sessionId);
             throw new SessionRetainedException(sessionId,
                 $"Excel startup failed and teardown remains unconfirmed. Session '{sessionId}' remains owned: {startupFailure.Message}",
@@ -1377,13 +1384,16 @@ public sealed class SessionManager : IDisposable
         Justification = "The Excel process is already confirmed dead; disposal errors are logged while removing stale session tracking, not returned as successful workbook operations.")]
     private void CleanupDeadSession(string sessionId, IExcelBatch batch)
     {
-        if (_teardownFailures.ContainsKey(sessionId)
-            && !TryConfirmFailedTeardown(batch))
+        if (_teardownFailures.TryGetValue(sessionId, out var failure))
         {
-            return;
+            if (!TryConfirmFailedTeardown(batch))
+                return;
+            RemoveVerifiedTeardown(sessionId, failure);
         }
-
-        RemoveSessionTracking(sessionId);
+        else
+        {
+            RemoveSessionTracking(sessionId);
+        }
 
         // Dispose the batch (best effort - process is already dead)
         try
@@ -1394,6 +1404,14 @@ public sealed class SessionManager : IDisposable
         {
             _logger?.LogDebug(ex, "Error disposing dead session {SessionId} (expected - process is dead)", sessionId);
         }
+    }
+
+    private void RemoveVerifiedTeardown(string sessionId, TeardownFailure? failure)
+    {
+        // A retry must learn the unconfirmed close outcome before it can see that the session is gone.
+        if (failure is { FromFailedClose: true })
+            _onFailedCloseReconciled?.Invoke(sessionId);
+        RemoveSessionTracking(sessionId);
     }
 
     private void RemoveSessionTracking(string sessionId)
@@ -1502,7 +1520,7 @@ public sealed class SessionManager : IDisposable
             if (_teardownFailures.TryGetValue(sessionId, out var teardownFailure))
             {
                 errorMessage = $"Session '{sessionId}' is quarantined after a failed close: " +
-                               teardownFailure.SourceException.Message;
+                               teardownFailure.Error.SourceException.Message;
                 error = SessionOperationError.Quarantined;
                 return false;
             }
@@ -1631,7 +1649,7 @@ public sealed class SessionManager : IDisposable
     public void SetOperationContext(string sessionId, string command, CancellationToken callerCancellation = default)
     {
         if (_activeSessions.TryGetValue(sessionId, out var batch) && GetExecutionOwner(batch) is { } owned)
-            owned.SetOperationContext(command, callerCancellation);
+            owned.SetOperationContext(command, callerCancellation, sessionId: sessionId);
     }
 
     /// <summary>Returns bounded execution metadata without calling Excel.</summary>
@@ -1641,6 +1659,8 @@ public sealed class SessionManager : IDisposable
             || GetExecutionOwner(batch) is not { } owned)
             return null;
         var status = owned.OperationStatus;
+        if (status.FirstBlocker is not null && status.FirstBlockerSessionId != sessionId)
+            status = status with { FirstBlocker = null };
         if (reconcilePaths && !status.ExecutionPending)
         {
             lock (_filePathReservationLock)
@@ -1720,7 +1740,7 @@ public sealed class SessionManager : IDisposable
                 false,
                 0,
                 $"Session '{sessionId}' is quarantined after a failed close: " +
-                teardownFailure.SourceException.Message);
+                teardownFailure.Error.SourceException.Message);
         }
 
         var activeOps = GetActiveOperationCount(sessionId);
@@ -1784,14 +1804,15 @@ public sealed class SessionManager : IDisposable
     /// <returns>True if session was found and closed, false if session not found</returns>
     /// <exception cref="InvalidOperationException">Save operation failed or operations still running</exception>
     public bool CloseSession(string sessionId, bool save = false, bool force = false) =>
-        CloseSession(sessionId, out _, out _, save, force);
+        CloseSession(sessionId, out _, out _, out _, save, force);
 
     internal bool CloseSession(string sessionId, out bool saved, out ExcelNativeProcessObservation? reconciledExit,
-        bool save = false, bool force = false)
+        out bool reconciledFailedClose, bool save = false, bool force = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         saved = false;
         reconciledExit = null;
+        reconciledFailedClose = false;
 
         if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch))
         {
@@ -1813,28 +1834,25 @@ public sealed class SessionManager : IDisposable
                 throw new InvalidOperationException(quarantine);
 
             // A confirmed native exit needs no COM readiness probe. Never treat this as a successful save.
+            _teardownFailures.TryGetValue(sessionId, out var teardownFailure);
             if (!batch.IsExcelProcessAlive() && (!save || batch is ExcelBatch { HasFailedStartup: true })
                 && TryConfirmFailedTeardown(batch))
             {
-                RemoveSessionTracking(sessionId);
                 resolvedFailedTeardown = true;
             }
-            else if (_teardownFailures.TryGetValue(sessionId, out var teardownFailure))
+            else if (teardownFailure is not null)
             {
                 if (!TryConfirmFailedTeardown(batch))
-                {
-                    teardownFailure.Throw();
-                }
-
-                RemoveSessionTracking(sessionId);
+                    teardownFailure.Error.Throw();
                 resolvedFailedTeardown = true;
             }
 
             if (resolvedFailedTeardown)
             {
+                reconciledFailedClose = teardownFailure is { FromFailedClose: true };
+                RemoveVerifiedTeardown(sessionId, teardownFailure);
                 if (batch is not ExcelBatch { HasFailedStartup: true })
                     reconciledExit = (batch as IExcelBatchProcessObservation)?.ProcessObservation;
-                _closingSessions.TryRemove(sessionId, out _);
             }
 
             var refreshState = !resolvedFailedTeardown && !force
@@ -2082,7 +2100,7 @@ public sealed class SessionManager : IDisposable
             var closeFailure = new InvalidOperationException(
                 $"Failed to dispose session '{sessionId}': {ex.Message}",
                 ex);
-            _teardownFailures[sessionId] = ExceptionDispatchInfo.Capture(closeFailure);
+            _teardownFailures[sessionId] = new(ExceptionDispatchInfo.Capture(closeFailure), FromFailedClose: true);
             throw closeFailure;
         }
 
@@ -2196,12 +2214,14 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>
     /// Returns a snapshot of active sessions with associated workbook paths.
-    /// Dead sessions are excluded and cleaned up unless this is a status-only read.
+    /// Dead sessions are excluded and cleaned up in a full read. Status-only
+    /// reads keep an unresolved closing or quarantined session visible.
     /// </summary>
     public IReadOnlyList<SessionDescriptor> GetActiveSessions(bool statusOnly = false) =>
         ReadActiveSessions(statusOnly, recordNativeExit: null);
 
-    internal IReadOnlyList<SessionDescriptor> GetActiveSessionStatus(Action<ExcelNativeProcessObservation> recordNativeExit) =>
+    internal IReadOnlyList<SessionDescriptor> GetActiveSessionStatus(
+        Action<ExcelNativeProcessObservation> recordNativeExit) =>
         ReadActiveSessions(statusOnly: true, recordNativeExit);
 
     private List<SessionDescriptor> ReadActiveSessions(
@@ -2219,7 +2239,17 @@ public sealed class SessionManager : IDisposable
             // Check if session is still alive
             if (_activeSessions.TryGetValue(sessionId, out var batch))
             {
-                if (batch.IsExcelProcessAlive() || batch is ExcelBatch { HasFailedStartup: true })
+                var processAlive = batch.IsExcelProcessAlive();
+                // Do not publish removal while an active close or a failed teardown
+                // can still own workbook paths. The worker's receipt pass is the
+                // only status read allowed to reconcile a quarantined teardown.
+                var retainTeardown = !processAlive && statusOnly
+                    && (_closingSessions.ContainsKey(sessionId) || _teardownFailures.ContainsKey(sessionId));
+                if (retainTeardown && recordNativeExit is not null
+                    && TryReconcileQuarantineForStatus(sessionId, batch, recordNativeExit))
+                    continue;
+
+                if (processAlive || retainTeardown || batch is ExcelBatch { HasFailedStartup: true })
                 {
                     _ = GetOperationStatus(sessionId, reconcilePaths: !statusOnly);
                     // Get origin and createdAt metadata (defaults for legacy sessions)
@@ -2259,10 +2289,43 @@ public sealed class SessionManager : IDisposable
         foreach (var (sessionId, batch) in statusOnly ? [] : deadSessions)
         {
             _logger?.LogWarning("Session {SessionId} has dead Excel process, auto-cleaning up during GetActiveSessions", sessionId);
-            CleanupDeadSession(sessionId, batch);
+            lock (GetSessionLock(batch))
+            {
+                if (_activeSessions.TryGetValue(sessionId, out var current) && ReferenceEquals(batch, current))
+                    CleanupDeadSession(sessionId, batch);
+            }
         }
 
         return snapshot;
+    }
+
+    private bool TryReconcileQuarantineForStatus(
+        string sessionId, IExcelBatch batch, Action<ExcelNativeProcessObservation> recordNativeExit)
+    {
+        if (batch is not IExcelBatchTeardownState teardown)
+            return false;
+
+        var sessionLock = GetSessionLock(batch);
+        if (!Monitor.TryEnter(sessionLock))
+            return false;
+        try
+        {
+            if (!_activeSessions.TryGetValue(sessionId, out var current) || !ReferenceEquals(batch, current))
+                return true; // A concurrent close already removed this snapshot candidate.
+            if (_closingSessions.ContainsKey(sessionId) || !_teardownFailures.TryGetValue(sessionId, out var failure)
+                || !teardown.TryConfirmOwnedProcessTeardownFromStatus())
+                return false;
+
+            if ((batch as IExcelBatchProcessObservation)?.ProcessObservation is
+                { State: ExcelNativeProcessState.Exited } observation)
+                recordNativeExit(observation);
+            RemoveVerifiedTeardown(sessionId, failure);
+            return true;
+        }
+        finally
+        {
+            Monitor.Exit(sessionLock);
+        }
     }
 
     /// <summary>
@@ -2461,11 +2524,11 @@ public sealed class SessionManager : IDisposable
                 continue;
             }
 
-            var teardownFailed = _teardownFailures.ContainsKey(sessionId);
+            var teardownFailed = _teardownFailures.TryGetValue(sessionId, out var teardownFailure);
             var readOnlyValidation = _readOnlyValidationSessions.ContainsKey(sessionId);
             if (teardownFailed && TryConfirmFailedTeardown(session))
             {
-                RemoveSessionTracking(sessionId);
+                RemoveVerifiedTeardown(sessionId, teardownFailure);
                 continue;
             }
             try
@@ -2504,7 +2567,11 @@ public sealed class SessionManager : IDisposable
                     $"Failed to dispose session '{sessionId}' in {DescribeExcelProcess(session)}: {ex.Message}", ex);
                 failures.Add(failure);
                 if (session is not IExcelBatchCloseState { ShutdownCommitted: false })
-                    _teardownFailures[sessionId] = ExceptionDispatchInfo.Capture(failure);
+                {
+                    var captured = ExceptionDispatchInfo.Capture(failure);
+                    _teardownFailures.AddOrUpdate(sessionId, new TeardownFailure(captured),
+                        (_, previous) => previous with { Error = captured });
+                }
                 RevealForRecovery(sessionId);
                 _logger.LogError(ex, "Failed to dispose session {SessionId}", sessionId);
                 continue;

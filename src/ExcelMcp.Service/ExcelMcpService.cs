@@ -34,9 +34,10 @@ namespace Sbroenne.ExcelMcp.Service;
 /// </summary>
 public sealed class ExcelMcpService : IDisposable
 {
-    private readonly SessionManager _sessionManager = new();
+    private readonly SessionManager _sessionManager;
     private const byte SavedAtClose = 1;
     private const byte CloseUnconfirmedAfterExit = 2;
+    private const byte FailedCloseReconciled = 3;
     private readonly ConcurrentDictionary<string, byte> _knownSessionIds = new(StringComparer.Ordinal);
     private readonly IPowerQueryTraceSettings _pqTraceSettings;
     private readonly DaemonHost _daemonHost;
@@ -81,6 +82,7 @@ public sealed class ExcelMcpService : IDisposable
         Func<ServiceRequest, Func<Task<ServiceResponse>>, Task<ServiceResponse>>? trackDaemonRequest,
         IPowerQueryTraceSettings? pqTraceSettings = null)
     {
+        _sessionManager = new SessionManager(logger: null, RecordReconciledFailedClose);
         _pqTraceSettings = pqTraceSettings ?? new RegistryPowerQueryTraceSettings();
         _settingsCommands = new SettingsCommands(_pqTraceSettings);
         _powerQueryTraceCommands = new PowerQueryTraceCommands(
@@ -672,11 +674,13 @@ public sealed class ExcelMcpService : IDisposable
         bool closed;
         var saved = false;
         ExcelNativeProcessObservation? reconciledExit = null;
+        var reconciledFailedClose = false;
         try
         {
             _sessionManager.SetOperationContext(request.SessionId, request.Command, request.CallerCancellation);
             closed = SessionDiagnostics.MeasureCloseStage("session-close",
-                () => _sessionManager.CloseSession(request.SessionId, out saved, out reconciledExit, save: shouldSave));
+                () => _sessionManager.CloseSession(request.SessionId, out saved, out reconciledExit, out reconciledFailedClose,
+                    save: shouldSave));
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
@@ -690,8 +694,8 @@ public sealed class ExcelMcpService : IDisposable
 
         if (closed)
         {
-            if (RecordUnconfirmedCloseAfterExit(request.SessionId, reconciledExit))
-                return CloseAfterUnconfirmedExit(request, reconciledExit);
+            if (RecordUnconfirmedCloseAfterExit(request.SessionId, reconciledExit, reconciledFailedClose))
+                return CloseAfterUnconfirmedExit(request, reconciledExit, reconciledFailedClose);
             if (saved)
             {
                 _knownSessionIds[request.SessionId] = SavedAtClose;
@@ -703,8 +707,8 @@ public sealed class ExcelMcpService : IDisposable
         }
 
         if (_knownSessionIds.TryGetValue(request.SessionId, out var known))
-            return known == CloseUnconfirmedAfterExit
-                ? CloseAfterUnconfirmedExit(request, observation: null)
+            return known is CloseUnconfirmedAfterExit or FailedCloseReconciled
+                ? CloseAfterUnconfirmedExit(request, observation: null, reconciledFailedClose: known == FailedCloseReconciled)
                 : AlreadyClosedResponse(request, saved: known == SavedAtClose);
 
         return new ServiceResponse
@@ -718,26 +722,35 @@ public sealed class ExcelMcpService : IDisposable
     private static bool RequestsCloseSave(ServiceRequest request) =>
         ServiceRegistry.DeserializeArgs<SessionCloseArgs>(request.Args)?.Save == true;
 
-    private bool RecordUnconfirmedCloseAfterExit(string sessionId, ExcelNativeProcessObservation? observation)
+    private bool RecordUnconfirmedCloseAfterExit(string sessionId, ExcelNativeProcessObservation? observation,
+        bool reconciledFailedClose = false)
     {
-        if (observation is not { State: ExcelNativeProcessState.Exited, ExitCode: not 0 }
+        if ((!reconciledFailedClose && observation is not { State: ExcelNativeProcessState.Exited, ExitCode: not 0 })
             || _sessionManager.GetSessionForDiagnostics(sessionId) is not null)
             return false;
 
-        // Retirement after a crash does not establish a workbook close or override a confirmed save.
-        _knownSessionIds.TryUpdate(sessionId, CloseUnconfirmedAfterExit, 0);
+        // Process exit after a failed close does not establish a workbook close or override a confirmed save.
+        _knownSessionIds.TryUpdate(sessionId, reconciledFailedClose ? FailedCloseReconciled : CloseUnconfirmedAfterExit, 0);
         return true;
     }
 
-    private static ServiceResponse CloseAfterUnconfirmedExit(ServiceRequest request, ExcelNativeProcessObservation? observation) => new()
-    {
-        Success = false,
-        Command = request.Command,
-        SessionId = request.SessionId,
-        ErrorCategory = "ExcelProcessDied",
-        ErrorMessage = "Excel exited before closing could be confirmed. " + CloseDisconnectGuidance(observation),
-        PartialState = MergeNativeProcessDiagnostics("""{"outcome":"unknown"}""", observation)
-    };
+    // Record before the worker hides the retired session from incoming close requests.
+    private void RecordReconciledFailedClose(string sessionId) =>
+        _knownSessionIds.TryUpdate(sessionId, FailedCloseReconciled, 0);
+
+    private static ServiceResponse CloseAfterUnconfirmedExit(ServiceRequest request, ExcelNativeProcessObservation? observation,
+        bool reconciledFailedClose = false) => new()
+        {
+            Success = false,
+            Command = request.Command,
+            SessionId = request.SessionId,
+            ErrorCategory = reconciledFailedClose && observation is null or { ExitCode: 0 }
+            ? "SessionUnavailable" : "ExcelProcessDied",
+            ErrorMessage = "Excel exited before closing could be confirmed. " + CloseDisconnectGuidance(observation),
+            PartialState = MergeNativeProcessDiagnostics(reconciledFailedClose
+            ? """{"outcome":"unknown","reconciledFailedClose":true}"""
+            : """{"outcome":"unknown"}""", observation)
+        };
 
     internal static ServiceResponse AlreadyClosedResponse(ServiceRequest request, bool saved)
     {
@@ -1250,7 +1263,7 @@ public sealed class ExcelMcpService : IDisposable
             ServiceRegistry.ValidateWorkbookWriteAccess(request.Command, batch!, request.Args);
             if (request.OperationId is not null && OperationReceipts.Supports(request.Command))
                 owner?.SetOperationContext(request.Command, request.CallerCancellation,
-                    completion => request.LateNativeCompletion = completion);
+                    completion => request.LateNativeCompletion = completion, sessionId: sessionId);
             var response = action(batch!);
             return Task.FromResult(response);
         }
@@ -1853,7 +1866,7 @@ public sealed class ExcelMcpService : IDisposable
             state["filePaths"] = JsonSerializer.SerializeToNode(retainedFiles, ServiceProtocol.JsonOptions);
             state["retained"] = true;
         }
-        if (operation is { WaitExpired: true } || operation is not null && retainedFiles is not null)
+        if (operation is { WaitExpired: true } or { FirstBlocker: not null } || operation is not null && retainedFiles is not null)
         {
             state ??= new System.Text.Json.Nodes.JsonObject();
             state["operation"] = JsonSerializer.SerializeToNode(operation, ServiceProtocol.JsonOptions);

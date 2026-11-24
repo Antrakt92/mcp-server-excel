@@ -70,8 +70,10 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     internal Action? BeforeApplicationLeaseReleaseHookForTests { get; set; }
     private readonly List<string> _closedWorkbookPathsDuringShutdown = [];
     private readonly AsyncLocal<(string? Command, CancellationToken CallerCancellation,
-        Action<Task>? RegisterLateCompletion)> _commandContext = new();
+        Action<Task>? RegisterLateCompletion, string? SessionId)> _commandContext = new();
     private string? _operationCommand;
+    private string? _operationSessionId;
+    private ExcelOperationBlocker? _firstOperationBlocker;
     private long _operationStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
     private DateTime _operationStartedAtUtc = DateTime.UtcNow;
     private double? _completedElapsedSeconds;
@@ -1310,7 +1312,9 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                     _windowReveal)
                 {
                     Command = _operationCommand,
-                    StartedAtUtc = _operationStartedAtUtc
+                    StartedAtUtc = _operationStartedAtUtc,
+                    FirstBlocker = _firstOperationBlocker,
+                    FirstBlockerSessionId = _operationSessionId
                 };
         }
     }
@@ -1340,8 +1344,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     }
 
     internal void SetOperationContext(string command, CancellationToken callerCancellation,
-        Action<Task>? registerLateCompletion = null) =>
-        _commandContext.Value = (command, callerCancellation, registerLateCompletion);
+        Action<Task>? registerLateCompletion = null, string? sessionId = null) =>
+        _commandContext.Value = (command, callerCancellation, registerLateCompletion, sessionId);
 
     private void FinishOperation(Exception? error)
     {
@@ -1444,7 +1448,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     {
         ObjectDisposedException.ThrowIf(_disposed != 0, nameof(ExcelBatch));
         cancellationToken.ThrowIfCancellationRequested();
-        var (command, callerCancellation, registerLateCompletion) = _commandContext.Value;
+        var (command, callerCancellation, registerLateCompletion, sessionId) = _commandContext.Value;
         callerCancellation.ThrowIfCancellationRequested();
 
         // Fail fast if a previous operation timed out or was cancelled while the STA thread
@@ -1490,6 +1494,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 _completedElapsedSeconds = null;
                 _operationState = "running";
                 _operationCommand = command;
+                _operationSessionId = sessionId;
+                _firstOperationBlocker = null;
                 _operationError = null;
                 _waitExpired = false;
                 _windowReveal = null;
@@ -1604,9 +1610,11 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         }
 
         // Inspect native windows directly; the Excel thread may be blocked by the prompt.
-        var dialogState = ExcelDialogProbe.Read(
-            _excelProcessIdentity, _logger, includeEnabledOwnerOfficeDialog: true);
-        var dialogOpen = dialogState == WorkbookRefreshState.DialogOpen;
+        var inspection = InspectOperationDialog();
+        var useExpandedInspection = inspection.State != WorkbookRefreshState.DialogOpen;
+        if (useExpandedInspection)
+            inspection = ExcelDialogProbe.Inspect(_excelProcessIdentity, _logger, includeEnabledOwnerOfficeDialog: true);
+        var dialogOpen = inspection.State == WorkbookRefreshState.DialogOpen;
         return new TimeoutException(
             $"Excel operation timed out after {_operationTimeout.TotalSeconds} seconds for '{Path.GetFileName(_workbookPath)}'. " +
             $"The workbook remains open and the operation may still change it. No changes were saved or discarded by timeout recovery. Excel window: {_windowReveal}. " +
@@ -1614,7 +1622,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 ? "Excel had a dialog open when the operation timed out and may have been waiting for input. " +
                   "This timeout does not itself cancel the operation or undo workbook changes. " +
                   ExcelDialogProbe.ReadDetails(
-                      _excelProcessIdentity, _logger, includeEnabledOwnerOfficeDialog: true)
+                      inspection, _excelProcessIdentity, _logger, includeEnabledOwnerOfficeDialog: useExpandedInspection)
                 : "Excel may be unresponsive or the operation is taking longer than expected. " +
                   "Inspect session status for the eventual outcome; do not automatically repeat the operation."));
     }
@@ -1650,7 +1658,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         Justification = "Optional dialog reveal preserves the pending operation; failures are logged with cause and exposed in session blockingMessage, never reported as a successful reveal.")]
     private WorkbookRefreshState ReadDialogState()
     {
-        var inspection = ExcelDialogProbe.Inspect(_excelProcessIdentity, _logger);
+        var inspection = InspectOperationDialog();
         lock (_applicationLease?.WindowControlLock ?? _windowControlLock)
         {
             if (inspection.State == WorkbookRefreshState.Ready)
@@ -1675,6 +1683,39 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             }
         }
         return inspection.State;
+    }
+
+    private ExcelDialogProbe.Inspection InspectOperationDialog()
+    {
+        (long StartedAt, string SessionId)? save;
+        lock (_statusLock)
+        {
+            save = _operationState == "running" && _operationCommand == "session.save"
+                && _operationSessionId is { } sessionId && _firstOperationBlocker is null
+                ? (_operationStartedAt, sessionId) : null;
+        }
+
+        var inspection = ExcelDialogProbe.Inspect(_excelProcessIdentity, _logger);
+        if (save is not { } observedSave || inspection.State != WorkbookRefreshState.DialogOpen)
+            return inspection;
+
+        var kind = inspection.Kind switch
+        {
+            ExcelDialogProbe.DialogKind.OfficeModal => "officeModal",
+            ExcelDialogProbe.DialogKind.VbeModal => "vbeModal",
+            _ => null
+        };
+        if (kind is null)
+            return inspection;
+
+        lock (_statusLock)
+        {
+            // The STA may have finished the save or started another command while probing windows.
+            if (_operationStartedAt == observedSave.StartedAt && _operationSessionId == observedSave.SessionId
+                && _operationState == "running" && _operationCommand == "session.save")
+                _firstOperationBlocker ??= new(kind, DateTime.UtcNow);
+        }
+        return inspection;
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
@@ -2278,6 +2319,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
         lock (_statusLock)
         {
             _operationState = "closing";
+            _operationSessionId = null;
+            _firstOperationBlocker = null;
             _operationStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             _operationStartedAtUtc = DateTime.UtcNow;
             _completedElapsedSeconds = null;
@@ -2363,21 +2406,38 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     bool IExcelBatchTeardownState.TryConfirmOwnedProcessTeardown()
     {
         lock (_disposeLock)
-        {
-            if (_staThread.IsAlive
-                || _excelProcessIdentity is not { } identity
-                || !OwnedProcessGuard.TryConfirmExited(identity))
-            {
-                return false;
-            }
+            return TryConfirmOwnedProcessTeardown();
+    }
 
-            _applicationLease?.Dispose();
-            _applicationLease = null;
-            RecordNativeProcessObservation();
-            SessionManager.UntrackExcelProcess(identity);
-            RetireNativeProcessObserver();
-            return true;
+    bool IExcelBatchTeardownState.TryConfirmOwnedProcessTeardownFromStatus()
+    {
+        if (!_disposeLock.TryEnter())
+            return false;
+        try
+        {
+            return TryConfirmOwnedProcessTeardown();
         }
+        finally
+        {
+            _disposeLock.Exit();
+        }
+    }
+
+    private bool TryConfirmOwnedProcessTeardown()
+    {
+        if (_staThread.IsAlive
+            || _excelProcessIdentity is not { } identity
+            || !OwnedProcessGuard.TryConfirmExited(identity))
+        {
+            return false;
+        }
+
+        _applicationLease?.Dispose();
+        _applicationLease = null;
+        RecordNativeProcessObservation();
+        SessionManager.UntrackExcelProcess(identity);
+        RetireNativeProcessObserver();
+        return true;
     }
 
 }

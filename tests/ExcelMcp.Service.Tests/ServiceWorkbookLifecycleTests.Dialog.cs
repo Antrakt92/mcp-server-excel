@@ -364,6 +364,7 @@ public sealed partial class ServiceWorkbookLifecycleTests
             using var entered = new ManualResetEventSlim();
             using var release = new ManualResetEventSlim();
             using var dialog = new OwnedTestDialog(owner);
+            service.SessionManager.SetOperationContext(session, "session.save");
             var pending = Task.Run(() => batch.Execute((_, _) =>
             {
                 entered.Set();
@@ -376,6 +377,10 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 Assert.True(SpinWait.SpinUntil(() => IsWindowVisible(owner), TimeSpan.FromSeconds(3)),
                     "The operation's own wait must reveal Excel without a session-list request.");
                 Assert.False(pending.IsCompleted);
+                var status = Assert.IsType<ExcelOperationStatus>(service.SessionManager.GetOperationStatus(session));
+                var blocker = Assert.IsType<ExcelOperationBlocker>(status.FirstBlocker);
+                Assert.Equal("officeModal", blocker.Kind);
+                Assert.True(blocker.ObservedAtUtc >= status.StartedAtUtc);
                 foreach (var action in DialogVisibilityActions)
                 {
                     var response = await service.ProcessAsync(new ServiceRequest
@@ -399,7 +404,9 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 Assert.Equal(17, await pending.WaitAsync(TimeSpan.FromSeconds(5)));
             }
             dialog.Dispose();
+            Assert.Equal("officeModal", service.SessionManager.GetOperationStatus(session)?.FirstBlocker?.Kind);
             Assert.Equal("Still retained", await ReadMarkerAsync(service, session));
+            Assert.Null(service.SessionManager.GetOperationStatus(session)?.FirstBlocker);
             Assert.False(batch.Execute((context, _) => context.Book.Saved));
             Assert.False(batch.Execute((context, _) => context.App.Visible));
             RequireSuccess(await service.ProcessAsync(new ServiceRequest { Command = "window.show", SessionId = session }));
