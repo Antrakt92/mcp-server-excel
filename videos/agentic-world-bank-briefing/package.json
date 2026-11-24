@@ -15,7 +15,7 @@
     "publish": "hyperframes publish"
   },
   "devDependencies": {
-    "hyperframes": "0.8.223"
+    "hyperframes": "0.9.87"
   },
   "overrides": {
     "hyperframes": {
