@@ -135,7 +135,7 @@ public partial class NamedRangeCommands
                 foreach (var (index, info) in previews)
                 {
                     ct.ThrowIfCancellationRequested();
-                    PopulateListValuePreview(ctx.Book, namesCollection, index, info, budget, ct);
+                    PopulateListValuePreview(ctx, namesCollection, index, info, budget, ct);
                 }
 
                 result.Success = true;
@@ -227,7 +227,7 @@ public partial class NamedRangeCommands
         return true;
     }
 
-    private static void PopulateListValuePreview(Excel.Workbook workbook, Excel.Names names, int index,
+    private static void PopulateListValuePreview(ExcelContext context, Excel.Names names, int index,
         NamedRangeInfo info, RangeReadBudget budget, CancellationToken cancellationToken)
     {
         Excel.Name? name = null;
@@ -240,11 +240,11 @@ public partial class NamedRangeCommands
                 throw new InvalidOperationException("Workbook names changed while reading the list. Retry to refresh the metadata.");
 
             range = name.RefersToRange;
-            if (range is null || !RangeHelpers.BelongsToWorkbook(range, workbook) ||
+            if (range is null || !RangeHelpers.BelongsToWorkbook(range, context.Book) ||
                 GetAreaCount(range) != 1 || GetCellCount(range) != info.CellCount)
                 throw new InvalidOperationException("A named range changed while reading the list. Retry to refresh the metadata.");
 
-            if (budget.TryAddPreview(() => ReadPreview(range, info.CellCount, budget, cancellationToken),
+            if (budget.TryAddPreview(() => ReadPreview(context, range, info.CellCount, budget, cancellationToken),
                     out var preview))
             {
                 info.Value = preview.Value;
@@ -259,23 +259,30 @@ public partial class NamedRangeCommands
         }
     }
 
-    private static (object? Value, string Type) ReadPreview(Excel.Range range, long? cellCount,
+    private static (object? Value, string Type) ReadPreview(ExcelContext context, Excel.Range range, long? cellCount,
         RangeReadBudget budget, CancellationToken cancellationToken)
     {
         if (cellCount != 1)
         {
             var size = RangeHelpers.GetDimensions(range);
-            var rows = BoundedRangeValueReader.Read(range, size, budget, cancellationToken,
+            var rows = BoundedRangeValueReader.Read(context, range, size, budget, cancellationToken,
                 convertValue: ConvertValueForJson);
             return (rows, "Array");
         }
 
-        object? rawValue = range.Value2;
-        var value = ConvertValueForJson(rawValue);
-        var type = rawValue?.GetType().Name ?? "null";
+        var (value, type) = ReadScalarValue(context, range);
         budget.AddScalar(value);
         budget.AddScalar(type);
         return (value, type);
+    }
+
+    private static (object? Value, string Type) ReadScalarValue(ExcelContext context, Excel.Range? range)
+    {
+        object? rawValue = range?.Value2;
+        if (range is not null && RangeCommands.ReadNativeError(context, range, 1, 1, rawValue) is { } error)
+            return (error.Name, "ExcelError");
+
+        return (ConvertValueForJson(rawValue), rawValue?.GetType().Name ?? "null");
     }
 
     private static int GetAreaCount(Excel.Range range)
@@ -408,21 +415,21 @@ public partial class NamedRangeCommands
                         {
                             Name = name,
                             RefersTo = refersTo,
-                            Value = BoundedRangeValueReader.Read(refersToRange, size, budget, ct, convertValue: ConvertValueForJson),
+                            Value = BoundedRangeValueReader.Read(ctx, refersToRange, size, budget, ct,
+                                convertValue: ConvertValueForJson),
                             ValueType = "Array"
                         };
                     }
                 }
 
-                object? rawValue = refersToRange?.Value2;
-                var value = ConvertValueForJson(rawValue);
+                var (value, type) = ReadScalarValue(ctx, refersToRange);
                 budget.AddScalar(value);
                 return new NamedRangeValue
                 {
                     Name = name,
                     RefersTo = refersTo,
                     Value = value,
-                    ValueType = rawValue?.GetType().Name ?? "null"
+                    ValueType = type
                 };
             }
             finally

@@ -26,6 +26,24 @@ public sealed partial class PersistentServiceTablePreflightTests
     }
 
     [Fact]
+    public void GetData_DistinguishesNativeErrorsFromNumericErrorCodes()
+    {
+        const int number = -2146826281;
+        var batch = _fixture.BatchToken;
+        var sheet = _fixture.CreateTestSheet(batch);
+        RequireSuccess(_rangeCommands.SetValues(batch, sheet, "D8:E9", [["Number", "Formula"], [number, null]]));
+        RequireSuccess(_tableCommands.Create(batch, sheet, "TypedErrorTable", "D8:E9", true));
+        RequireSuccess(_rangeCommands.SetFormulas(batch, sheet, "E9", [["=1/0"]]));
+
+        var result = RequireSuccess(_tableCommands.GetData(batch, "TypedErrorTable"));
+
+        var row = Assert.Single(result.Data);
+        Assert.Equal(2, row.Count);
+        RangeReadAssertions.Number(number, row[0]);
+        Assert.Equal("#DIV/0!", row[1]);
+    }
+
+    [Fact]
     public void GetData_MultiTileTablePreservesVisibleRowsAndColumnOrder()
     {
         var batch = _fixture.BatchToken;

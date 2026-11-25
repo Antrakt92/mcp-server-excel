@@ -258,7 +258,7 @@ public partial class TableCommands
                         // worksheet row through the one-based Rows collection.
                         includeRow = row => IsWorksheetRowVisible(rows, row + 1);
                     }
-                    result.Data = BoundedRangeValueReader.Read(dataBodyRange, size, budget, ct, includeRow);
+                    result.Data = BoundedRangeValueReader.Read(ctx, dataBodyRange, size, budget, ct, includeRow);
                 }
 
                 for (int i = 1; i <= columnCount; i++)

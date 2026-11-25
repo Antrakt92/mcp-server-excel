@@ -109,7 +109,7 @@ public partial class PowerQueryCommands
 
                 ct.ThrowIfCancellationRequested();
 
-                ReadEvaluationResult(listObject, result, budget, ct);
+                ReadEvaluationResult(ctx, listObject, result, budget, ct);
             }
             catch (Exception ex)
             {
@@ -241,7 +241,8 @@ public partial class PowerQueryCommands
     }
 
     private static void ReadEvaluationResult(
-        Excel.ListObject table, PowerQueryEvaluateResult result, RangeReadBudget budget, CancellationToken ct)
+        ExcelContext context, Excel.ListObject table, PowerQueryEvaluateResult result, RangeReadBudget budget,
+        CancellationToken ct)
     {
         Excel.Range? dataRange = null;
         Excel.Range? headerRange = null;
@@ -256,7 +257,7 @@ public partial class PowerQueryCommands
             if (headerRange is not null)
             {
                 var size = RangeHelpers.GetDimensions(headerRange);
-                var header = BoundedRangeValueReader.Read(headerRange, size, budget, ct,
+                var header = BoundedRangeValueReader.Read(context, headerRange, size, budget, ct,
                     convertValue: static value => value?.ToString())[0];
                 if (header.Count != 1 || header[0] is not null)
                 {
@@ -279,7 +280,7 @@ public partial class PowerQueryCommands
             {
                 // Excel can return a single blank placeholder for an empty table.
                 bool blankSingleton = false;
-                result.Rows = BoundedRangeValueReader.Read(dataRange, dataSize, budget, ct,
+                result.Rows = BoundedRangeValueReader.Read(context, dataRange, dataSize, budget, ct,
                     convertValue: dataSize == (1, 1) ? ConvertSingleton : ConvertCellValue);
                 if (blankSingleton)
                     result.Rows.Clear();

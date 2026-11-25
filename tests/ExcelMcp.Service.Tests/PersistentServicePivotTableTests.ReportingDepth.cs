@@ -263,6 +263,9 @@ public sealed partial class PersistentServicePivotTableTests
         Assert.Equal(string.Empty, disabled.ErrorString);
         Assert.DoesNotContain("Unavailable", ReadReportingDepthTexts(name));
         Assert.Contains("#DIV/0!", ReadReportingDepthTexts(name));
+        var data = RequireSuccess(_pivotCommands.GetData(batch, name));
+        Assert.Contains("#DIV/0!", data.Values.SelectMany(row => row));
+        Assert.Contains("#DIV/0!", data.GrandTotals.Values);
         AssertOriginalSales();
     }
 
