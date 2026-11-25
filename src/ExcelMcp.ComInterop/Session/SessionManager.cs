@@ -1804,15 +1804,16 @@ public sealed class SessionManager : IDisposable
     /// <returns>True if session was found and closed, false if session not found</returns>
     /// <exception cref="InvalidOperationException">Save operation failed or operations still running</exception>
     public bool CloseSession(string sessionId, bool save = false, bool force = false) =>
-        CloseSession(sessionId, out _, out _, out _, save, force);
+        CloseSession(sessionId, out _, out _, out _, out _, save, force);
 
     internal bool CloseSession(string sessionId, out bool saved, out ExcelNativeProcessObservation? reconciledExit,
-        out bool reconciledFailedClose, bool save = false, bool force = false)
+        out bool reconciledFailedClose, out bool initialSaveConfirmed, bool save = false, bool force = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         saved = false;
         reconciledExit = null;
         reconciledFailedClose = false;
+        initialSaveConfirmed = false;
 
         if (string.IsNullOrWhiteSpace(sessionId) || !_activeSessions.TryGetValue(sessionId, out var batch))
         {
@@ -1903,6 +1904,7 @@ public sealed class SessionManager : IDisposable
                 try
                 {
                     SessionDiagnostics.MeasureCloseStage("save", () => batch.Save());
+                    initialSaveConfirmed = true;
                 }
                 catch (Exception ex)
                 {

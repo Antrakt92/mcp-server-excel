@@ -115,6 +115,8 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     Args = """{"save":true}"""
                 });
                 Assert.False(response.Success);
+                using var partial = JsonDocument.Parse(response.PartialState!);
+                Assert.True(partial.RootElement.GetProperty("initialSaveConfirmed").GetBoolean());
                 Assert.Same(batch, service.SessionManager.GetSession(session));
                 Assert.False(batch.Execute((context, _) => context.Book.Saved));
                 Assert.Equal(LateCloseSaveMarker, await ReadMarkerAsync(service, session));

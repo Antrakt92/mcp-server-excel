@@ -695,8 +695,9 @@ public sealed class SessionManagerTeardownFailureTests
         Assert.Empty(published);
         batch.ConfirmOwnedCleanup();
 
-        Assert.True(manager.CloseSession(sessionId, out var saved, out _, out var reconciledFailedClose));
+        Assert.True(manager.CloseSession(sessionId, out var saved, out _, out var reconciledFailedClose, out var initialSaveConfirmed));
         Assert.False(saved);
+        Assert.False(initialSaveConfirmed);
         Assert.True(reconciledFailedClose);
         Assert.Equal(sessionId, Assert.Single(published));
         Assert.Equal(0, manager.ActiveSessionCount);
