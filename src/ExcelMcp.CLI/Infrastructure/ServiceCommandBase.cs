@@ -111,7 +111,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
         if (response.Success)
         {
             var outcome = CliResultOutput.Read(response, command);
-            var originalData = outcome.Data as System.Text.Json.Nodes.JsonObject;
+            var originalData = outcome.Data as JsonObject;
             var durationMs = CliCommandRuntime.Current.OperationTimer.ElapsedMilliseconds;
             if (!outcome.Success)
                 return CliResultOutput.Write(outcome, command);
@@ -133,39 +133,23 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     {
         if (args is null)
             return (null, null);
-        var writesArtifact = command is "workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image";
-        var transfersSheet = command is "sheet.copy-to-file" or "sheet.move-to-file";
-        if (string.IsNullOrEmpty(outputPath) || (!writesArtifact && !transfersSheet))
-            return (JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), null);
-
-        var request = JsonSerializer.SerializeToNode(args, ServiceProtocol.JsonOptions)!.AsObject();
         var callerDirectory = Environment.CurrentDirectory;
-        var guard = new OutputPathGuard(Path.GetFullPath(outputPath, callerDirectory), transfersSheet
-            ? [(NormalizeArtifactPath(request, "sourceFile", callerDirectory), "--source-file"),
-                (NormalizeArtifactPath(request, "targetFile", callerDirectory), "--target-file")]
-            : [(NormalizeArtifactPath(request, "targetPath", callerDirectory), "--target-path")]);
+        var (request, protectedPaths) = CliInputPolicy.BindArtifactPaths(command,
+            JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), callerDirectory);
+        if (string.IsNullOrEmpty(outputPath) || protectedPaths.Count == 0)
+            return (request, null);
+        var guard = new OutputPathGuard(Path.GetFullPath(outputPath, callerDirectory), protectedPaths);
         guard.Validate();
-        return (request.ToJsonString(ServiceProtocol.JsonOptions), guard);
+        return (request, guard);
     }
 
-    private static string NormalizeArtifactPath(JsonObject request, string parameter, string callerDirectory)
-    {
-        var path = request[parameter]!.GetValue<string>();
-        var absolute = Path.GetFullPath(path, callerDirectory);
-
-        // The daemon's working directory can differ from the caller's.
-        if (!Path.IsPathFullyQualified(path))
-            request[parameter] = absolute;
-        return absolute;
-    }
-
-    private sealed class OutputPathGuard(string outputPath, (string Path, string Option)[] artifactPaths)
+    private sealed class OutputPathGuard(string outputPath, IReadOnlyList<(string Path, string Option)> protectedPaths)
     {
         public string OutputPath { get; } = outputPath;
 
         public void Validate()
         {
-            foreach (var (path, option) in artifactPaths)
+            foreach (var (path, option) in protectedPaths)
             {
                 if (string.Equals(OutputPath, path, StringComparison.OrdinalIgnoreCase) || ReferToSameFile(OutputPath, path))
                     throw new ArgumentException($"--output writes the command response and must use a different file from {option}.");
@@ -199,7 +183,7 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "CLI output-file boundary reports the original write/encoding failure as success=false JSON and returns exit code 1.")]
-    private static int WriteOutputToFile(ResultJson outcome, System.Text.Json.Nodes.JsonObject? originalData,
+    private static int WriteOutputToFile(ResultJson outcome, JsonObject? originalData,
         string command, long durationMs, string outputPath, OutputPathGuard? outputGuard)
     {
         try

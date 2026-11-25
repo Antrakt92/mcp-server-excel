@@ -148,6 +148,35 @@ public sealed class InProcessCliCommandTests
     }
 
     [Fact]
+    public async Task OutputFile_RejectsCheckedCopyBaselineBeforeConnecting()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"excelcli-baseline-{Guid.NewGuid():N}");
+        var baseline = Path.Combine(directory, "Baseline.xlsx");
+        var target = Path.Combine(directory, "copy.xlsx");
+        var outputPath = Path.Combine(directory, ".", "baseline.xlsx");
+        var packageCheck = JsonSerializer.Serialize(new { baselinePath = baseline, allowedParts = Array.Empty<string>() });
+        var factory = new RecordingClientFactory(new ServiceResponse
+        {
+            Success = false,
+            ErrorMessage = "The test service must not receive this command."
+        });
+        using var output = new StringWriter();
+
+        var exit = await Program.RunAsync(
+            ["--quiet", "workbook", "save-copy-as", "--session", "target", "--target-path", target,
+                "--package-check", packageCheck, "--output", outputPath],
+            CreateRuntime(factory, output, new StringWriter()));
+
+        Assert.Equal(1, exit);
+        Assert.Equal(0, factory.ConnectionCount);
+        Assert.Empty(factory.Requests);
+        using var result = JsonDocument.Parse(output.ToString());
+        var error = result.RootElement.GetProperty("error");
+        Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+        Assert.Contains("--package-check baselinePath", error.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public async Task OutputFile_StillWritesToDistinctPathAndDispatchesAbsoluteTarget()
     {
         var callerDirectory = Environment.CurrentDirectory;
@@ -266,20 +295,23 @@ public sealed class InProcessCliCommandTests
     [Theory]
     [InlineData("copy-to-file")]
     [InlineData("move-to-file")]
-    public async Task SessionlessSheetTransfer_DispatchesWithoutSession(string action)
+    public async Task SessionlessSheetTransfer_BindsBothPathsWithoutSession(string action)
     {
         var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
         using var output = new StringWriter();
 
         var exit = await Program.RunAsync(
-            ["--quiet", "sheet", action, "--source-file", @"C:\audit\source.xlsx", "--source-sheet", "Data",
-                "--target-file", @"C:\audit\target.xlsx"],
+            ["--quiet", "sheet", action, "--source-file", @"audit\source.xlsx", "--source-sheet", "Data",
+                "--target-file", @"audit\target.xlsx"],
             CreateRuntime(factory, output, new StringWriter()));
 
         Assert.Equal(0, exit);
         var request = Assert.Single(factory.Requests);
         Assert.Equal($"sheet.{action}", request.Command);
         Assert.Null(request.SessionId);
+        using var args = JsonDocument.Parse(request.Args!);
+        Assert.Equal(Path.GetFullPath(@"audit\source.xlsx", Environment.CurrentDirectory), args.RootElement.GetProperty("sourceFile").GetString());
+        Assert.Equal(Path.GetFullPath(@"audit\target.xlsx", Environment.CurrentDirectory), args.RootElement.GetProperty("targetFile").GetString());
 
         output.GetStringBuilder().Clear();
         Assert.Equal(0, await Program.RunAsync(["sheet", action, "--help"],
@@ -1243,6 +1275,30 @@ public sealed class InProcessCliCommandTests
         }
         Assert.Contains("started", error.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("started", output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"TargetPath":"copy.xlsx"}""", "Unknown or non-canonical")]
+    [InlineData("{}", "targetPath")]
+    [InlineData("""{"targetPath":42}""", "Invalid argument value")]
+    [InlineData("""{"targetPath":"copy.xlsx","packageCheck":{"BaselinePath":"original.xlsx","allowedParts":[]}}""",
+        "Invalid argument value")]
+    public async Task Batch_CheckedCopyRejectsMalformedPathArgumentsBeforeConnecting(string args, string expected)
+    {
+        var factory = new RecordingClientFactory();
+        using var output = new StringWriter();
+        var input = $$"""{"command":"workbook.save-copy-as","args":{{args}}}""";
+
+        var exit = await Program.RunAsync(["--quiet", "batch", "--session", "target"],
+            CreateRuntime(factory, output, new StringWriter(), input));
+
+        Assert.Equal(1, exit);
+        Assert.Equal(0, factory.ConnectionCount);
+        Assert.Empty(factory.Requests);
+        using var result = JsonDocument.Parse(output.ToString());
+        var error = result.RootElement.GetProperty("error");
+        Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+        Assert.Contains(expected, error.GetProperty("message").GetString());
     }
 
     [Theory]

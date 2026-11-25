@@ -321,7 +321,7 @@ public partial class WorkbookCommands
             throw new ArgumentException("Output path cannot be empty.", nameof(outputPath));
         }
 
-        var normalizedPath = Path.GetFullPath(outputPath);
+        var normalizedPath = FilePathValidation.NormalizeAbsoluteWindowsPath(outputPath);
         var directory = Path.GetDirectoryName(normalizedPath);
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
         {

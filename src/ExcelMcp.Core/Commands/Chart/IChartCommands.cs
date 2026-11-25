@@ -34,7 +34,7 @@ public interface IChartCommands
     /// <summary>Exports an embedded regular or PivotChart through Excel's native image filter. Returns success only for a nonempty image; existing files require overwrite.</summary>
     /// <param name="batch">Excel batch session</param>
     /// <param name="chartName">Existing embedded chart name</param>
-    /// <param name="targetPath">Output image path in an existing directory; extension must match the requested image format</param>
+    /// <param name="targetPath">Absolute output image path in an existing directory; extension must match the requested image format</param>
     /// <param name="imageFormat">Png (default), Jpeg or Gif; available filters depend on installed Excel</param>
     /// <param name="overwrite">Explicit permission to replace an existing output image; default false</param>
     /// <param name="chartSheetName">Worksheet containing the chart, required when names repeat</param>

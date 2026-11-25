@@ -62,7 +62,7 @@ public sealed class ChartDepthContractCliTests
         Assert.Equal("session-1", captured.SessionId);
         using var args = JsonDocument.Parse(captured.Args!);
         Assert.Equal("Sales", args.RootElement.GetProperty("chartName").GetString());
-        Assert.Equal("sales.jpg", args.RootElement.GetProperty("targetPath").GetString());
+        Assert.Equal(Path.GetFullPath("sales.jpg", Environment.CurrentDirectory), args.RootElement.GetProperty("targetPath").GetString());
         Assert.Equal("Jpeg", args.RootElement.GetProperty("imageFormat").GetString());
         Assert.True(args.RootElement.GetProperty("overwrite").GetBoolean());
     }
