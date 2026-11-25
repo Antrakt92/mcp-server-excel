@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Sbroenne.ExcelMcp.Core.Models;
 
 namespace Sbroenne.ExcelMcp.Core.Commands.Chart;
@@ -77,6 +78,7 @@ public enum ChartErrorBarEndStyle
 }
 
 /// <summary>Typed error-bar settings; nested JSON keys use camelCase.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class ChartErrorBarOptions
 {
     /// <summary>False removes all error bars from the series.</summary>
@@ -117,6 +119,7 @@ public sealed class ChartErrorBarsResult : OperationResult
 }
 
 /// <summary>Selected-point material and supported marker changes.</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class ChartPointOptions
 {
     /// <summary>Solid fill as #RRGGBB.</summary>
