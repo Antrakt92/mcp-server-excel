@@ -53,7 +53,7 @@ public sealed class ServiceWorkbookDiscoveryTests
             var retriedError = Assert.Single(retried.Errors);
             Assert.False(retried.Complete);
             Assert.Equal(identity.ProcessId, retriedError.ProcessId);
-            Assert.Contains("window no longer belongs", retriedError.Message, StringComparison.Ordinal);
+            Assert.Contains("window disappeared", retriedError.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("another active ExcelMcp host", retriedError.Message, StringComparison.Ordinal);
         }
         finally

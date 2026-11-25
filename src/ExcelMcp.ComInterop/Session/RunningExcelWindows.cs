@@ -146,20 +146,30 @@ internal static class RunningExcelWindows
 
     internal static Excel.Application Connect(ApplicationWindow window)
     {
-        if (!OwnedProcessGuard.MatchesLiveProcess(window.Process))
-            throw new InvalidOperationException("The selected Excel process is no longer running.");
         var dispatchId = new Guid("00020400-0000-0000-C000-000000000046");
+        var windowDisappeared = false;
         foreach (var handle in new[] { window.Handle }.Concat(window.AlternateHandles ?? []))
         {
-            _ = GetWindowThreadProcessId(handle, out var processId);
+            if (!OwnedProcessGuard.MatchesLiveProcess(window.Process))
+                throw new InvalidOperationException("The selected Excel process is no longer running.");
+            if (GetWindowThreadProcessId(handle, out var processId) == 0)
+            {
+                windowDisappeared = true;
+                continue;
+            }
             if (processId != window.Process.ProcessId)
                 throw new InvalidOperationException("The selected Excel window no longer belongs to the expected process.");
             object? accessible = null;
             Excel.Application? application = null;
             try
             {
-                Marshal.ThrowExceptionForHR(AccessibleObjectFromWindow(
-                    handle, 0xFFFFFFF0, ref dispatchId, out accessible));
+                var status = AccessibleObjectFromWindow(handle, 0xFFFFFFF0, ref dispatchId, out accessible);
+                if (status < 0 && GetWindowThreadProcessId(handle, out _) == 0)
+                {
+                    windowDisappeared = true;
+                    continue;
+                }
+                Marshal.ThrowExceptionForHR(status);
                 if (accessible is Excel.ProtectedViewWindow)
                     continue;
                 application = accessible is Excel.Window workbookWindow
@@ -175,6 +185,8 @@ internal static class RunningExcelWindows
                 ComUtilities.Release(ref accessible);
             }
         }
+        if (windowDisappeared)
+            throw new InvalidOperationException("An Excel window disappeared before it could be connected. Discover open workbooks again.");
         throw new InvalidOperationException(
             "Only a restricted Protected View window could be reached. Respond in Excel, or use an already connected normal Excel window; no trust was changed.");
     }
