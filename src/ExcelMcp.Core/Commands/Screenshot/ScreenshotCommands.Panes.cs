@@ -15,7 +15,7 @@ public partial class ScreenshotCommands
         CapturePlanner.CapturePlan Plan, int[] Xs, int[] Ys, Point Destination);
 
     private static Bitmap CapturePaneTiles(Excel.Application app, Excel.Window window,
-        Excel.Range range, ref CapturePlanner.CapturePlan plan)
+        Excel.Range range, ref CapturePlanner.CapturePlan plan, CancellationToken cancellationToken)
     {
         var hwnd = GetExcelWindowHandle(app);
         double deviceScale = WindowCapture.GetWindowDpi(hwnd) / 72.0;
@@ -42,6 +42,7 @@ public partial class ScreenshotCommands
                 int destinationX = 0, regionHeight = 0;
                 foreach (var (column, columnCount) in columnParts)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var selected = frozen
                         ? panes.FirstOrDefault(pane => pane.FixedRows == (splitRow > 0 && row <= splitRow)
                             && pane.FixedColumns == (splitColumn > 0 && column <= splitColumn))
@@ -50,7 +51,7 @@ public partial class ScreenshotCommands
                     using var region = new CaptureRangeLease(GetRange(sheet, row, column,
                         row + rowCount - 1, column + columnCount - 1));
                     var ready = PreparePaneRegion(window, selected, region.Range, deviceScale, scale,
-                        plan.Zoom, new Point(destinationX, destinationY));
+                        plan.Zoom, new Point(destinationX, destinationY), cancellationToken);
                     plannedTiles = checked(plannedTiles + ready.Plan.RowSegments.Count * ready.Plan.ColumnSegments.Count);
                     if (plannedTiles > 64)
                         throw new InvalidOperationException("The pane layout requires more than 64 screenshot tiles. Capture a smaller range.");
@@ -63,16 +64,18 @@ public partial class ScreenshotCommands
             }
             if (width <= 0 || destinationY <= 0)
                 throw new InvalidOperationException("The requested screenshot range has no visible cell area.");
+            cancellationToken.ThrowIfCancellationRequested();
             canvas = new Bitmap(width, destinationY, PixelFormat.Format32bppArgb);
             using var graphics = Graphics.FromImage(canvas);
             graphics.Clear(Color.White);
             int tiles = 0;
             foreach (var ready in prepared)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 using var region = new CaptureRangeLease(GetRange(sheet, ready.Row, ready.Column,
                     ready.Row + ready.Rows - 1, ready.Column + ready.Columns - 1));
                 CapturePaneRegion(window, ready, region.Range, graphics, hwnd, deviceScale,
-                    scale, plan.Zoom, ref tiles);
+                    scale, plan.Zoom, ref tiles, cancellationToken);
             }
             plan = plan with { CapturedTiles = tiles };
             var result = canvas;
@@ -135,7 +138,7 @@ public partial class ScreenshotCommands
     }
 
     private static PreparedPaneRegion PreparePaneRegion(Excel.Window window, CapturePane selected,
-        Excel.Range region, double deviceScale, double scale, int zoom, Point destination)
+        Excel.Range region, double deviceScale, double scale, int zoom, Point destination, CancellationToken cancellationToken)
     {
         Excel.Panes? panes = null;
         Excel.Pane? pane = null;
@@ -151,14 +154,16 @@ public partial class ScreenshotCommands
             if (!selected.FixedRows) pane.ScrollRow = region.Row;
             if (!selected.FixedColumns) pane.ScrollColumn = region.Column;
             Thread.Sleep(ViewSettleMs);
+            cancellationToken.ThrowIfCancellationRequested();
             var usable = MeasureCapturePane(window, pane, selected, zoom);
             int paneWidth = (int)Math.Round(usable.Width * deviceScale);
             int paneHeight = (int)Math.Round(usable.Height * deviceScale);
-            var regionPlan = CapturePlanner.ReplanPixels(region, zoom, usable, scale, paneWidth, paneHeight);
+            var regionPlan = CapturePlanner.ReplanPixels(region, zoom, usable, scale,
+                paneWidth, paneHeight, cancellationToken);
             if (regionPlan.Truncated)
                 throw new InvalidOperationException("The pane layout requires more than 64 screenshot tiles. Capture a smaller range.");
-            int[] xs = BuildPixelOffsets(region, false, regionPlan.ColumnSegments, scale, paneWidth);
-            int[] ys = BuildPixelOffsets(region, true, regionPlan.RowSegments, scale, paneHeight);
+            int[] xs = BuildPixelOffsets(region, false, regionPlan.ColumnSegments, scale, paneWidth, cancellationToken);
+            int[] ys = BuildPixelOffsets(region, true, regionPlan.RowSegments, scale, paneHeight, cancellationToken);
             return new PreparedPaneRegion(selected, region.Row, region.Column,
                 GetPaneAxisCount(region, true), GetPaneAxisCount(region, false), regionPlan, xs, ys, destination);
         }
@@ -170,7 +175,8 @@ public partial class ScreenshotCommands
     }
 
     private static void CapturePaneRegion(Excel.Window window, PreparedPaneRegion prepared, Excel.Range region,
-        Graphics graphics, IntPtr hwnd, double deviceScale, double scale, int zoom, ref int tileCount)
+        Graphics graphics, IntPtr hwnd, double deviceScale, double scale, int zoom, ref int tileCount,
+        CancellationToken cancellationToken)
     {
         var selected = prepared.Pane;
         var regionPlan = prepared.Plan;
@@ -185,12 +191,15 @@ public partial class ScreenshotCommands
             panes = window.Panes;
             pane = panes[selected.Index];
             sheet = region.Worksheet;
-            int fixedX = selected.FixedColumns ? FixedRegionAnchor(pane, sheet, selected, region, false, scale) : 0;
-            int fixedY = selected.FixedRows ? FixedRegionAnchor(pane, sheet, selected, region, true, scale) : 0;
+            int fixedX = selected.FixedColumns
+                ? FixedRegionAnchor(pane, sheet, selected, region, false, scale, cancellationToken) : 0;
+            int fixedY = selected.FixedRows
+                ? FixedRegionAnchor(pane, sheet, selected, region, true, scale, cancellationToken) : 0;
             foreach (var row in regionPlan.RowSegments.Select((segment, index) => (segment, index)))
             {
                 foreach (var column in regionPlan.ColumnSegments.Select((segment, index) => (segment, index)))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     Excel.Range? tile = null;
                     try
                     {
@@ -198,13 +207,15 @@ public partial class ScreenshotCommands
                         if (!selected.FixedRows) pane.ScrollRow = tile.Row;
                         if (!selected.FixedColumns) pane.ScrollColumn = tile.Column;
                         Thread.Sleep(ViewSettleMs);
+                        cancellationToken.ThrowIfCancellationRequested();
                         double left = Convert.ToDouble((object)tile.Left, CultureInfo.InvariantCulture);
                         double top = Convert.ToDouble((object)tile.Top, CultureInfo.InvariantCulture);
                         int x = selected.FixedColumns ? checked(fixedX + xs[column.index]) : PaneScreenPoint(pane, left, false);
                         int y = selected.FixedRows ? checked(fixedY + ys[row.index]) : PaneScreenPoint(pane, top, true);
                         int width = xs[column.index + 1] - xs[column.index];
                         int height = ys[row.index + 1] - ys[row.index];
-                        var paneBounds = CapturePaneBounds(window, pane, selected, zoom, scale, deviceScale);
+                        var paneBounds = CapturePaneBounds(window, pane, selected, zoom, scale, deviceScale, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (!paneBounds.Contains(new Rectangle(x, y, width, height)))
                             throw new InvalidOperationException(
                                 $"The complete screenshot tile is not visible inside its Excel pane. Tile={new Rectangle(x, y, width, height)}; pane={paneBounds}.");
@@ -237,7 +248,7 @@ public partial class ScreenshotCommands
     }
 
     private static int FixedRegionAnchor(Excel.Pane pane, Excel.Worksheet sheet, CapturePane selected,
-        Excel.Range region, bool rows, double scale)
+        Excel.Range region, bool rows, double scale, CancellationToken cancellationToken)
     {
         Excel.Range? visible = null;
         Excel.Range? prefix = null;
@@ -252,7 +263,7 @@ public partial class ScreenshotCommands
             prefix = rows
                 ? GetRange(sheet, first, region.Column, start - 1, region.Column)
                 : GetRange(sheet, region.Row, first, region.Row, start - 1);
-            return checked(origin + PanePixelExtent(prefix, rows, scale));
+            return checked(origin + PanePixelExtent(prefix, rows, scale, cancellationToken));
         }
         finally
         {
@@ -262,7 +273,7 @@ public partial class ScreenshotCommands
     }
 
     private static Rectangle CapturePaneBounds(Excel.Window window, Excel.Pane pane,
-        CapturePane selected, int zoom, double scale, double deviceScale)
+        CapturePane selected, int zoom, double scale, double deviceScale, CancellationToken cancellationToken)
     {
         Excel.Range? visible = null;
         try
@@ -273,10 +284,10 @@ public partial class ScreenshotCommands
             double width = MeasurePaneAxis(visible, false, selected.FixedColumns, zoom, window.UsableWidth);
             double height = MeasurePaneAxis(visible, true, selected.FixedRows, zoom, window.UsableHeight);
             int pixelWidth = selected.FixedColumns
-                ? Math.Min(PanePixelExtent(visible, false, scale), (int)Math.Round((window.UsableWidth - 15) * deviceScale))
+                ? Math.Min(PanePixelExtent(visible, false, scale, cancellationToken), (int)Math.Round((window.UsableWidth - 15) * deviceScale))
                 : (int)Math.Round(width * deviceScale);
             int pixelHeight = selected.FixedRows
-                ? Math.Min(PanePixelExtent(visible, true, scale), (int)Math.Round((window.UsableHeight - 15) * deviceScale))
+                ? Math.Min(PanePixelExtent(visible, true, scale, cancellationToken), (int)Math.Round((window.UsableHeight - 15) * deviceScale))
                 : (int)Math.Round(height * deviceScale);
             return new Rectangle(PaneScreenPoint(pane, left, false),
                 PaneScreenPoint(pane, top, true), pixelWidth, pixelHeight);
@@ -337,9 +348,9 @@ public partial class ScreenshotCommands
         finally { ComUtilities.Release(ref items); }
     }
 
-    private static int PanePixelExtent(Excel.Range range, bool rows, double scale) =>
+    private static int PanePixelExtent(Excel.Range range, bool rows, double scale, CancellationToken cancellationToken) =>
         BuildPixelOffsets(range, rows,
-            [new CapturePlanner.Segment(1, GetPaneAxisCount(range, rows), 0, 0)], scale, int.MaxValue)[1];
+            [new CapturePlanner.Segment(1, GetPaneAxisCount(range, rows), 0, 0)], scale, int.MaxValue, cancellationToken)[1];
 
     private sealed class CaptureRangeLease(Excel.Range range) : IDisposable
     {

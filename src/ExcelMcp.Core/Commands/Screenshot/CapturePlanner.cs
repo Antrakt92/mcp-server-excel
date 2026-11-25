@@ -160,8 +160,10 @@ internal static class CapturePlanner
     /// </summary>
     /// <param name="window">Excel window that will perform the capture.</param>
     /// <param name="range">Range to capture.</param>
-    public static CapturePlan Plan(Excel.Window window, Excel.Range range)
+    /// <param name="cancellationToken">Cancels further geometry reads.</param>
+    public static CapturePlan Plan(Excel.Window window, Excel.Range range, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         UsablePane usable = MeasureUsablePane(window);
         double rangeWidth = Convert.ToDouble((object)range.Width, CultureInfo.InvariantCulture);
         double rangeHeight = Convert.ToDouble((object)range.Height, CultureInfo.InvariantCulture);
@@ -169,7 +171,7 @@ internal static class CapturePlanner
         int fitZoom = CalculateFitZoom(usable.Width, usable.Height, rangeWidth, rangeHeight);
         int zoom = Math.Clamp(fitZoom, Math.Min(MinReadableZoom, 100), 100);
 
-        return BuildPlan(range, usable, zoom, fitZoom);
+        return BuildPlan(range, usable, zoom, fitZoom, cancellationToken);
     }
 
     /// <summary>
@@ -184,22 +186,24 @@ internal static class CapturePlanner
     /// <param name="range">Range to capture.</param>
     /// <param name="zoom">Zoom percentage the window is currently set to.</param>
     /// <param name="usable">Grid area measured at that zoom.</param>
-    public static CapturePlan Replan(Excel.Range range, int zoom, UsablePane usable)
+    /// <param name="cancellationToken">Cancels further geometry reads.</param>
+    public static CapturePlan Replan(Excel.Range range, int zoom, UsablePane usable, CancellationToken cancellationToken)
     {
-        return BuildPlan(range, usable, zoom, zoom);
+        return BuildPlan(range, usable, zoom, zoom, cancellationToken);
     }
 
     /// <summary>Plans against the sum of individually rounded cell pixels at the final zoom.</summary>
     internal static CapturePlan ReplanPixels(Excel.Range range, int zoom, UsablePane usable,
-        double pixelsPerPoint, int paneMaxWidthPixels, int paneMaxHeightPixels)
+        double pixelsPerPoint, int paneMaxWidthPixels, int paneMaxHeightPixels, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!double.IsFinite(pixelsPerPoint) || pixelsPerPoint <= 0
             || usable.Width <= 0 || usable.Height <= 0
             || paneMaxWidthPixels <= 0 || paneMaxHeightPixels <= 0)
             throw new InvalidOperationException("The Excel pane has no measurable screenshot viewport.");
         var (rowCount, columnCount) = Range.RangeHelpers.GetDimensions(range);
-        var columns = BuildPixelSegments(range, false, columnCount, pixelsPerPoint, paneMaxWidthPixels);
-        var rows = BuildPixelSegments(range, true, rowCount, pixelsPerPoint, paneMaxHeightPixels);
+        var columns = BuildPixelSegments(range, false, columnCount, pixelsPerPoint, paneMaxWidthPixels, cancellationToken);
+        var rows = BuildPixelSegments(range, true, rowCount, pixelsPerPoint, paneMaxHeightPixels, cancellationToken);
         bool truncated = (long)columns.Count * rows.Count > HardMaxTiles;
         if (truncated)
         {
@@ -211,7 +215,7 @@ internal static class CapturePlanner
     }
 
     private static List<Segment> BuildPixelSegments(Excel.Range range, bool rows, int count,
-        double pixelsPerPoint, int pixelBudget)
+        double pixelsPerPoint, int pixelBudget, CancellationToken cancellationToken)
     {
         var segments = new List<Segment>();
         if (count <= 0) return segments;
@@ -220,11 +224,13 @@ internal static class CapturePlanner
         // A 65th segment already proves that the 64-tile limit will be exceeded.
         while (start <= count && segments.Count <= HardMaxTiles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double startOffset = GetOffset(range, rows, start);
             int candidate = FindSegmentEnd(range, rows, start, count, startOffset, pixelBudget / pixelsPerPoint);
             int rendered = 0, end = start - 1, index = start;
             while (index <= candidate)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 double extent = GetExtent(range, rows, index);
                 double pixels = Math.Round(extent * pixelsPerPoint, MidpointRounding.AwayFromZero);
                 if (pixels > pixelBudget)
@@ -258,8 +264,10 @@ internal static class CapturePlanner
     /// Splits the range into tiles for a given pane size, stepping the zoom down while the tile
     /// count exceeds <see cref="PreferredMaxTiles"/> and the fit zoom allows it.
     /// </summary>
-    private static CapturePlan BuildPlan(Excel.Range range, UsablePane usable, int zoom, int fitZoom)
+    private static CapturePlan BuildPlan(Excel.Range range, UsablePane usable, int zoom, int fitZoom,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         double usableWidth = usable.Width;
         double usableHeight = usable.Height;
         var (rowCount, columnCount) = Range.RangeHelpers.GetDimensions(range);
@@ -269,8 +277,8 @@ internal static class CapturePlanner
 
         while (true)
         {
-            columnSegments = BuildSegments(range, false, columnCount, usableWidth * 100.0 / zoom);
-            rowSegments = BuildSegments(range, true, rowCount, usableHeight * 100.0 / zoom);
+            columnSegments = BuildSegments(range, false, columnCount, usableWidth * 100.0 / zoom, cancellationToken);
+            rowSegments = BuildSegments(range, true, rowCount, usableHeight * 100.0 / zoom, cancellationToken);
 
             int tiles = rowSegments.Count * columnSegments.Count;
 
@@ -319,7 +327,9 @@ internal static class CapturePlanner
     /// <param name="rows">True to segment rows, false to segment columns.</param>
     /// <param name="count">Number of rows or columns in the range.</param>
     /// <param name="tilePoints">Viewport size in worksheet points at the planned zoom.</param>
-    private static List<Segment> BuildSegments(Excel.Range range, bool rows, int count, double tilePoints)
+    /// <param name="cancellationToken">Cancels further geometry reads.</param>
+    private static List<Segment> BuildSegments(Excel.Range range, bool rows, int count, double tilePoints,
+        CancellationToken cancellationToken)
     {
         var segments = new List<Segment>();
 
@@ -334,6 +344,7 @@ internal static class CapturePlanner
         // More than 64 segments on either axis already exceeds the complete tile budget.
         while (start <= count && segments.Count <= HardMaxTiles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             double startOffset = GetOffset(range, rows, start);
             int end = FindSegmentEnd(range, rows, start, count, startOffset, tilePoints);
             double endOffset = GetOffset(range, rows, end) + GetExtent(range, rows, end);
