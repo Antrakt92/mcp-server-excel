@@ -185,55 +185,18 @@ public partial class DataModelCommands
         }
     }
 
-    /// <summary>
-    /// Gets the table name that contains a specific measure
-    /// </summary>
-    /// <param name="model">Model COM object</param>
-    /// <param name="measureName">Measure name to find</param>
-    /// <returns>Table name if found, null otherwise</returns>
-    private static string? GetMeasureTableName(Excel.Model model, string measureName)
+    private static string ReadMeasureTableName(Excel.ModelMeasure measure)
     {
-        Excel.ModelMeasures? measures = null;
+        Excel.ModelTable? associatedTable = null;
         try
         {
-            // Get measures collection from MODEL (not from table!)
-            // All measures are at model level with AssociatedTable property
-            // Reference: https://learn.microsoft.com/en-us/office/vba/api/excel.model.modelmeasures
-            measures = model.ModelMeasures;
-
-            for (int m = 1; m <= measures.Count; m++)
-            {
-                Excel.ModelMeasure? measure = null;
-                try
-                {
-                    measure = measures.Item(m);
-                    string name = measure.Name?.ToString() ?? "";
-                    if (name.Equals(measureName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Get the associated table name
-                        Excel.ModelTable? associatedTable = null;
-                        try
-                        {
-                            associatedTable = measure.AssociatedTable;
-                            return associatedTable?.Name?.ToString() ?? string.Empty;
-                        }
-                        finally
-                        {
-                            ComUtilities.Release(ref associatedTable);
-                        }
-                    }
-                }
-                finally
-                {
-                    ComUtilities.Release(ref measure);
-                }
-            }
+            associatedTable = measure.AssociatedTable;
+            return associatedTable?.Name?.ToString() ?? string.Empty;
         }
         finally
         {
-            ComUtilities.Release(ref measures);
+            ComUtilities.Release(ref associatedTable);
         }
-        return null;
     }
 
     /// <summary>
