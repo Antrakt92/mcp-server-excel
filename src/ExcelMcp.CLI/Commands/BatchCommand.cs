@@ -113,6 +113,7 @@ internal sealed class BatchCommand : AsyncCommand<BatchCommand.Settings>
                 if (cmd.OperationId is { } operationId)
                     OperationReceipts.ValidateTracking(command, operationId);
                 var bound = ServiceRegistry.BindLocalInputFileArguments(command, argsJson, callerDirectory);
+                (bound, _) = CliInputPolicy.BindArtifactPaths(command, bound, callerDirectory);
                 if (!ReferenceEquals(bound, argsJson))
                     boundArgs[i] = bound;
             }

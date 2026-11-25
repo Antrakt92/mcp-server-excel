@@ -18,6 +18,24 @@ function executableFixture(arch) {
   return payload;
 }
 
+function versionedExecutableFixture(arch) {
+  // A small runtime assembly has PE version metadata without needing to build
+  // or execute an ExcelMcp runtime. Only the requested PE machine is synthetic.
+  const result = spawnSync('pwsh', ['-NoProfile', '-Command', `
+    $ErrorActionPreference = 'Stop'
+    $path = Join-Path $PSHOME 'System.Runtime.dll'
+    $productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($path).ProductVersion
+    @{ path = $path; version = $productVersion.Split('+')[0] } | ConvertTo-Json -Compress
+  `], { encoding: 'utf8', timeout: 10_000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const { path, version: runtimeVersion } = JSON.parse(result.stdout);
+  const payload = readFileSync(path);
+  const headerOffset = payload.readUInt32LE(0x3c);
+  payload.writeUInt16LE(arch === 'arm64' ? 0xaa64 : 0x8664, headerOffset + 4);
+  return { payload, runtimeVersion };
+}
+
 const products = [
   ['McpServer', 'mcp-server-excel', 'mcp-excel'],
   ['Cli', 'excelcli', 'excelcli']
@@ -31,7 +49,7 @@ for (const [component, packageName, commandName, arch] of products.flatMap(produ
     const inputDirectory = join(sandbox, 'input');
     const outputDirectory = join(sandbox, 'output');
     const executable = join(inputDirectory, `${commandName}.exe`);
-    const payload = executableFixture(arch);
+    const { payload, runtimeVersion } = versionedExecutableFixture(arch);
     const sourceManifest = join(repoRoot, 'npm-packages', packageName, 'package.json');
     const originalManifest = readFileSync(sourceManifest, 'utf8');
     try {
@@ -39,7 +57,7 @@ for (const [component, packageName, commandName, arch] of products.flatMap(produ
       writeFileSync(executable, payload);
       const result = spawnSync('pwsh', [
         '-NoProfile', '-File', join(repoRoot, 'scripts', 'Build-NpmPackages.ps1'),
-        '-Component', component, '-Version', version,
+        '-Component', component, '-Version', runtimeVersion,
         '-Architecture', arch,
         '-RuntimeExecutable', executable, '-OutputDirectory', outputDirectory
       ], { encoding: 'utf8', timeout: 90_000 });
@@ -62,7 +80,7 @@ for (const [component, packageName, commandName, arch] of products.flatMap(produ
         assert.ok(!manifestBytes.includes(13), 'Manifest must use LF line endings.');
         const manifest = JSON.parse(manifestBytes.toString('utf8'));
         assert.equal(manifest.name, `@sbroenne/${name}`);
-        assert.equal(manifest.version, version);
+        assert.equal(manifest.version, runtimeVersion);
         assert.equal(readFileSync(join(root, 'LICENSE'), 'utf8'), readFileSync(join(repoRoot, 'LICENSE'), 'utf8'));
         if (kind === 'runtime') {
           assert.equal(manifest.main, `${commandName}.exe`);
@@ -71,8 +89,8 @@ for (const [component, packageName, commandName, arch] of products.flatMap(produ
           assert.deepEqual(readFileSync(join(root, manifest.main)), payload);
         } else {
           assert.deepEqual(manifest.optionalDependencies, {
-            [`@sbroenne/${packageName}-win32-x64`]: version,
-            [`@sbroenne/${packageName}-win32-arm64`]: version
+            [`@sbroenne/${packageName}-win32-x64`]: runtimeVersion,
+            [`@sbroenne/${packageName}-win32-arm64`]: runtimeVersion
           });
           assert.equal(manifest.bin[commandName], `bin/${commandName}.js`);
           assert.match(readFileSync(join(root, manifest.bin[commandName]), 'utf8'), new RegExp(`packageName: '@sbroenne/${packageName}'`));

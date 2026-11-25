@@ -673,6 +673,7 @@ public sealed class ExcelMcpService : IDisposable
         var closingBatch = _sessionManager.GetSessionForDiagnostics(request.SessionId);
         bool closed;
         var saved = false;
+        var initialSaveConfirmed = false;
         ExcelNativeProcessObservation? reconciledExit = null;
         var reconciledFailedClose = false;
         try
@@ -680,16 +681,22 @@ public sealed class ExcelMcpService : IDisposable
             _sessionManager.SetOperationContext(request.SessionId, request.Command, request.CallerCancellation);
             closed = SessionDiagnostics.MeasureCloseStage("session-close",
                 () => _sessionManager.CloseSession(request.SessionId, out saved, out reconciledExit, out reconciledFailedClose,
-                    save: shouldSave));
+                    out initialSaveConfirmed, save: shouldSave));
         }
         catch (Exception ex) when (IsFatalExcelDisconnect(ex))
         {
-            return HandleExcelDisconnect(request.SessionId, ex, closingBatch, duringClose: true);
+            return WithInitialSaveEvidence(HandleExcelDisconnect(request.SessionId, ex, closingBatch,
+                duringClose: true, initialSaveConfirmed: initialSaveConfirmed), initialSaveConfirmed);
         }
         catch (ExcelBusyException ex) when (ex.CloseOutcomeUnconfirmed)
         {
-            return CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null,
+            var response = CreateErrorResponseCore(ex, request.Command, request.SessionId, null, null,
                 includeOperationStatus: true, closeObservation: GetNativeProcessObservation(closingBatch));
+            return WithInitialSaveEvidence(response, initialSaveConfirmed);
+        }
+        catch (Exception ex) when (initialSaveConfirmed)
+        {
+            return WithInitialSaveEvidence(CreateErrorResponse(ex, request.Command, request.SessionId), initialSaveConfirmed);
         }
 
         if (closed)
@@ -721,6 +728,18 @@ public sealed class ExcelMcpService : IDisposable
 
     private static bool RequestsCloseSave(ServiceRequest request) =>
         ServiceRegistry.DeserializeArgs<SessionCloseArgs>(request.Args)?.Save == true;
+
+    private static ServiceResponse WithInitialSaveEvidence(ServiceResponse response, bool initialSaveConfirmed)
+    {
+        if (!initialSaveConfirmed)
+            return response;
+
+        var state = response.PartialState is null
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(response.PartialState)!.AsObject();
+        state["initialSaveConfirmed"] = true;
+        return response.WithPartialState(state.ToJsonString(ServiceProtocol.JsonOptions));
+    }
 
     private bool RecordUnconfirmedCloseAfterExit(string sessionId, ExcelNativeProcessObservation? observation,
         bool reconciledFailedClose = false)
@@ -1303,14 +1322,16 @@ public sealed class ExcelMcpService : IDisposable
         "Check the current session with CLI 'session list' or MCP 'file_read' action 'list'. " +
         "If the session is absent, inspect open workbooks with CLI 'session discover' or MCP 'file_read' action 'discover' before continuing.";
 
-    private static string CloseDisconnectGuidance(ExcelNativeProcessObservation? observation) =>
-        "Closing and any requested save are unconfirmed. " + CloseSessionReadbackGuidance +
+    private static string CloseDisconnectGuidance(ExcelNativeProcessObservation? observation, bool initialSaveConfirmed = false) =>
+        (initialSaveConfirmed
+            ? "The initial save completed. Closing and any later edits are unconfirmed. "
+            : "Closing and any requested save are unconfirmed. ") + CloseSessionReadbackGuidance +
         (observation is null ? "" :
             " In recentExcelExits from the same controller, match both processId and startedAtUtcFileTime to this error's nativeProcess diagnostics.") +
         " Verify the saved file before retrying.";
 
     private ServiceResponse HandleExcelDisconnect(
-        string sessionId, Exception exception, IExcelBatch? failedBatch, bool duringClose = false)
+        string sessionId, Exception exception, IExcelBatch? failedBatch, bool duringClose = false, bool initialSaveConfirmed = false)
     {
         var batch = _sessionManager.GetSession(sessionId);
         var diagnosticBatch = failedBatch ?? batch;
@@ -1339,7 +1360,7 @@ public sealed class ExcelMcpService : IDisposable
                     }) +
                     (duringClose ? "The session was still tracked. " :
                         "The session remains owned; the operation's outcome is not confirmed. ") +
-                    exception.Message + (duringClose ? " " + CloseDisconnectGuidance(observation) : ""),
+                    exception.Message + (duringClose ? " " + CloseDisconnectGuidance(observation, initialSaveConfirmed) : ""),
                 ExceptionType = exception.GetType().Name,
                 HResult = TryGetFatalComHResult(exception) is { } hresult ? $"0x{hresult:X8}" : null,
                 InnerError = DescribeDisconnectedInnerErrors(exception),
@@ -1353,7 +1374,7 @@ public sealed class ExcelMcpService : IDisposable
         RecordUnconfirmedCloseAfterExit(sessionId, exitObservation);
         return CreateExcelDisconnectedResponse(sessionId, exception,
             duringClose
-                ? "Excel disconnected during close and is no longer running. " + CloseDisconnectGuidance(exitObservation)
+                ? "Excel disconnected during close and is no longer running. " + CloseDisconnectGuidance(exitObservation, initialSaveConfirmed)
                 : "Excel disconnected and is no longer running. Dead-session tracking has been removed; reopen the workbook and verify whether changes were saved.",
             exitObservation);
     }

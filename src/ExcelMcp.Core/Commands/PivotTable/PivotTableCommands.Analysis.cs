@@ -55,7 +55,7 @@ public partial class PivotTableCommands
                 var budget = new RangeReadBudget();
                 budget.AddScalar(batch.WorkbookPath);
                 budget.AddScalar(pivotTableName);
-                var values = BoundedRangeValueReader.Read(tableRange, size, budget, ct);
+                var values = BoundedRangeValueReader.Read(ctx, tableRange, size, budget, ct);
 
                 var headerRow = values[reportFirstRow];
                 var columnHeaders = new List<string>(reportEndColumn - firstDataColumn);

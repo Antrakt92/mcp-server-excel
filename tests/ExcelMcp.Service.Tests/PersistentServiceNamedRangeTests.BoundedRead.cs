@@ -25,6 +25,56 @@ public sealed partial class PersistentServiceNamedRangeTests
     }
 
     [Fact]
+    public void ReadAndList_DistinguishNativeErrorsFromNumericErrorCodes()
+    {
+        const int number = -2146826281;
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        var numericName = CreateUniqueNamedRangeName();
+        var errorName = CreateUniqueNamedRangeName();
+        var gridName = CreateUniqueNamedRangeName();
+        _fixture.RegisterNamedRangeForCleanup(numericName);
+        _fixture.RegisterNamedRangeForCleanup(errorName);
+        _fixture.RegisterNamedRangeForCleanup(gridName);
+        AddName(_fixture, numericName, $"'{sheetName}'!$D$8");
+        AddName(_fixture, errorName, $"'{sheetName}'!$E$8");
+        AddName(_fixture, gridName, $"'{sheetName}'!$D$8:$E$8");
+        RequireSuccess(_commands.SetValues(batch, sheetName, "D8", [[number]]));
+        RequireSuccess(_commands.SetFormulas(batch, sheetName, "E8", [["=1/0"]]));
+
+        var numeric = _parameterCommands.Read(batch, numericName);
+        var error = _parameterCommands.Read(batch, errorName);
+        var grid = _parameterCommands.Read(batch, gridName);
+        var listed = RequireSuccess(_parameterCommands.List(batch));
+
+        Assert.Equal("Double", numeric.ValueType);
+        RangeReadAssertions.Number(number, numeric.Value);
+        Assert.Equal("ExcelError", error.ValueType);
+        Assert.Equal("#DIV/0!", error.Value);
+        Assert.Equal("Array", grid.ValueType);
+        AssertGrid(grid.Value);
+
+        var numericPreview = Assert.Single(listed.NamedRanges, item => item.Name == numericName);
+        Assert.Equal("Double", numericPreview.ValueType);
+        RangeReadAssertions.Number(number, numericPreview.Value);
+        var errorPreview = Assert.Single(listed.NamedRanges, item => item.Name == errorName);
+        Assert.Equal("ExcelError", errorPreview.ValueType);
+        Assert.Equal("#DIV/0!", errorPreview.Value);
+        var gridPreview = Assert.Single(listed.NamedRanges, item => item.Name == gridName);
+        Assert.Equal("Array", gridPreview.ValueType);
+        AssertGrid(gridPreview.Value);
+
+        static void AssertGrid(object? value)
+        {
+            var rows = Assert.IsType<JsonElement>(value);
+            var row = Assert.Single(rows.EnumerateArray());
+            Assert.Equal(2, row.GetArrayLength());
+            Assert.Equal((double)number, row[0].GetDouble());
+            Assert.Equal("#DIV/0!", row[1].GetString());
+        }
+    }
+
+    [Fact]
     public void Read_MultiTileNamePreservesArrayAndScalarTyping()
     {
         var batch = _fixture.BatchToken;

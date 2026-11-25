@@ -51,7 +51,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
                 string actualSheet = sheet.Name?.ToString() ?? "Sheet1";
                 string actualRange = range.Address?.ToString() ?? rangeAddress;
 
-                return ExportRangeAsImage(ctx.App, sheet, range, actualSheet, actualRange, quality);
+                return ExportRangeAsImage(ctx.App, sheet, range, actualSheet, actualRange, quality, ct);
             }
             finally
             {
@@ -86,7 +86,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
 
                 string actualRange = captureRange.Address?.ToString() ?? "A1";
 
-                return ExportRangeAsImage(ctx.App, sheet, captureRange, actualSheet, actualRange, quality);
+                return ExportRangeAsImage(ctx.App, sheet, captureRange, actualSheet, actualRange, quality, ct);
             }
             finally
             {
@@ -199,14 +199,18 @@ public partial class ScreenshotCommands : IScreenshotCommands
     /// temporarily shown. Zoom and scroll position are adjusted to bring the range into view and
     /// are restored afterwards.
     /// </summary>
-    private static ScreenshotResult ExportRangeAsImage(Excel.Application app, Excel.Worksheet sheet, Excel.Range range, string sheetName, string rangeAddress, ScreenshotQuality quality)
+    private static ScreenshotResult ExportRangeAsImage(Excel.Application app, Excel.Worksheet sheet,
+        Excel.Range range, string sheetName, string rangeAddress, ScreenshotQuality quality, CancellationToken cancellationToken)
     {
-        return DpiAwareness.Execute<ScreenshotResult>(() => CaptureRangeImage(app, sheet, range, sheetName, rangeAddress, quality));
+        cancellationToken.ThrowIfCancellationRequested();
+        return DpiAwareness.Execute<ScreenshotResult>(() =>
+            CaptureRangeImage(app, sheet, range, sheetName, rangeAddress, quality, cancellationToken));
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Retains a capture failure until every view restoration has run, then rethrows it or all restoration failures; no failed capture is returned as success.")]
-    private static ScreenshotResult CaptureRangeImage(Excel.Application app, Excel.Worksheet sheet, Excel.Range range, string sheetName, string rangeAddress, ScreenshotQuality quality)
+    private static ScreenshotResult CaptureRangeImage(Excel.Application app, Excel.Worksheet sheet,
+        Excel.Range range, string sheetName, string rangeAddress, ScreenshotQuality quality, CancellationToken cancellationToken)
     {
         Excel.Window? window = null;
         object? previousSheet = null;
@@ -226,6 +230,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             bool wasVisible = (bool)app.Visible;
             if (!wasVisible)
             {
@@ -271,9 +276,10 @@ public partial class ScreenshotCommands : IScreenshotCommands
 
             // Changing zoom can shift an unfrozen split even when the original zoom is
             // restored. Tile the existing panes at their original scale instead.
+            cancellationToken.ThrowIfCancellationRequested();
             CapturePlanner.CapturePlan plan = paneState.HasMultiplePanes
-                ? CapturePlanner.Replan(range, originalZoom, CapturePlanner.MeasureUsablePane(window))
-                : CapturePlanner.Plan(window, range);
+                ? CapturePlanner.Replan(range, originalZoom, CapturePlanner.MeasureUsablePane(window), cancellationToken)
+                : CapturePlanner.Plan(window, range, cancellationToken);
 
             if (plan.Zoom != originalZoom)
             {
@@ -283,10 +289,12 @@ public partial class ScreenshotCommands : IScreenshotCommands
             }
 
             composed = paneState.HasMultiplePanes
-                ? CapturePaneTiles(app, window, range, ref plan)
-                : CaptureTiles(app, window, range, ref plan);
+                ? CapturePaneTiles(app, window, range, ref plan, cancellationToken)
+                : CaptureTiles(app, window, range, ref plan, cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             var encoded = ScreenshotEncoder.Encode(composed, quality);
+            cancellationToken.ThrowIfCancellationRequested();
 
             string message = $"Captured {rangeAddress} on '{sheetName}' ({encoded.Width}x{encoded.Height}px)";
 
@@ -382,7 +390,8 @@ public partial class ScreenshotCommands : IScreenshotCommands
     /// <summary>
     /// Captures each planned tile and stitches them into a single bitmap.
     /// </summary>
-    private static Bitmap CaptureTiles(Excel.Application app, Excel.Window window, Excel.Range range, ref CapturePlanner.CapturePlan plan)
+    private static Bitmap CaptureTiles(Excel.Application app, Excel.Window window,
+        Excel.Range range, ref CapturePlanner.CapturePlan plan, CancellationToken cancellationToken)
     {
         IntPtr hwnd = GetExcelWindowHandle(app);
         int dpi = WindowCapture.GetWindowDpi(hwnd);
@@ -397,16 +406,18 @@ public partial class ScreenshotCommands : IScreenshotCommands
         int paneMaxWidth = (int)Math.Round(usable.Width * deviceScale);
         int paneMaxHeight = (int)Math.Round(usable.Height * deviceScale);
 
-        plan = CapturePlanner.ReplanPixels(range, plan.Zoom, usable, pixelsPerPoint, paneMaxWidth, paneMaxHeight);
+        plan = CapturePlanner.ReplanPixels(range, plan.Zoom, usable, pixelsPerPoint,
+            paneMaxWidth, paneMaxHeight, cancellationToken);
 
-        int[] columnOffsets = BuildPixelOffsets(range, false, plan.ColumnSegments, pixelsPerPoint, paneMaxWidth);
-        int[] rowOffsets = BuildPixelOffsets(range, true, plan.RowSegments, pixelsPerPoint, paneMaxHeight);
+        int[] columnOffsets = BuildPixelOffsets(range, false, plan.ColumnSegments, pixelsPerPoint, paneMaxWidth, cancellationToken);
+        int[] rowOffsets = BuildPixelOffsets(range, true, plan.RowSegments, pixelsPerPoint, paneMaxHeight, cancellationToken);
 
         int totalWidth = columnOffsets[^1];
         int totalHeight = rowOffsets[^1];
         if (totalWidth <= 0 || totalHeight <= 0)
             throw new InvalidOperationException("The requested screenshot range has no visible cell area.");
 
+        cancellationToken.ThrowIfCancellationRequested();
         var canvas = new Bitmap(totalWidth, totalHeight, PixelFormat.Format32bppArgb);
         Excel.Worksheet? sheet = null;
 
@@ -420,6 +431,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
             {
                 for (int columnIndex = 0; columnIndex < plan.ColumnSegments.Count; columnIndex++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     CapturePlanner.Segment rowSegment = plan.RowSegments[rowIndex];
                     CapturePlanner.Segment columnSegment = plan.ColumnSegments[columnIndex];
 
@@ -431,6 +443,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
                         tileRange = GetTileRange(sheet, range, rowSegment, columnSegment);
 
                         ScrollIntoView(window, tileRange);
+                        cancellationToken.ThrowIfCancellationRequested();
 
                         Rectangle windowBounds = WindowCapture.GetWindowBounds(hwnd);
                         shot = WindowCapture.CaptureWindow(hwnd, windowBounds);
@@ -569,8 +582,10 @@ public partial class ScreenshotCommands : IScreenshotCommands
     /// Converts segment sizes in points to cumulative pixel offsets, so adjacent tiles meet without
     /// gaps or overlaps after rounding.
     /// </summary>
-    private static int[] BuildPixelOffsets(Excel.Range range, bool rows, IReadOnlyList<CapturePlanner.Segment> segments, double pixelsPerPoint, int paneMax)
+    internal static int[] BuildPixelOffsets(Excel.Range range, bool rows, IReadOnlyList<CapturePlanner.Segment> segments,
+        double pixelsPerPoint, int paneMax, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var offsets = new int[segments.Count + 1];
         int cursor = 0;
         Excel.Range? items = null;
@@ -584,6 +599,7 @@ public partial class ScreenshotCommands : IScreenshotCommands
                 int renderedSize = segment.RenderedPixels ?? 0;
                 for (int index = segment.Start; !segment.RenderedPixels.HasValue && index < segment.Start + segment.Count; index++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     Excel.Range? item = null;
                     try
                     {

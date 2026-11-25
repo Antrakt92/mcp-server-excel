@@ -10,7 +10,7 @@ internal sealed class CloseHistory
 {
     internal sealed record Target(string SessionId, ExcelProcessIdentity? Excel);
     private sealed record Failure(string? Category, string? ExceptionType, string? HResult);
-    private sealed record Entry(Target Workbook, bool CloseConfirmed, bool SaveConfirmed,
+    private sealed record Entry(Target Workbook, bool CloseConfirmed, bool SaveConfirmed, bool InitialSaveConfirmed,
         Failure? LastFailure, IReadOnlyList<Failure> RecordingFailures, JsonObject? PriorStatus,
         ExcelOperationBlocker? PriorSaveBlocker);
 
@@ -35,6 +35,7 @@ internal sealed class CloseHistory
 
         confirmed &= close.Success;
         bool saved = confirmed && HasTrueFlag(close.Result, "saved");
+        bool initialSaveConfirmed = saved || HasTrueFlag(close.PartialState, "initialSaveConfirmed");
         lock (_gate)
         {
             var previous = _entries.Last;
@@ -52,7 +53,8 @@ internal sealed class CloseHistory
             if (!close.Success && (failure is null || !HasTrueFlag(close.PartialState, "reconciledFailedClose")))
                 failure = new Failure(close.ErrorCategory, close.ExceptionType, close.HResult);
             _entries.AddLast(new Entry(target, confirmed || previous?.Value.CloseConfirmed == true,
-                saved || previous?.Value.SaveConfirmed == true, failure,
+                saved || previous?.Value.SaveConfirmed == true,
+                initialSaveConfirmed || previous?.Value.InitialSaveConfirmed == true, failure,
                 recordingFailures.Count > 0 ? recordingFailures : previous?.Value.RecordingFailures ?? [],
                 priorStatus ?? previous?.Value.PriorStatus, previous?.Value.PriorSaveBlocker ?? priorSaveBlocker));
             if (_entries.Count > Capacity)
@@ -84,6 +86,7 @@ internal sealed class CloseHistory
                     ["closeConfirmed"] = entry.CloseConfirmed,
                     ["sessionReleased"] = sessionReleased(entry.Workbook.SessionId),
                     ["saveConfirmed"] = entry.SaveConfirmed,
+                    ["initialSaveConfirmed"] = entry.InitialSaveConfirmed,
                     ["lastFailure"] = entry.LastFailure is { } failure ? FailureDiagnostic(failure) : null,
                     ["recordingFailures"] = new JsonArray(entry.RecordingFailures.Select(value => (JsonNode)FailureDiagnostic(value)).ToArray()),
                     ["priorStatusDiagnostic"] = entry.PriorStatus?.DeepClone(),

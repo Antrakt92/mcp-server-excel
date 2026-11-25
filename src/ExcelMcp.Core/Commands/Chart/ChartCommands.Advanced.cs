@@ -36,7 +36,7 @@ public partial class ChartCommands
             {
                 chart = findResult.Chart;
                 findResult.Chart = null;
-                if (_pivotStrategy.CanHandle(chart))
+                if (PivotChartStrategy.IsPivotChart(chart))
                 {
                     throw new InvalidOperationException(
                         "Per-series chart types are not supported for PivotCharts. " +

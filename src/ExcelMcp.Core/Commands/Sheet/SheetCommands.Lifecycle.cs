@@ -450,6 +450,17 @@ public partial class SheetCommands
 
     // === ATOMIC CROSS-FILE OPERATIONS ===
 
+    private static (string Source, string Target) ValidateCrossFilePaths(string sourceFile, string targetFile)
+    {
+        var source = FilePathValidation.NormalizeAbsoluteWindowsPath(sourceFile);
+        var target = FilePathValidation.NormalizeAbsoluteWindowsPath(targetFile);
+        if (!File.Exists(source))
+            throw new FileNotFoundException($"Source file not found: {source}");
+        if (!File.Exists(target))
+            throw new FileNotFoundException($"Target file not found: {target}");
+        return (source, target);
+    }
+
     /// <inheritdoc />
     public OperationResult CopyToFile(string sourceFile, string sourceSheet, string targetFile, string? targetSheetName = null, string? beforeSheet = null, string? afterSheet = null)
     {
@@ -464,26 +475,14 @@ public partial class SheetCommands
             throw new ArgumentException("Cannot specify both beforeSheet and afterSheet. Choose one or neither.");
         }
 
-        // Validate file paths
-        if (string.IsNullOrWhiteSpace(sourceFile))
-            throw new ArgumentException("sourceFile is required", nameof(sourceFile));
-        if (string.IsNullOrWhiteSpace(targetFile))
-            throw new ArgumentException("targetFile is required", nameof(targetFile));
-        if (!File.Exists(sourceFile))
-            throw new FileNotFoundException($"Source file not found: {sourceFile}");
-        if (!File.Exists(targetFile))
-            throw new FileNotFoundException($"Target file not found: {targetFile}");
-
-        // Normalize paths for comparison
-        string normalizedSource = Path.GetFullPath(sourceFile);
-        string normalizedTarget = Path.GetFullPath(targetFile);
+        var (normalizedSource, normalizedTarget) = ValidateCrossFilePaths(sourceFile, targetFile);
         if (string.Equals(normalizedSource, normalizedTarget, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Source and target files must be different. For same-file copy, use the 'copy' action.");
         }
 
         // Create a batch with both files open in the same Excel instance
-        using var batch = ExcelSession.BeginBatch(sourceFile, targetFile);
+        using var batch = ExcelSession.BeginBatch(normalizedSource, normalizedTarget);
         WorkbookAccessGuard.EnsureWritable(batch, normalizedTarget);
 
         return batch.Execute((ctx, ct) =>
@@ -566,26 +565,14 @@ public partial class SheetCommands
             throw new ArgumentException("Cannot specify both beforeSheet and afterSheet. Choose one or neither.");
         }
 
-        // Validate file paths
-        if (string.IsNullOrWhiteSpace(sourceFile))
-            throw new ArgumentException("sourceFile is required", nameof(sourceFile));
-        if (string.IsNullOrWhiteSpace(targetFile))
-            throw new ArgumentException("targetFile is required", nameof(targetFile));
-        if (!File.Exists(sourceFile))
-            throw new FileNotFoundException($"Source file not found: {sourceFile}");
-        if (!File.Exists(targetFile))
-            throw new FileNotFoundException($"Target file not found: {targetFile}");
-
-        // Normalize paths for comparison
-        string normalizedSource = Path.GetFullPath(sourceFile);
-        string normalizedTarget = Path.GetFullPath(targetFile);
+        var (normalizedSource, normalizedTarget) = ValidateCrossFilePaths(sourceFile, targetFile);
         if (string.Equals(normalizedSource, normalizedTarget, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Source and target files must be different. For same-file move, use the 'move' action.");
         }
 
         // Create a batch with both files open in the same Excel instance
-        using var batch = ExcelSession.BeginBatch(sourceFile, targetFile);
+        using var batch = ExcelSession.BeginBatch(normalizedSource, normalizedTarget);
         WorkbookAccessGuard.EnsureWritable(batch, normalizedSource);
         WorkbookAccessGuard.EnsureWritable(batch, normalizedTarget);
 

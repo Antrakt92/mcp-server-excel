@@ -85,18 +85,7 @@ public partial class DataModelCommands
                 // Iterate through all measures (they're at model level)
                 ForEachMeasure(model!, (measure, index) =>
                 {
-                    // Get the table name for this measure
-                    string measureTableName = string.Empty;
-                    Excel.ModelTable? associatedTable = null;
-                    try
-                    {
-                        associatedTable = measure.AssociatedTable;
-                        measureTableName = associatedTable?.Name?.ToString() ?? string.Empty;
-                    }
-                    finally
-                    {
-                        ComUtilities.Release(ref associatedTable);
-                    }
+                    string measureTableName = ReadMeasureTableName(measure);
 
                     if (!string.IsNullOrWhiteSpace(measureTableName))
                         measureTables.Add(measureTableName);
@@ -199,7 +188,7 @@ public partial class DataModelCommands
                     : measure.Formula ?? string.Empty;
                 result.Description = measure.Description ?? string.Empty;
                 result.CharacterCount = result.DaxFormula.Length;
-                result.TableName = GetMeasureTableName(model!, measureName) ?? "";
+                result.TableName = ReadMeasureTableName(measure);
 
                 object? formatInfo = null;
                 try

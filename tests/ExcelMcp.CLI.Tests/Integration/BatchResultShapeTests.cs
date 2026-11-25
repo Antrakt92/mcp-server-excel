@@ -69,20 +69,23 @@ public sealed class BatchResultShapeTests
         Assert.Empty(output.RootElement.GetProperty("data").GetProperty("sessions").EnumerateArray());
     }
 
-    [Fact]
-    public async Task Batch_MixedCaseSaveAs_PreservesControllerCommandAndOutputPath()
+    [Theory]
+    [InlineData(@"C:\synthetic\MixedCase.xlsx")]
+    [InlineData(@"nested\MixedCase.xlsx")]
+    public async Task Batch_MixedCaseSaveAs_PreservesControllerCommandAndBindsOutputPath(string targetPath)
     {
+        var input = JsonSerializer.Serialize(new { command = "Workbook.SAVE-AS", args = new { targetPath, overwrite = false } });
         var result = await InProcessCliHelper.RunAsync(["batch", "--session", "target"],
             request =>
             {
                 Assert.Equal("workbook.save-as", request.Command);
                 Assert.Equal("target", request.SessionId);
                 using var args = JsonDocument.Parse(request.Args!);
-                Assert.Equal(@"C:\synthetic\MixedCase.xlsx", args.RootElement.GetProperty("targetPath").GetString());
+                Assert.Equal(Path.GetFullPath(targetPath, Environment.CurrentDirectory), args.RootElement.GetProperty("targetPath").GetString());
                 Assert.False(args.RootElement.GetProperty("overwrite").GetBoolean());
                 return new ServiceResponse { Success = true, Result = """{"success":true}""" };
             },
-            """{"command":"Workbook.SAVE-AS","args":{"targetPath":"C:\\synthetic\\MixedCase.xlsx","overwrite":false}}""");
+            input);
 
         Assert.Equal(0, result.ExitCode);
         using var output = JsonDocument.Parse(result.Stdout);

@@ -10,6 +10,39 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ServiceWorkbookLifecycleTests
 {
+    [Fact]
+    public async Task Discover_WhenFirstWindowDisappears_UsesAnotherWindowFromTheSameExcelProcess()
+    {
+        await RunWithCleanupAsync(async (service, directory, sessions) =>
+        {
+            var path = Path.Join(directory, "alternate-discovery-window.xlsx");
+            var sessionId = await CreateSessionAsync(service, path);
+            sessions[sessionId] = 0;
+            var batch = Assert.IsType<ExcelBatch>(service.SessionManager.GetSession(sessionId));
+            var identity = Assert.IsType<ExcelProcessIdentity>(batch.ProcessIdentity);
+            var previousFind = RunningExcelWindows.FindHookForTests;
+            var window = Assert.Single(RunningExcelWindows.Find().Windows, candidate => candidate.Process == identity);
+            var selection = window with { Handle = nint.Zero, AlternateHandles = [window.Handle] };
+            RunningExcelWindows.FindHookForTests = () => new RunningExcelWindows.Discovery([selection], []);
+            try
+            {
+                var response = await service.ProcessAsync(new ServiceRequest { Command = "session.discover" });
+                RequireSuccess(response);
+                using var result = JsonDocument.Parse(response.Result!);
+                Assert.True(result.RootElement.GetProperty("complete").GetBoolean(), response.Result);
+                Assert.Empty(result.RootElement.GetProperty("errors").EnumerateArray());
+                var workbook = Assert.Single(result.RootElement.GetProperty("workbooks").EnumerateArray());
+                Assert.Equal(identity.ProcessId, workbook.GetProperty("processId").GetInt32());
+                Assert.Equal(path, workbook.GetProperty("location").GetString(), ignoreCase: true);
+                Assert.Equal(sessionId, workbook.GetProperty("sessionId").GetString());
+            }
+            finally
+            {
+                RunningExcelWindows.FindHookForTests = previousFind;
+            }
+        });
+    }
+
     [Theory]
     [InlineData(0, false)]
     [InlineData(1, false)]

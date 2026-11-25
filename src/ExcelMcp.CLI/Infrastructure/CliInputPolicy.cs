@@ -1,10 +1,12 @@
 using System.Reflection;
+using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.Generated;
+using Sbroenne.ExcelMcp.Service;
 using Spectre.Console.Cli;
 
 namespace Sbroenne.ExcelMcp.CLI.Infrastructure;
 
-/// <summary>Enforces source-declared input policy before Spectre can convert or print argument values.</summary>
+/// <summary>Applies CLI-specific input policy before dispatch.</summary>
 internal static class CliInputPolicy
 {
     private static readonly HashSet<string> VbaBooleanOptions = typeof(ServiceRegistry.Vba.CliSettings)
@@ -17,6 +19,50 @@ internal static class CliInputPolicy
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     internal static bool IsHelpFlag(string argument) => argument is "--help" or "-h" or "-?";
+
+    internal static (string? Args, IReadOnlyList<(string Path, string Option)> ProtectedPaths) BindArtifactPaths(
+        string command, string? argsJson, string callerDirectory)
+    {
+        (string Name, string Option)[] operands = command switch
+        {
+            "workbook.save-as" or "workbook.save-copy-as" or "workbook.export-fixed-format" or "chart.export-image" =>
+                [("targetPath", "--target-path")],
+            "sheet.copy-to-file" or "sheet.move-to-file" =>
+                [("sourceFile", "--source-file"), ("targetFile", "--target-file")],
+            _ => []
+        };
+        if (argsJson is null || operands.Length == 0)
+            return (argsJson, []);
+
+        if (JsonNode.Parse(argsJson) is not JsonObject request)
+            throw new ArgumentException("Command arguments must be a JSON object.", nameof(argsJson));
+        var protectedPaths = new List<(string Path, string Option)>(operands.Length);
+        var changed = false;
+        foreach (var (name, option) in operands)
+        {
+            if (request[name] is not JsonValue operand
+                || !operand.TryGetValue<string>(out var path) || string.IsNullOrWhiteSpace(path))
+            {
+                throw new ArgumentException($"{name} must be a non-empty path string.", name);
+            }
+            var absolute = Path.GetFullPath(path, callerDirectory);
+            // The daemon's directory can differ from the calling client's directory.
+            if (!Path.IsPathFullyQualified(path))
+            {
+                request[name] = absolute;
+                changed = true;
+            }
+            protectedPaths.Add((absolute, option));
+        }
+
+        if (command == "workbook.save-copy-as" && request["packageCheck"] is JsonObject packageCheck
+            && packageCheck["baselinePath"] is JsonValue baselineValue
+            && baselineValue.TryGetValue<string>(out var baselinePath) && !string.IsNullOrWhiteSpace(baselinePath))
+        {
+            protectedPaths.Add((Path.GetFullPath(baselinePath, callerDirectory), "--package-check baselinePath"));
+        }
+        return (changed ? request.ToJsonString(ServiceProtocol.JsonOptions) : argsJson, protectedPaths);
+    }
 
     internal static string? FindStdinOnlyCommand(IReadOnlyList<string> arguments)
     {

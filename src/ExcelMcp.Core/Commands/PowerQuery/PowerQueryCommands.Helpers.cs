@@ -406,51 +406,6 @@ public partial class PowerQueryCommands
     private static void WaitForRefreshCompletion(
         Func<bool> isRefreshing,
         Action cancelRefresh,
-        CancellationToken cancellationToken)
-    {
-        // CRITICAL: Rate-limit the isRefreshing() COM call to every 200ms of *real* elapsed time.
-        //
-        // On STA threads with OleMessageFilter registered, COM events from Excel during refresh
-        // (SheetChange, Calculate, Data Model callbacks) wake Thread.Sleep immediately via
-        // MsgWaitForMultipleObjectsEx (CoWaitForMultipleHandles). Without rate-limiting,
-        // isRefreshing() (a cross-process COM property access, ~200-500μs) runs thousands of
-        // times/second → 100% CPU spin.
-        //
-        // Use KernelSleep (Win32 Sleep via P/Invoke) instead of Thread.Sleep:
-        // Thread.Sleep on STA threads uses CoWaitForMultipleHandles which pumps the COM message
-        // queue and wakes early on every incoming COM event (Data Model row-write callbacks from
-        // MashupHost.exe, SheetChange, etc.). During large PQ refreshes this causes CPU spin
-        // even with the Stopwatch guard. Win32 Sleep() is a bare NtDelayExecution call with no
-        // COM pumping — the thread genuinely sleeps the full 200ms per interval.
-        // Safety: refresh completion is driven by Excel's own internals (MashupHost → Excel STA).
-        // connection.Refreshing flips to false in Excel's process without requiring our STA to
-        // service any callbacks. The Stopwatch guard is kept as defensive belt-and-suspenders.
-        const int CheckIntervalMs = 200;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            // Initial check: if already done, skip the wait entirely.
-            if (!isRefreshing())
-                return;
-
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                // Sleep without pumping the STA COM queue. Win32 Sleep() does not wake early
-                // on COM events, so the Stopwatch guard below is belt-and-suspenders only.
-                ComUtilities.KernelSleep(CheckIntervalMs);
-                // Guard: loop back without calling isRefreshing() if sleep returned early.
-                if (sw.Elapsed.TotalMilliseconds < CheckIntervalMs)
-                    continue;
-                sw.Restart();
-                if (!isRefreshing())
-                    break;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            cancelRefresh();
-            throw;
-        }
-    }
+        CancellationToken cancellationToken) =>
+        ConnectionRefreshWait.Wait(isRefreshing, cancelRefresh, cancellationToken, pollIntervalMs: 200);
 }

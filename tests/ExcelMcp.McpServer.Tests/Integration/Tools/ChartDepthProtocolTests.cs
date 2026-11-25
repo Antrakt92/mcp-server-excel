@@ -46,6 +46,27 @@ public sealed class ChartDepthProtocolTests(RecordingProgramTransportFixture fix
         Assert.False(call.Result.IsError);
     }
 
+    [Theory]
+    [InlineData("set-error-bars", "error_bar_options", """{"enable":false,"kind":"StandardError"}""")]
+    [InlineData("set-point-format", "point_options", """{"fillColour":"#112233"}""")]
+    public async Task ChartConfiguration_RejectsUnknownOptionsBeforeDispatch(string action, string option, string json)
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["action"] = action,
+            ["workbook_session_id"] = "session-1",
+            ["chart_name"] = "Sales",
+            ["series_index"] = 2,
+            [option] = JsonSerializer.Deserialize<JsonElement>(json)
+        };
+        if (action == "set-point-format")
+            arguments["point_index"] = 3;
+
+        var result = await fixture.CallResultWithoutDispatchAsync("chart_config", arguments);
+
+        Assert.True(result.IsError);
+    }
+
     [Fact]
     public async Task ImageExport_PreservesFormatAndOverwrite()
     {

@@ -31,7 +31,9 @@ Invoke-PackageStage 'npmtest' {
                 $manifest.os.Count -ne 1 -or $manifest.os[0] -cne 'win32' -or $manifest.cpu.Count -ne 1 -or $manifest.cpu[0] -cne $Architecture) {
                 throw 'npm runtime metadata does not match the requested architecture.'
             }
-            Assert-PackageRuntimeArchitecture (Join-Path $package "$command.exe") $Architecture
+            $executable = Join-Path $package "$command.exe"
+            Assert-PackageRuntimeArchitecture $executable $Architecture
+            Assert-PackageRuntimeVersion $executable $version
         } else {
             if ($manifest.version -cne $version -or $manifest.bin -isnot [Collections.IDictionary] -or $manifest.bin[$command] -cne "bin/$command.js") {
                 throw 'npm launcher metadata does not match the runtime.'

@@ -8,13 +8,6 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Chart;
 public interface IChartStrategy
 {
     /// <summary>
-    /// Determines if this strategy can handle the given chart.
-    /// </summary>
-    /// <param name="chart">Excel Chart COM object</param>
-    /// <returns>True if this strategy handles this chart type</returns>
-    bool CanHandle(Excel.Chart chart);
-
-    /// <summary>
     /// Gets chart information (type, position, series, etc.).
     /// </summary>
     /// <param name="chart">Excel Chart COM object</param>

@@ -35,6 +35,20 @@ public sealed class GeneratedActionContractTests
     }
 
     [Theory]
+    [InlineData("chartconfig.set-error-bars",
+        """{"chartName":"Sales","seriesIndex":1,"errorBarOptions":{"enable":false,"kind":"StandardError"}}""", "enable")]
+    [InlineData("chartconfig.set-error-bars",
+        """{"chartName":"Sales","seriesIndex":1,"errorBarOptions":{"kind":"Custom","sourceSheet":"Actuals","plusRange":"A1:A2","minusRange":"B1:B2"}}""", "sourceSheet")]
+    [InlineData("chartconfig.set-point-format",
+        """{"chartName":"Sales","seriesIndex":1,"pointIndex":1,"pointOptions":{"fillColour":"#112233"}}""", "fillColour")]
+    public void RawChartArguments_RejectUnknownNestedOptions(string command, string args, string unknownOption)
+    {
+        var error = Assert.Throws<ArgumentException>(() => ServiceRegistry.ValidateCommandArguments(command, args));
+        Assert.Contains("Invalid argument value", error.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{unknownOption}'", Assert.IsType<JsonException>(error.InnerException).Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("protect-project", VbaAction.ProtectProject)]
     [InlineData("unlock-project", VbaAction.UnlockProject)]
     [InlineData("verify-password", VbaAction.VerifyPassword)]

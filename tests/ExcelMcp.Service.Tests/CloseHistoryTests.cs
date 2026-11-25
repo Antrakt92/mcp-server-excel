@@ -31,6 +31,7 @@ public sealed class CloseHistoryTests
         var entry = Assert.IsType<JsonObject>(Assert.Single(history.Snapshot([], _ => false)));
         Assert.False(entry["closeConfirmed"]!.GetValue<bool>());
         Assert.False(entry["saveConfirmed"]!.GetValue<bool>());
+        Assert.False(entry["initialSaveConfirmed"]!.GetValue<bool>());
         Assert.Equal("Busy", entry["lastFailure"]!["category"]!.GetValue<string>());
         Assert.Equal("0x800706B5", entry["lastFailure"]!["hresult"]!.GetValue<string>());
         Assert.Equal("0x800706BE", entry["priorStatusDiagnostic"]!["hresult"]!.GetValue<string>());
@@ -52,6 +53,7 @@ public sealed class CloseHistoryTests
         var entry = Assert.IsType<JsonObject>(Assert.Single(history.Snapshot([], _ => false)));
         Assert.True(entry["closeConfirmed"]!.GetValue<bool>());
         Assert.True(entry["saveConfirmed"]!.GetValue<bool>());
+        Assert.True(entry["initialSaveConfirmed"]!.GetValue<bool>());
         Assert.False(entry["sessionReleased"]!.GetValue<bool>());
         Assert.Null(entry["lastFailure"]);
         Assert.Equal("IOException", entry["recordingFailures"]![0]!["exceptionType"]!.GetValue<string>());
@@ -69,7 +71,8 @@ public sealed class CloseHistoryTests
             ErrorCategory = "Busy",
             ExceptionType = "ExcelBusyException",
             ErrorMessage = "Private workbook path",
-            HResult = "0x800706B5"
+            HResult = "0x800706B5",
+            PartialState = """{"initialSaveConfirmed":true}"""
         }, priorSaveBlocker: blocker);
         history.Record(target, new ServiceResponse { ErrorCategory = "Busy", HResult = "0x800706B5" },
             priorSaveBlocker: new("officeModal", blocker.ObservedAtUtc.AddSeconds(1)));
@@ -94,6 +97,7 @@ public sealed class CloseHistoryTests
         Assert.True(settled["sessionReleased"]!.GetValue<bool>());
         Assert.False(settled["closeConfirmed"]!.GetValue<bool>());
         Assert.False(settled["saveConfirmed"]!.GetValue<bool>());
+        Assert.True(settled["initialSaveConfirmed"]!.GetValue<bool>());
         Assert.Equal("Busy", settled["lastFailure"]!["category"]!.GetValue<string>());
         Assert.Equal("0x800706B5", settled["lastFailure"]!["hresult"]!.GetValue<string>());
         Assert.Equal("vbeModal", settled["priorSaveBlocker"]!["kind"]!.GetValue<string>());

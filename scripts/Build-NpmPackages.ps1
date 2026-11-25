@@ -16,6 +16,7 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory, $root)
 Assert-PackageOutputPath $OutputDirectory $root @($RuntimeExecutable)
 if ([IO.Path]::GetExtension($RuntimeExecutable) -ine '.exe') { throw "Runtime executable must be an .exe file: $RuntimeExecutable" }
 Assert-PackageRuntimeArchitecture $RuntimeExecutable $Architecture
+Assert-PackageRuntimeVersion $RuntimeExecutable $Version
 $name, $command = if ($Component -eq 'Cli') { 'excelcli'; 'excelcli' } else { 'mcp-server-excel'; 'mcp-excel' }
 
 function New-NpmArchive {

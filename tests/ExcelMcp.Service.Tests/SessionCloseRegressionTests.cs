@@ -100,6 +100,57 @@ public sealed partial class SessionCloseRegressionTests
         Assert.Equal(1, batch.DisposeCalls);
     }
 
+    [Theory]
+    [InlineData("save")]
+    [InlineData("close")]
+    [InlineData("disconnect")]
+    public async Task CloseWithSave_FailureReportsOnlyACompletedInitialSave(string failingPhase)
+    {
+        using var service = new ExcelMcpService();
+        const string sessionId = "save-then-close-failure";
+        var batch = new FakeBatch { WorkbookPath = CreateFakeWorkbookPath() };
+        if (failingPhase == "save")
+            batch.SaveException = new IOException("Initial save failed.");
+        else if (failingPhase == "disconnect")
+            batch.DisposeException = Marshal.GetExceptionForHR(unchecked((int)0x800706BE), new IntPtr(-1));
+        else
+            batch.DisposeException = new IOException("Close failed after initial save.");
+        RegisterSession(service, sessionId, batch, addKnownSessionId: true);
+
+        try
+        {
+            var close = await CloseSessionAsync(service, sessionId, save: true);
+            Assert.False(close.Success);
+            Assert.Same(batch, service.SessionManager.GetSessionForDiagnostics(sessionId));
+            if (failingPhase == "save")
+            {
+                Assert.Contains("Initial save failed.", close.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("initialSaveConfirmed", close.PartialState ?? "", StringComparison.Ordinal);
+                Assert.Equal(0, batch.DisposeCalls);
+                return;
+            }
+
+            Assert.Equal(1, batch.DisposeCalls);
+            using var partial = JsonDocument.Parse(close.PartialState!);
+            Assert.True(partial.RootElement.GetProperty("initialSaveConfirmed").GetBoolean());
+            Assert.False(partial.RootElement.TryGetProperty("saved", out _));
+            if (failingPhase == "disconnect")
+            {
+                Assert.Equal("ExcelDisconnected", close.ErrorCategory);
+                Assert.Equal("0x800706BE", close.HResult);
+                Assert.Equal("unknown", partial.RootElement.GetProperty("outcome").GetString());
+            }
+            else
+            {
+                Assert.Contains("Close failed after initial save.", close.ErrorMessage, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            batch.DisposeException = null;
+        }
+    }
+
     [Fact(Timeout = 15000)]
     public async Task WorkerMonitor_RetainsSessionPublishedDuringControllerExit()
     {

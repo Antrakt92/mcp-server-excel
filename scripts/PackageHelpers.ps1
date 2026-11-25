@@ -180,6 +180,14 @@ function Assert-PackageRuntimeArchitecture {
     } finally { $reader.Dispose() }
 }
 
+function Assert-PackageRuntimeVersion {
+    param([string]$Path, [string]$Version)
+    $product = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path).ProductVersion
+    if (-not $product -or $product.Split('+')[0] -cne $Version) {
+        throw "Runtime version $product does not match $Version."
+    }
+}
+
 function Invoke-PackageCommand {
     param([string]$Directory, [string]$Executable, [string[]]$Arguments, [double]$TimeoutSeconds = 1200)
     if ($Executable -eq 'npm' -and $IsWindows) {

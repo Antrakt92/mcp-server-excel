@@ -1,4 +1,5 @@
 using Sbroenne.ExcelMcp.ComInterop;
+using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Utilities;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -12,8 +13,8 @@ internal static class BoundedRangeValueReader
             "Use range get-values-page with the named range or a table worksheet range. No values were read.");
 
     internal static List<List<object?>> Read(
-        Excel.Range range, (int Rows, int Columns) size, RangeReadBudget budget, CancellationToken ct,
-        Func<int, bool>? includeRow = null, Func<object?, object?>? convertValue = null)
+        ExcelContext context, Excel.Range range, (int Rows, int Columns) size, RangeReadBudget budget,
+        CancellationToken ct, Func<int, bool>? includeRow = null, Func<object?, object?>? convertValue = null)
     {
         EnsureCellLimit(size);
         int[]? outputRows = null;
@@ -37,6 +38,7 @@ internal static class BoundedRangeValueReader
             rows.Add(new List<object?>(size.Columns));
 
         Excel.Range? cells = null;
+        Excel.WorksheetFunction? functions = null;
         try
         {
             cells = range.Cells;
@@ -48,6 +50,7 @@ internal static class BoundedRangeValueReader
 
                 Excel.Range? anchor = null;
                 Excel.Range? tile = null;
+                Excel.Range? tileCells = null;
                 try
                 {
                     anchor = cells[window.RowOffset + 1, window.ColumnOffset + 1];
@@ -64,9 +67,13 @@ internal static class BoundedRangeValueReader
                         if (outputRow < 0)
                             continue;
 
-                        foreach (var raw in grid.Values[row])
+                        for (int column = 0; column < window.Columns; column++)
                         {
-                            var value = convertValue is null ? raw : convertValue(raw);
+                            ct.ThrowIfCancellationRequested();
+                            var raw = grid.Values[row][column];
+                            var error = RangeCommands.ReadNativeError(context, tile, row + 1, column + 1, raw,
+                                ref tileCells, ref functions);
+                            var value = error?.Name ?? (convertValue is null ? raw : convertValue(raw));
                             budget.AddScalar(value);
                             rows[outputRow].Add(value);
                         }
@@ -74,6 +81,7 @@ internal static class BoundedRangeValueReader
                 }
                 finally
                 {
+                    ComUtilities.Release(ref tileCells);
                     ComUtilities.Release(ref tile);
                     ComUtilities.Release(ref anchor);
                 }
@@ -83,6 +91,7 @@ internal static class BoundedRangeValueReader
         }
         finally
         {
+            ComUtilities.Release(ref functions);
             ComUtilities.Release(ref cells);
         }
     }

@@ -142,6 +142,10 @@ keeps up to 16 session/process pairs in the current controller.
 - `closeConfirmed` records a successful close response from the session's worker.
 - `sessionReleased` records that the controller removed the session and its path claims.
 - `saveConfirmed` records an explicit successful save-with-close response.
+- `initialSaveConfirmed` means Excel completed the first save requested by
+  `close(save=true)`. A later failure can still leave newer edits unsaved and
+  the workbook open. A close error returned by the worker includes the same field
+  when the first save completed. A lost worker reply can leave this unknown.
 - `nativeExit` adds a matching confirmed process exit when available.
 - `lastFailure` preserves the latest close error's category, type and HRESULT.
   A later success can add confirmation without erasing that failure.
