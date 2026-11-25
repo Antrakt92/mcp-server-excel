@@ -35,7 +35,7 @@ public partial class ChartCommands
             try
             {
                 // Determine strategy and delegate
-                IChartStrategy strategy = _pivotStrategy.CanHandle(findResult.Chart) ? _pivotStrategy : _regularStrategy;
+                IChartStrategy strategy = PivotChartStrategy.IsPivotChart(findResult.Chart) ? _pivotStrategy : _regularStrategy;
                 strategy.SetSourceRange(findResult.Chart, sourceRange, ct);
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath }; // Void operation completed
@@ -68,7 +68,7 @@ public partial class ChartCommands
             try
             {
                 // Determine strategy and delegate
-                IChartStrategy strategy = _pivotStrategy.CanHandle(findResult.Chart) ? _pivotStrategy : _regularStrategy;
+                IChartStrategy strategy = PivotChartStrategy.IsPivotChart(findResult.Chart) ? _pivotStrategy : _regularStrategy;
                 var result = strategy.AddSeries(findResult.Chart, seriesName, valuesRange, categoryRange);
 
                 return result;
@@ -96,7 +96,7 @@ public partial class ChartCommands
             try
             {
                 // Determine strategy and delegate
-                IChartStrategy strategy = _pivotStrategy.CanHandle(findResult.Chart) ? _pivotStrategy : _regularStrategy;
+                IChartStrategy strategy = PivotChartStrategy.IsPivotChart(findResult.Chart) ? _pivotStrategy : _regularStrategy;
                 strategy.RemoveSeries(findResult.Chart, seriesIndex);
 
                 return new OperationResult { Success = true, FilePath = batch.WorkbookPath }; // Void operation completed

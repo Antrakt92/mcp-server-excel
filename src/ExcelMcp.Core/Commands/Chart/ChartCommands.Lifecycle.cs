@@ -62,7 +62,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                                 string chartName = shape.Name?.ToString() ?? $"Chart{j}";
 
                                 // Determine strategy and get info
-                                IChartStrategy strategy = _pivotStrategy.CanHandle(chart) ? _pivotStrategy : _regularStrategy;
+                                IChartStrategy strategy = PivotChartStrategy.IsPivotChart(chart) ? _pivotStrategy : _regularStrategy;
                                 var chartInfo = strategy.GetInfo(chart, chartName, sheetName, shape);
 
                                 result.Charts.Add(chartInfo);
@@ -102,7 +102,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
             {
                 if (found.Chart is null || found.Shape is null)
                     throw new InvalidOperationException($"Chart '{chartName}' not found in workbook.");
-                IChartStrategy strategy = _pivotStrategy.CanHandle(found.Chart) ? _pivotStrategy : _regularStrategy;
+                IChartStrategy strategy = PivotChartStrategy.IsPivotChart(found.Chart) ? _pivotStrategy : _regularStrategy;
                 return strategy.GetDetailedInfo(found.Chart, chartName, found.SheetName, found.Shape);
             }
             finally
@@ -161,7 +161,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                 else if (left == 0 && top == 0)
                 {
                     // No explicit position — auto-position below content
-                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet, width, height);
+                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet);
                     finalLeft = autoPos.Left;
                     finalTop = autoPos.Top;
                 }
@@ -263,7 +263,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                 }
                 else if (left == 0 && top == 0)
                 {
-                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet, width, height);
+                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet);
                     finalLeft = autoPos.Left;
                     finalTop = autoPos.Top;
                 }
@@ -377,7 +377,7 @@ public partial class ChartCommands : IChartCommands, IChartConfigCommands
                 }
                 else if (left == 0 && top == 0)
                 {
-                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet, width, height);
+                    (double Left, double Top) autoPos = ChartPositionHelpers.FindAvailablePosition(worksheet);
                     finalLeft = autoPos.Left;
                     finalTop = autoPos.Top;
                 }

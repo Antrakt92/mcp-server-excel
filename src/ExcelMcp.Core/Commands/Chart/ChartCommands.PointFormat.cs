@@ -27,7 +27,7 @@ public partial class ChartCommands
         return WithPoint(batch, chartName, seriesIndex, pointIndex, pointOptions);
     }
 
-    private ChartPointFormatResult WithPoint(IExcelBatch batch, string name, int seriesIndex, int pointIndex, ChartPointOptions? options)
+    private static ChartPointFormatResult WithPoint(IExcelBatch batch, string name, int seriesIndex, int pointIndex, ChartPointOptions? options)
     {
         ValidateSeriesIndex(seriesIndex);
         if (pointIndex < 1) throw new ArgumentOutOfRangeException(nameof(pointIndex), "Point indices start at one.");

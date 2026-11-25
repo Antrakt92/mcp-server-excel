@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Excel = Microsoft.Office.Interop.Excel;
 
@@ -10,10 +9,6 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Chart;
 /// </summary>
 public class RegularChartStrategy : IChartStrategy
 {
-    /// <inheritdoc />
-    public bool CanHandle(Excel.Chart chart) =>
-        !PivotChartStrategy.HasPivotLayout(() => chart.PivotLayout);
-
     /// <inheritdoc />
     public ChartInfo GetInfo(Excel.Chart chart, string chartName, string sheetName, Excel.Shape shape)
     {
@@ -29,45 +24,7 @@ public class RegularChartStrategy : IChartStrategy
             Height = Convert.ToDouble(shape.Height)
         };
 
-        // Get anchor cells and placement mode
-        Excel.Range? topLeftCell = null;
-        Excel.Range? bottomRightCell = null;
-        try
-        {
-            topLeftCell = shape.TopLeftCell;
-            info.TopLeftCell = topLeftCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // TopLeftCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref topLeftCell!);
-        }
-
-        try
-        {
-            bottomRightCell = shape.BottomRightCell;
-            info.BottomRightCell = bottomRightCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // BottomRightCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref bottomRightCell!);
-        }
-
-        try
-        {
-            info.Placement = (int)shape.Placement;
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // Placement not available - optional COM property
-        }
+        (info.TopLeftCell, info.BottomRightCell, info.Placement) = ChartPositionHelpers.ReadAnchors(shape);
 
         info.SeriesCount = ChartSeriesReader.Count(chart);
 
@@ -90,45 +47,7 @@ public class RegularChartStrategy : IChartStrategy
             Height = Convert.ToDouble(shape.Height)
         };
 
-        // Get anchor cells and placement mode
-        Excel.Range? topLeftCell = null;
-        Excel.Range? bottomRightCell = null;
-        try
-        {
-            topLeftCell = shape.TopLeftCell;
-            info.TopLeftCell = topLeftCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // TopLeftCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref topLeftCell!);
-        }
-
-        try
-        {
-            bottomRightCell = shape.BottomRightCell;
-            info.BottomRightCell = bottomRightCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // BottomRightCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref bottomRightCell!);
-        }
-
-        try
-        {
-            info.Placement = (int)shape.Placement;
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // Placement not available - optional COM property
-        }
+        (info.TopLeftCell, info.BottomRightCell, info.Placement) = ChartPositionHelpers.ReadAnchors(shape);
 
         // Get title
         if (chart.HasTitle)

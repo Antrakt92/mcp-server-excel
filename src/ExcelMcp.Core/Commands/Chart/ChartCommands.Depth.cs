@@ -33,7 +33,7 @@ public partial class ChartCommands
         if (index < 1) throw new ArgumentOutOfRangeException(nameof(index), "Series indices start at one.");
     }
 
-    private T WithNativeSeries<T>(IExcelBatch batch, string chartName, int index, bool requireRegular,
+    private static T WithNativeSeries<T>(IExcelBatch batch, string chartName, int index, bool requireRegular,
         Func<Excel.Chart, Excel.Series, Excel.Workbook, string, CancellationToken, T> operation)
     {
         return batch.Execute((ctx, ct) =>
@@ -47,7 +47,7 @@ public partial class ChartCommands
                 chart = (Excel.Chart?)found.Chart
                     ?? throw new ArgumentException($"Chart '{chartName}' not found.");
                 found.Chart = null;
-                if (requireRegular && _pivotStrategy.CanHandle(chart))
+                if (requireRegular && PivotChartStrategy.IsPivotChart(chart))
                     throw new InvalidOperationException("This per-series operation is not supported for PivotCharts. Use pivottable_field for their data fields and chartconfig.set-chart-type for the whole chart.");
                 collection = (Excel.SeriesCollection)chart.SeriesCollection();
                 if (index > collection.Count)

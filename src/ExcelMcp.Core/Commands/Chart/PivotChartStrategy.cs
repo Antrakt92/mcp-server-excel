@@ -10,8 +10,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands.Chart;
 /// </summary>
 public class PivotChartStrategy : IChartStrategy
 {
-    /// <inheritdoc />
-    public bool CanHandle(Excel.Chart chart) =>
+    internal static bool IsPivotChart(Excel.Chart chart) =>
         HasPivotLayout(() => chart.PivotLayout);
 
     internal delegate Excel.PivotLayout? PivotLayoutReader();
@@ -49,45 +48,7 @@ public class PivotChartStrategy : IChartStrategy
             Height = Convert.ToDouble(shape.Height)
         };
 
-        // Get anchor cells and placement mode
-        Excel.Range? topLeftCell = null;
-        Excel.Range? bottomRightCell = null;
-        try
-        {
-            topLeftCell = shape.TopLeftCell;
-            info.TopLeftCell = topLeftCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // TopLeftCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref topLeftCell!);
-        }
-
-        try
-        {
-            bottomRightCell = shape.BottomRightCell;
-            info.BottomRightCell = bottomRightCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // BottomRightCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref bottomRightCell!);
-        }
-
-        try
-        {
-            info.Placement = (int)shape.Placement;
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // Placement not available - optional COM property
-        }
+        (info.TopLeftCell, info.BottomRightCell, info.Placement) = ChartPositionHelpers.ReadAnchors(shape);
 
         // Get linked PivotTable name
         Excel.PivotLayout? pivotLayout = null;
@@ -125,45 +86,7 @@ public class PivotChartStrategy : IChartStrategy
             Height = Convert.ToDouble(shape.Height)
         };
 
-        // Get anchor cells and placement mode
-        Excel.Range? topLeftCell = null;
-        Excel.Range? bottomRightCell = null;
-        try
-        {
-            topLeftCell = shape.TopLeftCell;
-            info.TopLeftCell = topLeftCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // TopLeftCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref topLeftCell!);
-        }
-
-        try
-        {
-            bottomRightCell = shape.BottomRightCell;
-            info.BottomRightCell = bottomRightCell.Address?.ToString();
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // BottomRightCell not available - optional COM property
-        }
-        finally
-        {
-            ComUtilities.Release(ref bottomRightCell!);
-        }
-
-        try
-        {
-            info.Placement = (int)shape.Placement;
-        }
-        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
-        {
-            // Placement not available - optional COM property
-        }
+        (info.TopLeftCell, info.BottomRightCell, info.Placement) = ChartPositionHelpers.ReadAnchors(shape);
 
         // Get linked PivotTable name
         Excel.PivotLayout? pivotLayout = null;
