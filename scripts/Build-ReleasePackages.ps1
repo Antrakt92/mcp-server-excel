@@ -45,8 +45,7 @@ function Publish-ReleaseRuntime {
 function Assert-ReleaseRuntime {
     param([string]$Path, [string]$Architecture)
     Assert-PackageRuntimeArchitecture $Path $Architecture
-    $product = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path).ProductVersion
-    if (-not $product -or $product.Split('+')[0] -cne $Version) { throw "Runtime version $product does not match $Version." }
+    Assert-PackageRuntimeVersion $Path $Version
 }
 
 function New-VerifiedNuGetPackage {

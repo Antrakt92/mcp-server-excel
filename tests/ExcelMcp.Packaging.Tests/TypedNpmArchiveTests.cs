@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text;
@@ -60,21 +61,19 @@ public sealed class TypedNpmArchiveTests
     [InlineData("license")]
     [InlineData("launcher")]
     [InlineData("dependency")]
+    [InlineData("runtime-version")]
     public async Task ArchiveVerification_RequiresMatchingMetadataArchitectureAndContents(string mutation)
     {
         var sandbox = NewSandbox();
         try
         {
-            var runtime = JsonNode.Parse("""{"name":"@sbroenne/excelcli-win32-x64","version":"2.1.3","main":"excelcli.exe","os":["win32"],"cpu":["x64"]}""")!.AsObject();
-            var launcher = JsonNode.Parse("""{"name":"@sbroenne/excelcli","version":"2.1.3","bin":{"excelcli":"bin/excelcli.js"},"optionalDependencies":{"@sbroenne/excelcli-win32-x64":"2.1.3","@sbroenne/excelcli-win32-arm64":"2.1.3"}}""")!.AsObject();
-            var executable = new byte[128];
-            BitConverter.GetBytes((ushort)0x5a4d).CopyTo(executable, 0);
-            BitConverter.GetBytes(64).CopyTo(executable, 0x3c);
-            BitConverter.GetBytes(0x00004550).CopyTo(executable, 64);
-            BitConverter.GetBytes((ushort)(mutation == "machine" ? 0xaa64 : 0x8664)).CopyTo(executable, 68);
+            var (executable, runtimeVersion) = ReadVersionedPe(mutation == "machine" ? (ushort)0xaa64 : (ushort)0x8664);
+            var version = mutation == "runtime-version" ? MismatchedVersion(runtimeVersion) : runtimeVersion;
+            var runtime = JsonNode.Parse($$$"""{"name":"@sbroenne/excelcli-win32-x64","version":"{{{version}}}","main":"excelcli.exe","os":["win32"],"cpu":["x64"]}""")!.AsObject();
+            var launcher = JsonNode.Parse($$$"""{"name":"@sbroenne/excelcli","version":"{{{version}}}","bin":{"excelcli":"bin/excelcli.js"},"optionalDependencies":{"@sbroenne/excelcli-win32-x64":"{{{version}}}","@sbroenne/excelcli-win32-arm64":"{{{version}}}"}}""")!.AsObject();
             if (mutation == "name") { runtime["name"] = "@sbroenne/unrelated"; }
             if (mutation == "architecture") { runtime["cpu"] = new JsonArray("arm64"); }
-            if (mutation == "dependency") { launcher["optionalDependencies"]!["@sbroenne/excelcli-win32-arm64"] = "1.0.0"; }
+            if (mutation == "dependency") { launcher["optionalDependencies"]!["@sbroenne/excelcli-win32-arm64"] = MismatchedVersion(version); }
             var runtimeEntries = new List<(string, TarEntryType, byte[])> {
                 ("package/package.json", TarEntryType.RegularFile, Encoding.UTF8.GetBytes(runtime.ToJsonString())),
                 ("package/excelcli.exe", TarEntryType.RegularFile, executable)
@@ -107,6 +106,7 @@ public sealed class TypedNpmArchiveTests
                     "machine" => "does not match x64",
                     "license" => "Missing license",
                     "launcher" => "Missing launcher file",
+                    "runtime-version" => $"does not match {version}",
                     _ => "matching arm64 release version"
                 };
                 Assert.Contains(expected, result.CombinedOutput, StringComparison.Ordinal);
@@ -114,6 +114,46 @@ public sealed class TypedNpmArchiveTests
         }
         finally { Directory.Delete(sandbox, true); }
     }
+
+    [Fact]
+    public async Task BuildNpmPackages_RejectsMismatchedExecutableVersionBeforePacking()
+    {
+        var sandbox = NewSandbox();
+        try
+        {
+            var scripts = Directory.CreateDirectory(Path.Combine(sandbox, "scripts")).FullName;
+            foreach (var file in new[] { "Build-NpmPackages.ps1", "PackageHelpers.ps1" })
+            {
+                File.Copy(Path.Combine(RepoRoot, "scripts", file), Path.Combine(scripts, file));
+            }
+            var executable = Path.Combine(sandbox, "excelcli.exe");
+            var (payload, runtimeVersion) = ReadVersionedPe(0x8664);
+            File.WriteAllBytes(executable, payload);
+            var version = MismatchedVersion(runtimeVersion);
+            var output = Path.Combine(sandbox, "artifacts", "npm");
+
+            // Deliberately omit the npm sources so reaching stage construction cannot launch npm.
+            var result = await RunPowerShellFileAsync(Path.Combine(scripts, "Build-NpmPackages.ps1"),
+                ["-Component", "Cli", "-Version", version, "-RuntimeExecutable", executable, "-OutputDirectory", output]);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains($"does not match {version}", result.CombinedOutput, StringComparison.Ordinal);
+            Assert.False(Directory.Exists(output));
+        }
+        finally { Directory.Delete(sandbox, true); }
+    }
+
+    private static (byte[] Payload, string Version) ReadVersionedPe(ushort machine)
+    {
+        var assembly = typeof(TypedNpmArchiveTests).Assembly.Location;
+        var version = FileVersionInfo.GetVersionInfo(assembly).ProductVersion!.Split('+')[0];
+        var payload = File.ReadAllBytes(assembly);
+        var offset = BitConverter.ToInt32(payload, 0x3c);
+        BitConverter.GetBytes(machine).CopyTo(payload, offset + 4);
+        return (payload, version);
+    }
+
+    private static string MismatchedVersion(string version) => version == "0.0.0-audit" ? "0.0.1-audit" : "0.0.0-audit";
 
     private static string NewSandbox() =>
         Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"ExcelMcp.NpmArchive.{Guid.NewGuid():N}")).FullName;
