@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Microsoft.CSharp.RuntimeBinder;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Connections;
@@ -346,46 +345,8 @@ public partial class ConnectionCommands
     private static void WaitForConnectionRefreshCompletion(
         Func<bool> isRefreshing,
         Action cancelRefresh,
-        CancellationToken cancellationToken)
-    {
-        // CRITICAL: Rate-limit the isRefreshing() COM call to every 5000ms of *real* elapsed time.
-        // See WaitForRefreshCompletion in PowerQueryCommands.Helpers.cs for full explanation.
-        const int CheckIntervalMs = 5000;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!isRefreshing())
-                return;
-
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                // Sleep without pumping the STA COM queue. See WaitForRefreshCompletion for details.
-                ComUtilities.KernelSleep(CheckIntervalMs);
-                if (sw.Elapsed.TotalMilliseconds < CheckIntervalMs)
-                    continue;
-                sw.Restart();
-                if (!isRefreshing())
-                    break;
-            }
-        }
-        catch (OperationCanceledException ex)
-        {
-            try
-            {
-                cancelRefresh();
-            }
-            catch (Exception cancelFailure) when (cancelFailure is COMException or RuntimeBinderException)
-            {
-                throw new OperationCanceledException(
-                    "Refresh was cancelled or timed out, but Excel could not confirm cancellation. " +
-                    "The query may still be running; inspect refresh status before saving or closing.",
-                    new AggregateException(ex, cancelFailure), cancellationToken);
-            }
-            throw;
-        }
-    }
+        CancellationToken cancellationToken) =>
+        ConnectionRefreshWait.Wait(isRefreshing, cancelRefresh, cancellationToken, pollIntervalMs: 5000);
 
     /// <summary>
     /// Deletes a connection
