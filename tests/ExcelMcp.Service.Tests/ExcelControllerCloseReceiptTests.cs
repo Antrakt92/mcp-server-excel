@@ -109,6 +109,7 @@ public sealed partial class ExcelControllerTests
                         Assert.Same(worker, sessions[sessionId]);
                         Assert.Single(paths.Cast<object>());
                         Assert.Equal(0, target.ReleaseCalls);
+                        await ExerciseClosedSessionRetentionAsync(controller, registration, settled);
                         worker.RecordSnapshot(settled with { Revision = 3 });
                         applySnapshot.Invoke(controller, [worker]);
                         Assert.False(sessions.ContainsKey(sessionId));
@@ -147,6 +148,85 @@ public sealed partial class ExcelControllerTests
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task ExerciseClosedSessionRetentionAsync(ExcelController controller,
+        WorkerRegistration registration, WorkerSnapshot template)
+    {
+        var other = registration with { PipeName = $"excelmcp-worker-{Guid.NewGuid():N}" };
+        var worker = new ExcelWorkerClient(other, other.Controller, other.Generation);
+        var workers = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, ExcelWorkerClient>>(
+            typeof(ExcelController).GetField("_workers", NativeObservationHidden)!.GetValue(controller));
+        var sessions = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, ExcelWorkerClient>>(
+            typeof(ExcelController).GetField("_sessions", NativeObservationHidden)!.GetValue(controller));
+        var published = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, WorkerSnapshot>>(
+            typeof(ExcelController).GetField("_publishedSnapshots", NativeObservationHidden)!.GetValue(controller));
+        var history = Assert.IsType<CloseHistory>(
+            typeof(ExcelController).GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
+        var apply = typeof(ExcelController).GetMethod("ApplyWorkerSnapshot", NativeObservationHidden)!;
+        Assert.True(workers.TryAdd(other.PipeName, worker));
+        try
+        {
+            var empty = template with { Registration = other };
+            void ObserveCloses(string[] ids, long revision)
+            {
+                foreach (var id in ids)
+                    Assert.True(sessions.TryAdd(id, worker));
+                worker.RecordSnapshot(empty with
+                {
+                    Sessions = ids.Select(id => new SessionDescriptor(id, null)).ToArray(),
+                    OwnershipKeys = ids.ToDictionary(id => id, _ => (IReadOnlyList<string>)[]),
+                    SessionList = new ServiceResponse
+                    {
+                        Success = true,
+                        Result = JsonSerializer.Serialize(new { sessions = ids.Select(sessionId => new { sessionId }) })
+                    },
+                    Revision = revision
+                });
+                apply.Invoke(controller, [worker]);
+                worker.RecordSnapshot(empty with { Revision = revision + 1 });
+                apply.Invoke(controller, [worker]);
+                Assert.All(ids, id => Assert.False(sessions.ContainsKey(id)));
+            }
+
+            const string oldest = "oldest-closed-session";
+            ObserveCloses([oldest], 1);
+            var retained = Enumerable.Range(0, ExcelController.SettledCloseRetention + 16)
+                .Select(i => $"settled-closed-session-{i}").ToArray();
+            // Turn over the diagnostic history as well so the early save
+            // receipt survives only if its unsettled worker protects it.
+            foreach (var id in retained.Take(16))
+                history.Record(new(id, null), new ServiceResponse { Success = true });
+            ObserveCloses(retained, 3);
+
+            var expired = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.close",
+                SessionId = oldest,
+                Args = """{"save":true}"""
+            });
+            Assert.False(expired.Success);
+            Assert.Equal("SessionNotFound", expired.ErrorCategory);
+            Assert.Contains("No close or save was started", expired.ErrorMessage, StringComparison.Ordinal);
+            Assert.Null(typeof(ExcelController).GetField("_utility", NativeObservationHidden)!.GetValue(controller));
+
+            // Simulate a retry recording its lost reply after the entry has expired.
+            typeof(ExcelController).GetMethod("RecordLostSessionCloseAttempt", NativeObservationHidden)!
+                .Invoke(controller, [oldest, null, new ServiceResponse { Success = false, ErrorCategory = "WorkerUnavailable" }]);
+            Assert.DoesNotContain(oldest, history.RetainedSessionIds());
+
+            var recent = await controller.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.close",
+                SessionId = retained[0]
+            });
+            Assert.True(recent.Success, recent.ErrorMessage);
+        }
+        finally
+        {
+            workers.TryRemove(other.PipeName, out _);
+            published.TryRemove(other.PipeName, out _);
         }
     }
 

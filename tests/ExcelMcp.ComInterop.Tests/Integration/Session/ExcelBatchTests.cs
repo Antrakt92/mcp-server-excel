@@ -339,6 +339,7 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
             ADODB.Field? field = null;
             ADODB.Errors? errors = null;
             ADODB.Error? error = null;
+            object? nativeProviderRecord = null;
             Exception? operationFailure = null;
             void CloseRecords()
             {
@@ -395,7 +396,7 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                 code = component.CodeModule;
                 code.AddFromString("""
                     Public Function NativeAdoError(ByVal connection As Object) As Variant
-                        Dim rows As Object
+                        Dim rows As Object, providerRecord As Object
                         connection.Errors.Clear
                         On Error Resume Next
                         Set rows = connection.Execute("EVALUATE MissingTableForAdoDefinitions")
@@ -403,11 +404,12 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                         result(1, 1) = Err.Number
                         result(1, 2) = Err.Description
                         On Error GoTo 0
-                        result(1, 3) = connection.Errors.Count
                         If connection.Errors.Count > 0 Then
-                            result(1, 4) = connection.Errors.Item(0).Number
-                            result(1, 5) = connection.Errors.Item(0).Description
-                            result(1, 6) = connection.Errors.Item(0).Source
+                            Set providerRecord = connection.Errors.Item(0)
+                            result(1, 3) = providerRecord.Number
+                            result(1, 4) = providerRecord.Description
+                            result(1, 5) = providerRecord.Source
+                            Set result(1, 6) = providerRecord
                         End If
                         NativeAdoError = result
                     End Function
@@ -448,35 +450,33 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                                 out _, (int)ADODB.ExecuteOptionEnum.adOptionUnspecified);
                         });
                         errors = ado.Errors;
-                        int errorCount = errors.Count;
-                        int? errorNumber = null;
-                        string? description = null;
-                        string? errorSource = null;
-                        if (errorCount > 0)
+                        if (errors.Count > 0)
                         {
                             error = errors[0];
-                            errorNumber = error.Number;
-                            description = error.Description;
-                            errorSource = error.Source;
-                            Assert.NotEqual(0, errorNumber);
+                            Assert.NotEqual(0, error.Number);
+                            ComUtilities.Release(ref error);
                         }
+                        ComUtilities.Release(ref errors);
+
                         ctx.App.AutomationSecurity = Office.MsoAutomationSecurity.msoAutomationSecurityLow;
                         object? native = ctx.App.Run($"'{ctx.Book.Name}'!NativeAdoError", ado);
-                        ctx.App.AutomationSecurity = originalSecurity;
                         var expected = Assert.IsType<object[,]>(native);
+                        nativeProviderRecord = expected[1, 6];
+                        ctx.App.AutomationSecurity = originalSecurity;
                         Assert.Equal(Convert.ToInt32(expected[1, 1], CultureInfo.InvariantCulture), queryFailure.HResult);
-                        // VBA and .NET supply different wrapper text; preserve the native code and provider records.
+                        // ADO reports the HRESULT to both callers. Each Execute can expose different provider records.
                         Assert.False(string.IsNullOrWhiteSpace((string)expected[1, 2]));
                         Assert.False(string.IsNullOrWhiteSpace(queryFailure.Message));
-                        Assert.Equal(Convert.ToInt32(expected[1, 3], CultureInfo.InvariantCulture), errorCount);
-                        if (errorCount > 0)
-                        {
-                            Assert.Equal(Convert.ToInt32(expected[1, 4], CultureInfo.InvariantCulture), errorNumber);
-                            Assert.Equal(expected[1, 5], description ?? string.Empty);
-                            Assert.Equal(expected[1, 6], errorSource ?? string.Empty);
-                        }
-                        ComUtilities.Release(ref error);
-                        ComUtilities.Release(ref errors);
+
+                        // Compare both readers of the same retained Error object, independent of the live collection.
+                        var providerError = nativeProviderRecord as ADODB.Error;
+                        Assert.NotNull(providerError);
+                        Assert.NotEqual(0, providerError.Number);
+                        Assert.Equal(Convert.ToInt32(expected[1, 3], CultureInfo.InvariantCulture), providerError.Number);
+                        // VBA represents null BSTRs as empty strings.
+                        Assert.Equal(expected[1, 4], providerError.Description ?? string.Empty);
+                        Assert.Equal(expected[1, 5], providerError.Source ?? string.Empty);
+                        ComUtilities.Release(ref nativeProviderRecord);
                     }
                 }
 
@@ -501,6 +501,7 @@ public partial class ExcelBatchTests : IAsyncLifetime, IDisposable
                 }
                 finally
                 {
+                    ComUtilities.Release(ref nativeProviderRecord);
                     ComUtilities.Release(ref error);
                     ComUtilities.Release(ref errors);
                     ComUtilities.Release(ref code);

@@ -129,10 +129,16 @@ already-known Excel identity; it does not adopt an unseen process or confirm an
 unacknowledged workbook operation.
 
 If the session disappears after Excel exits with a nonzero or unavailable exit
-code, commands to that session report its last outcome as unknown. An explicit
-successful close reply can still confirm the close, including when the reply is
-retained inside a status recording error. Check the saved file before repeating
-any edits.
+code, commands to that session report its last outcome as unknown while the
+controller retains its result. An explicit successful close reply can still
+confirm the close, including when the reply is retained inside a status
+recording error. Check the saved file before repeating any edits.
+
+The controller retains up to 512 recent settled session outcomes in addition to
+the close diagnostic history. It keeps a close result while the worker can still
+report the session. Once the old result is unavailable, retrying close returns
+`SessionNotFound` without running Excel or confirming a save. Use discovery
+and verify the saved file if the original result is unavailable.
 
 `file_read list` and `excelcli session list` also return `recentCloseAttempts`.
 Each entry covers an explicitly requested close on a known session and pairs

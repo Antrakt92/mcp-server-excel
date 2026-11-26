@@ -42,6 +42,137 @@ public sealed class WorkbookPhysicalOwnershipTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Reservations_PollSweepsReadEachSteadyClaimOnceApartFromFreshTargets()
+    {
+        WithDirectory((_, actual, _) =>
+        {
+            var reads = 0;
+            var claims = new WorkbookPathReservations<string>(readIdentity: path =>
+            {
+                reads++;
+                return WorkbookFileIdentity.Read(path);
+            });
+            var paths = Enumerable.Range(0, 32).Select(i => Path.Combine(actual, $"sweep-{i}.xlsx")).ToArray();
+            foreach (var path in paths)
+            {
+                File.WriteAllText(path, "synthetic");
+                Assert.True(claims.TryAdd(path, path));
+            }
+
+            reads = 0;
+            foreach (var path in paths)
+                Assert.True(claims.TryPublish(path, path, static _ => false));
+            Assert.Equal(paths.Length * (paths.Length + 1), reads);
+
+            for (var poll = 0; poll < 2; poll++)
+            {
+                reads = 0;
+                var sweep = claims.BeginPublicationSweep();
+                foreach (var path in paths)
+                    Assert.True(sweep.TryPublish(path, path, static _ => false));
+                Assert.Equal(2 * paths.Length, reads);
+            }
+            Assert.Equal(paths.Order(StringComparer.OrdinalIgnoreCase),
+                claims.Select(claim => claim.Value).Order(StringComparer.OrdinalIgnoreCase));
+        });
+    }
+
+    [Fact]
+    public void Reservations_PollSweepRechecksAnIdentityChangeAndFreshAdmission()
+    {
+        WithDirectory((root, actual, _) =>
+        {
+            var original = Path.Combine(actual, "original.xlsx");
+            var second = Path.Combine(actual, "second.xlsx");
+            var hardLink = Path.Combine(root, "hardlink.xlsx");
+            File.WriteAllText(original, "original");
+            File.WriteAllText(second, "second");
+            var claims = new WorkbookPathReservations<string>();
+            Assert.True(claims.TryAdd(original, "original"));
+            Assert.True(claims.TryAdd(second, "second"));
+            var sweep = claims.BeginPublicationSweep();
+            Assert.True(sweep.TryPublish(original, "original", static _ => false));
+
+            File.Delete(second);
+            Link(second, original);
+            Assert.False(sweep.TryPublish(second, "second", static _ => false));
+            Assert.False(sweep.TryPublish(original, "original", static _ => false));
+            Assert.Equal("second", claims.Single(claim => claim.Key == second).Value);
+
+            File.Delete(second);
+            File.WriteAllText(second, "replacement");
+            Link(hardLink, second);
+            Assert.False(claims.TryAdd(hardLink, "unrelated"));
+            Assert.True(sweep.TryPublish(second, "second", static _ => false));
+            Assert.True(sweep.TryPublish(original, "original", static _ => false));
+        });
+    }
+
+    [Fact]
+    public void Reservations_PollSweepRechecksAClaimThatWasMissingWhenTheSweepStarted()
+    {
+        WithDirectory((_, actual, _) =>
+        {
+            var original = Path.Combine(actual, "original.xlsx");
+            var pending = Path.Combine(actual, "pending.xlsx");
+            File.WriteAllText(original, "original");
+            var claims = new WorkbookPathReservations<string>();
+            Assert.True(claims.TryAdd(original, "original"));
+            Assert.True(claims.TryAdd(pending, "pending"));
+            var sweep = claims.BeginPublicationSweep();
+            Assert.True(sweep.TryPublish(original, "original", static _ => false));
+
+            Link(pending, original);
+            Assert.False(sweep.TryPublish(original, "original", static _ => false));
+            Assert.Equal("pending", claims.Single(claim => claim.Key == pending).Value);
+        });
+    }
+
+    [Fact]
+    public void Reservations_PollSweepInvalidatesCachedEvidenceAfterAnUnreadableClaim()
+    {
+        WithDirectory((_, actual, _) =>
+        {
+            var first = Path.Combine(actual, "sweep-first.xlsx");
+            var second = Path.Combine(actual, "sweep-second.xlsx");
+            File.WriteAllText(first, "synthetic");
+            File.WriteAllText(second, "synthetic");
+            var readFailure = new IOException("Synthetic metadata read failure.");
+            var secondUnreadable = false;
+            var reads = 0;
+            var claims = new WorkbookPathReservations<string>(readIdentity: path =>
+            {
+                reads++;
+                if (secondUnreadable && StringComparer.OrdinalIgnoreCase.Equals(path, second))
+                    throw readFailure;
+                return WorkbookFileIdentity.Read(path);
+            });
+            Assert.True(claims.TryAdd(first, "first"));
+            Assert.True(claims.TryAdd(second, "second"));
+
+            reads = 0;
+            var sweep = claims.BeginPublicationSweep();
+            Assert.True(sweep.TryPublish(first, "first", static _ => false));
+            Assert.Equal(3, reads);
+
+            secondUnreadable = true;
+            Assert.Same(readFailure, Assert.Throws<IOException>(() =>
+                sweep.TryPublish(second, "second", static _ => false)));
+            Assert.Equal(4, reads);
+            Assert.Same(readFailure, Assert.Throws<IOException>(() =>
+                sweep.TryPublish(first, "first", static _ => false)));
+            Assert.Equal(7, reads);
+            Assert.Equal("first", claims.Single(claim => claim.Key == first).Value);
+            Assert.Equal("second", claims.Single(claim => claim.Key == second).Value);
+
+            secondUnreadable = false;
+            Assert.True(sweep.TryPublish(first, "first", static _ => false));
+            Assert.True(sweep.TryPublish(second, "second", static _ => false));
+            Assert.Equal(11, reads);
+        });
+    }
+
+    [Fact]
     public void OwnershipAliases_LongPhysicalPathThroughShortJunctionUsesTheSameFileIdentity()
     {
         WithDirectory((root, actual, _) =>

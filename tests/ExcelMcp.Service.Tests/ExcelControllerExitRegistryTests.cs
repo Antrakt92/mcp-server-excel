@@ -71,7 +71,7 @@ public sealed partial class ExcelControllerTests
                         .Invoke(controller, [closeTarget, worker]);
                 if (closeAttempt == "evicted-failure")
                 {
-                    recordClose.Invoke(controller, [closeTarget, failure, null, null, true]);
+                    recordClose.Invoke(controller, [closeTarget, failure, null, null, worker]);
                     var history = Assert.IsType<CloseHistory>(typeof(ExcelController)
                         .GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
                     for (var i = 0; i < 16; i++)
@@ -103,7 +103,7 @@ public sealed partial class ExcelControllerTests
 
                 var originalFailureAvailable = releasedIdentity || closeAttempt == "late-failure";
                 if (originalFailureAvailable)
-                    recordClose.Invoke(controller, [closeTarget, failure, null, null, true]);
+                    recordClose.Invoke(controller, [closeTarget, failure, null, null, worker]);
 
                 var close = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
                 Assert.Equal(!expectedUnconfirmed, close.Success);
@@ -163,7 +163,7 @@ public sealed partial class ExcelControllerTests
                     if (closeAttempt == "pending")
                     {
                         var completed = new ServiceResponse { Success = true, Result = """{"success":true,"saved":true}""" };
-                        recordClose.Invoke(controller, [closeTarget, completed, null, null, true]);
+                        recordClose.Invoke(controller, [closeTarget, completed, null, null, worker]);
                         var confirmed = await controller.ProcessAsync(new ServiceRequest { Command = "session.close", SessionId = sessionId });
                         Assert.True(confirmed.Success, confirmed.ErrorMessage);
                         using var confirmation = JsonDocument.Parse(confirmed.Result!);
