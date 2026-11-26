@@ -7,6 +7,10 @@ retains the original project's version numbers and contributor credits.
 
 | Version | Published | Summary |
 | --- | --- | --- |
+| [5.11.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.11.0) | 2026-11-26 | Excel process diagnostics, VBA package comparison, and safer workbook operations |
+| [5.10.2](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.2) | 2026-11-25 | Workbook save and close fixes |
+| [5.10.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.1) | 2026-11-24 | Excel exit diagnostics and safer workbook edits |
+| [5.10.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.0) | 2026-11-23 | Operation recovery and reliable workbook commands |
 | [5.9.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.9.0) | 2026-11-22 | Close history, worker readiness, and VBA readback diagnostics |
 | [5.8.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.8.0) | 2026-11-21 | VBA operation receipts, save and close diagnostics, and range search fixes |
 | [5.7.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.7.1) | 2026-11-21 | Safer workbook access changes and fixes for worksheet, formatting, VBA and CLI commands |
@@ -34,6 +38,51 @@ retains the original project's version numbers and contributor credits.
 | [3.0.1](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.1) | 2026-10-29 | Named-range and chart fixes, idle-resource repair, dependency updates |
 | [3.0.0](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v3.0.0) | 2026-10-29 | Audit sessions, bounded reads, guarded VBA and CLI migration |
 | [2.5.4](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v2.5.4) | 2026-10-25 | First stable fork: process lifetime and portable packages |
+
+## 5.11.0 — 2026-11-26
+
+### Process diagnostics and workbook comparison
+
+- CLI and MCP report the confirmed PID and exact start time for an Excel process they own. After reopening a workbook to enable macros, the response says whether the same process was retained and reports the opening macro policy.
+- Use `excelcli session process-diagnostics` or MCP `file_read` with action `process-diagnostics` to read process handles, GDI and USER objects, and private bytes. After exit, the result can include the native exit code and time and an optional matching Windows Application Error event. The direct tool and MCP batch use the same `sessionId` field.
+- `compare-packages` can compare the saved VBA project inside an XLSM. The report separates module source, UserForm designer streams, references, protection metadata, and compiler cache changes. It returns change metadata without exporting module source, reference paths, or protection values.
+- The test harness can check navigation, compile dialogs, and transient window colors on a private Windows desktop. See [isolated Excel UI testing](ISOLATED-EXCEL-UI.md).
+
+### Workbook and CLI fixes
+
+- Worker cleanup rechecks for sessions and pending operations before shutdown. Earlier snapshots cannot erase a confirmed Excel exit or its timestamp.
+- Background status checks reuse workbook identity reads within each poll. Opening, attaching, and saving to a different path still validate current file ownership. The controller bounds retained close outcomes and keeps them while the worker can still report the closed session.
+- Save As verifies the full local destination reported by Excel. CLI `--output` refuses to overwrite an input file declared by the same command.
+- Conditional cell edits recognize Excel's scalar formula readback with an explicit `@`. Filtered table reads stop checking visibility as soon as the response exceeds its budget.
+- DAX updates and named-range lookups preserve unexpected Excel errors. Corrected the supported A1 range syntax in conditional formatting help.
+
+The upstream base remains **2.6.13**. Dependency versions are unchanged.
+
+[Full comparison](https://github.com/Antrakt92/mcp-server-excel/compare/v5.10.2...v5.11.0)
+
+## 5.10.2 — 2026-11-25
+
+- Save and close diagnostics identify blocking windows, preserve evidence of an initial save, and release quarantined sessions after a confirmed Excel exit.
+- Bounded reads preserve native Excel error values. Connection and Power Query refresh preserve cancellation when cleanup also fails, and screenshot capture checks for cancellation before restoring the workbook view.
+- CLI paths resolve from the caller's directory. Misspelled chart options are rejected, and npm package checks verify the embedded executable version. The upstream CodeQL actions were aligned to **4.39.4**. Runtime dependencies were unchanged.
+
+[Release notes and packages](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.2)
+
+## 5.10.1 — 2026-11-24
+
+- VBA operation and close receipts keep their original failure and matching native exit evidence. A retry can report the retained outcome after the worker exits.
+- Visible-row table reads reduce Excel calls. Range sorting validates each key against its rectangle, and hyperlink updates preserve the existing label and tooltip unless replacements are supplied.
+- Updated .NET SDK **10.0.403 → 10.0.404** and related libraries and build tools. See the release's dependency table for the exact runtime and development versions.
+
+[Release notes and packages](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.1)
+
+## 5.10.0 — 2026-11-23
+
+- Operation receipts preserve the last confirmed worker phase and matching Excel exit. Close reports uncertain outcomes explicitly and only proceeds once Excel reports sufficient readiness.
+- Visibility control remains available when workbook slots are busy. Single-cell operations validate their targets, and DAX checks its destination before creating a connection.
+- CLI startup supports the local .NET tool launcher. Incomplete successful read responses surface as `InvalidResponse` and earlier batch results are kept. Dependency versions were unchanged.
+
+[Release notes and packages](https://github.com/Antrakt92/mcp-server-excel/releases/tag/v5.10.0)
 
 ## 5.9.0 — 2026-11-22
 
