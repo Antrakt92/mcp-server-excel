@@ -244,8 +244,9 @@ public static class RangeHelpers
             name = null;
             return result;
         }
-        catch (COMException ex)
+        catch (COMException ex) when (ex.HResult == unchecked((int)0x800A03EC))
         {
+            // Excel also uses this generic error for other failures; only name enumeration proves absence.
             if (WorkbookContainsName(names, rangeAddress))
             {
                 ExceptionDispatchInfo.Capture(ex).Throw();
