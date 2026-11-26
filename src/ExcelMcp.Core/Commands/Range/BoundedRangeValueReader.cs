@@ -19,18 +19,29 @@ internal static class BoundedRangeValueReader
         EnsureCellLimit(size);
         int[]? outputRows = null;
         int rowCount = size.Rows;
-        if (includeRow is not null)
+        if (includeRow is null)
+        {
+            budget.ReserveGrid(rowCount, size.Columns, includeFormulas: false);
+        }
+        else
         {
             outputRows = new int[size.Rows];
             rowCount = 0;
             for (int row = 0; row < size.Rows; row++)
             {
                 ct.ThrowIfCancellationRequested();
-                outputRows[row] = includeRow(row) ? rowCount++ : -1;
+                if (!includeRow(row))
+                {
+                    outputRows[row] = -1;
+                    continue;
+                }
+
+                // Stop requesting visibility after the response becomes too large even without cell values.
+                budget.ReserveGrid(1, size.Columns, includeFormulas: false);
+                outputRows[row] = rowCount++;
             }
         }
 
-        budget.ReserveGrid(rowCount, size.Columns, includeFormulas: false);
         var rows = new List<List<object?>>(rowCount);
         if (rowCount == 0)
             return rows;
