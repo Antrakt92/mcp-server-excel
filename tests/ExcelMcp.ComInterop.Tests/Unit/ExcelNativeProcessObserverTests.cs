@@ -255,6 +255,28 @@ public sealed class ExcelNativeProcessObserverTests
     private static ExcelNativeProcessObserver Capture(ProcessApi api) =>
         ExcelNativeProcessObserver.Capture(Identity.ProcessId, Identity.StartedAtUtcFileTime, api);
 
+    [Fact]
+    public void Observe_ExitTimeComesFromSignaledIdentityAndSurvivesExitCodeRecovery()
+    {
+        var time = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var api = new ProcessApi { ExitTime = time.ToFileTime(), ExitQuerySucceeded = false };
+        using var observer = Capture(api);
+
+        Assert.Null(observer.Observe().ExitedAtUtc);
+
+        api.WaitResult = 0;
+        var observation = observer.Observe();
+        Assert.Equal(time, observation.ExitedAtUtc);
+        Assert.Null(observation.ExitCode);
+
+        api.ExitTime = null;
+        api.ExitQuerySucceeded = true;
+        api.ExitCode = 0xC0000005;
+        observation = observer.Observe();
+        Assert.Equal(time, observation.ExitedAtUtc);
+        Assert.Equal(0xC0000005U, observation.ExitCode);
+    }
+
     private sealed class ProcessApi : ExcelNativeProcessObserver.IProcessApi
     {
         internal SafeProcessHandle Handle { get; init; } = new(new IntPtr(42), ownsHandle: false);
@@ -263,6 +285,7 @@ public sealed class ExcelNativeProcessObserverTests
         internal uint WaitResult { get; set; } = 258;
         internal bool ExitQuerySucceeded { get; set; } = true;
         internal uint ExitCode { get; set; }
+        internal long? ExitTime { get; set; }
         internal int Error { get; init; }
         internal uint DesiredAccess { get; private set; }
         internal int OpenCalls { get; private set; }
@@ -305,6 +328,13 @@ public sealed class ExcelNativeProcessObserverTests
             exitCode = ExitCode;
             error = Error;
             return ExitQuerySucceeded;
+        }
+
+        public long? GetExitTime(SafeProcessHandle handle)
+        {
+            Assert.Same(Handle, handle);
+            Assert.False(handle.IsClosed);
+            return ExitTime;
         }
     }
 }

@@ -12,7 +12,7 @@ using Sbroenne.ExcelMcp.Service.Workers;
 namespace Sbroenne.ExcelMcp.Service;
 
 /// <summary>Host-owned controller. Excel objects and synchronous workbook work live only in private workers.</summary>
-internal sealed class ExcelController : IDisposable
+internal sealed partial class ExcelController : IDisposable
 {
     private readonly ProductProcessLauncher _launcher;
     private readonly WorkerRegistry _registry;
@@ -35,7 +35,7 @@ internal sealed class ExcelController : IDisposable
     private readonly ConcurrentDictionary<string, byte> _newWorkers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _abandonedWorkers = new(StringComparer.Ordinal);
     private enum SessionEnd { Closed, SavedAndClosed, WorkerExited, ExcelExited }
-    private readonly record struct EndedSession(SessionEnd Reason, ExcelProcessIdentity? Excel = null);
+    private readonly record struct EndedSession(SessionEnd Reason, ExcelProcessIdentity? Excel = null, bool Owned = false);
     private readonly ConcurrentDictionary<string, EndedSession> _closedSessions = new(StringComparer.Ordinal);
     // Active close outcomes must survive eviction from the bounded diagnostic history.
     private readonly Dictionary<string, ExcelProcessIdentity> _unconfirmedCloseAttempts = new(StringComparer.Ordinal);
@@ -260,6 +260,8 @@ internal sealed class ExcelController : IDisposable
                 };
             if (request.Command == "session.list")
                 return SessionList();
+            if (request.Command == ProcessDiagnosticsCommand)
+                return await ReadProcessDiagnosticsAsync(request);
             if (request.Command == OperationReceipts.LookupCommand)
                 return _operationReceipts.Lookup(request.Args, request.SessionId);
             if (request.Command == "service.shutdown")
@@ -561,7 +563,10 @@ internal sealed class ExcelController : IDisposable
     {
         lock (_shutdownLock)
         {
-            var confirmation = _closeHistory.Record(target, response, priorStatus, priorSaveBlocker: priorSaveBlocker);
+            var ended = _closedSessions.GetValueOrDefault(target.SessionId);
+            var owned = ended.Owned && ended.Excel == target.Excel
+                || _sessions.TryGetValue(target.SessionId, out var worker) && WasOwnedSession(worker, target.SessionId, target.Excel);
+            var confirmation = _closeHistory.Record(target, response, priorStatus, priorSaveBlocker: priorSaveBlocker, owned: owned);
             if (accepted && confirmation.CloseConfirmed)
             {
                 // A completed reply can confirm the close independently of worker status publication.
@@ -577,7 +582,7 @@ internal sealed class ExcelController : IDisposable
                 && _closedSessions.TryGetValue(target.SessionId, out var end)
                 && end is { Reason: SessionEnd.Closed } && end.Excel == identity
                 && _closeHistory.HasUnconfirmedFailure(target))
-                _closedSessions.TryUpdate(target.SessionId, new(SessionEnd.ExcelExited, identity), end);
+                _closedSessions.TryUpdate(target.SessionId, new(SessionEnd.ExcelExited, identity, owned || end.Owned), end);
         }
     }
 
@@ -623,7 +628,7 @@ internal sealed class ExcelController : IDisposable
                 : "The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
             sent: true, nativeExitObserved: excelExited);
         if (request.Command == "session.close")
-            _closeHistory.Record(new(sessionId, session.Excel), response, onlyIfMissing: true);
+            _closeHistory.Record(new(sessionId, session.Excel), response, onlyIfMissing: true, owned: session.Owned);
         return exit is null ? response : response.WithPartialState(
             ExcelMcpService.MergeNativeProcessDiagnostics(response.PartialState, exit)!);
     }
@@ -816,7 +821,10 @@ internal sealed class ExcelController : IDisposable
                             && (_unconfirmedCloseAttempts.TryGetValue(removed.Key, out var dispatched) && dispatched == identity
                                 || _closeHistory.HasUnconfirmedFailure(new(removed.Key, identity))))
                             end = new(SessionEnd.ExcelExited, identity);
-                        _closedSessions.TryAdd(removed.Key, end);
+                        _closedSessions.TryAdd(removed.Key, end with
+                        {
+                            Owned = WasOwnedSession(worker, removed.Key, end.Excel)
+                        });
                     }
                     _unconfirmedCloseAttempts.Remove(removed.Key);
                     foreach (var path in _paths.Where(entry => entry.Value.SessionId == removed.Key))
@@ -1001,6 +1009,9 @@ internal sealed class ExcelController : IDisposable
                     copy["canClose"] = false;
                     copy["closeReadiness"] = "blocked";
                 }
+                if (statusError is not null || releasing || !HasCurrentOwnedProcess(snapshot, live))
+                    copy["excelProcess"] = JsonSerializer.SerializeToNode(
+                        ExcelMcpService.DescribeExcelProcess(null), ServiceProtocol.JsonOptions);
                 if (statusError is not null || releasing)
                 {
                     bool blocked = releasing || copy["operationPending"]?.GetValue<bool>() == true
@@ -1271,7 +1282,7 @@ internal sealed class ExcelController : IDisposable
                 ? new EndedSession(SessionEnd.ExcelExited, identity)
                 : new EndedSession(SessionEnd.WorkerExited, registration.Excel ?? registration.ReleasedExcel);
             foreach (var session in sessions)
-                _closedSessions.TryAdd(session, end);
+                _closedSessions.TryAdd(session, end with { Owned = WasOwnedSession(worker, session, end.Excel) });
             foreach (var path in _paths.Where(entry => entry.Value.Token == registration.PipeName
                 || entry.Value.SessionId is { } session && sessions.Contains(session)))
                 _paths.TryRemove(path);

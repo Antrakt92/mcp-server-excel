@@ -68,7 +68,16 @@ internal sealed partial class ExcelBatch
                 messages.Add("Excel does not expose every notification bar through this inspection. Unknown is not proof that content is enabled. Check Excel for other notices; legacy Excel 4.0 macros can require a separate user response.");
                 return new WorkbookNoticeStatus(protectedView, readOnly, hasVba, macroState,
                     connectionCount, _approvedConnectionWorkbooks.Contains(book) ? "enableRequested" : "unknown",
-                    false, messages);
+                    false, messages)
+                {
+                    AutomationSecurity = _attachedApplication is null ? _excel!.AutomationSecurity switch
+                    {
+                        Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable => "forceDisabled",
+                        Office.MsoAutomationSecurity.msoAutomationSecurityByUI => "byUi",
+                        Office.MsoAutomationSecurity.msoAutomationSecurityLow => "low",
+                        _ => "unknown"
+                    } : "unknown"
+                };
             }
             finally
             {
@@ -247,7 +256,10 @@ internal sealed partial class ExcelBatch
         if (_attachedApplication is not null || _workbooks?.Count != 1 || !ReferenceEquals(book, _workbook))
             throw new InvalidOperationException("Macro enabling by reopen is supported only for a workbook opened by this session with no neighboring workbooks. Use Excel for an attached workbook.");
         if (_approvedMacroWorkbooks.Contains(book))
-            return new("enable-macros", false, false, false, "This workbook was already reopened with macros enabled by request; it was not reopened again.");
+            return new("enable-macros", false, false, false, "This workbook was already reopened with macros enabled by request; it was not reopened again.")
+            {
+                ExcelProcessContinuity = "notReopened"
+            };
         if (FindProtectedViewAndRelease(book))
             throw new InvalidOperationException("The workbook is in Protected View. Macro approval does not also approve enabling editing.");
         if (book.ReadOnly || !book.Saved)
@@ -276,6 +288,7 @@ internal sealed partial class ExcelBatch
         ExcelBusyException.ThrowIfNotReady(WorkbookRefreshProbe.Read(_excel!, book), "enable-macros");
         var security = _excel!.AutomationSecurity;
         var alerts = _excel.DisplayAlerts;
+        var processBefore = ObserveOwnedWorkbookProcess();
         Exception? failure = null;
         try
         {
@@ -327,8 +340,6 @@ internal sealed partial class ExcelBatch
             _approvedMacroWorkbooks.Add(_workbook);
             _macroReopenQuarantined = false;
             _securityReopenFailure = null;
-            return new("enable-macros", true, false, true,
-                "The saved workbook was reopened with VBA macros enabled. Opening event code may have run and may have changed the workbook. No external-link update was requested. Company restrictions can still prevent macro execution.");
         }
         catch (Exception ex)
         {
@@ -349,6 +360,14 @@ internal sealed partial class ExcelBatch
             ComUtilities.Release(ref books);
             RestoreOpeningSettings(_excel, security, alerts, failure);
         }
+
+        var processAfter = ObserveOwnedWorkbookProcess();
+        return new("enable-macros", true, false, true,
+            "The saved workbook was reopened with VBA macros enabled. Opening event code may have run and may have changed the workbook. The approval applies to this reopen; the previous application settings were restored after opening. No external-link update was requested. Company restrictions can still prevent macro execution.")
+        {
+            ExcelProcessContinuity = processBefore is null || processAfter is null ? "unknown"
+                : processBefore == processAfter ? "same" : "changed"
+        };
     }
 
     private void ReplaceSecurityWorkbook(Excel.Workbook previous, ref Excel.Workbook? replacement)

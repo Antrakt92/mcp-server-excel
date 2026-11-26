@@ -42,6 +42,9 @@ public enum FileAction
     [System.Text.Json.Serialization.JsonStringEnumMemberName("operation-result")]
     OperationResult,
 
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("process-diagnostics")]
+    ProcessDiagnostics,
+
     [System.Text.Json.Serialization.JsonStringEnumMemberName("compare-packages")]
     ComparePackages,
 

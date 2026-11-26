@@ -101,6 +101,8 @@ public static partial class ExcelFileTool
     /// operation-result looks up a tracked table.append, session.save, or vba.invoke command without calling Excel.
     /// Results are pending, completed, partially-applied, failed, or unknown. Receipts are retained in the same host for 15 minutes after completion.
     /// If the result is unknown, inspect the workbook before repeating the command.
+    /// process-diagnostics samples resources of the owned Excel process or reports an exact recorded exit for the session.
+    /// It reads the local Application log only when include_crash_event is true and an abnormal exit was confirmed.
     /// compare-packages compares two saved XLSX/XLSM files without opening Excel.
     /// It returns added, removed and changed part names and SHA-256 hashes.
     /// matchesAllowlist reports whether every difference was allowed. A mismatch still returns the complete diff.
@@ -108,8 +110,9 @@ public static partial class ExcelFileTool
     /// <param name="action">Discover or list workbooks, test a workbook path, inspect opening notices, or look up an operation receipt. Batch command: session.{action}.</param>
     /// <param name="file_path">Full Windows path or URL. Required for test. Batch args key: filePath.</param>
     /// <param name="timeout_seconds">Timeout for test, in seconds (10-3600). Batch args key: timeoutSeconds.</param>
-    /// <param name="workbook_session_id">Session for notices or the original session for operation-result. Attach a discovered Protected View workbook before inspecting notices. Batch entry key: sessionId (outside args).</param>
+    /// <param name="workbook_session_id">Session for notices, operation-result, or process-diagnostics. Attach a discovered Protected View workbook before inspecting notices. Batch entry key: sessionId (outside args).</param>
     /// <param name="operation_id">UUID supplied with the tracked command. Required for operation-result. Batch args key: operationId.</param>
+    /// <param name="include_crash_event">Check the local Application log for a confirmed abnormal exit during process-diagnostics. Batch args key: includeCrashEvent.</param>
     /// <param name="before_path">Absolute Windows path to the original saved XLSX/XLSM. Required for compare-packages. Batch args key: beforePath.</param>
     /// <param name="after_path">Absolute Windows path to the resulting saved XLSX/XLSM. Required for compare-packages. Batch args key: afterPath.</param>
     /// <param name="allowed_parts">Exact package part names allowed to change. Omit to allow no changes. Batch args key: allowedParts.</param>
@@ -123,9 +126,11 @@ public static partial class ExcelFileTool
         ServiceBridge.ServiceBridge bridge,
         [McpActionParameter("test", Required = true), DefaultValue(null)] string? file_path,
         [McpActionParameter("test"), DefaultValue(120)] int timeout_seconds = 120,
-        [McpActionParameter("notices", Required = true), McpActionParameter("operation-result", Required = true)]
+        [McpActionParameter("notices", Required = true), McpActionParameter("operation-result", Required = true),
+            McpActionParameter("process-diagnostics", Required = true)]
         [DefaultValue(null)] string? workbook_session_id = null,
         [McpActionParameter("operation-result", Required = true), DefaultValue(null)] string? operation_id = null,
+        [McpActionParameter("process-diagnostics"), DefaultValue(false)] bool include_crash_event = false,
         [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? before_path = null,
         [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? after_path = null,
         [McpActionParameter("compare-packages"), DefaultValue(null)] string[]? allowed_parts = null,
@@ -136,6 +141,9 @@ public static partial class ExcelFileTool
             FileReadAction.OperationResult => ExcelToolsBase.ExecuteToolActionAsync("file_read", "operation-result",
                 () => ExcelToolsBase.ForwardToServiceAsync(bridge, OperationReceipts.LookupCommand, workbook_session_id,
                     new { operationId = operation_id }, cancellationToken), cancellationToken),
+            FileReadAction.ProcessDiagnostics => ExcelToolsBase.ExecuteToolActionAsync("file_read", "process-diagnostics",
+                () => ExcelToolsBase.ForwardToServiceAsync(bridge, ExcelController.ProcessDiagnosticsCommand, workbook_session_id,
+                    new { includeCrashEvent = include_crash_event }, cancellationToken), cancellationToken),
             FileReadAction.ComparePackages => ExcelToolsBase.ExecuteToolActionAsync("file_read", "compare-packages",
                 () => ExcelToolsBase.ForwardToServiceAsync(bridge, ExcelController.PackageComparisonCommand, null,
                     new { beforePath = before_path, afterPath = after_path, allowedParts = allowed_parts, includeStructure = include_structure },

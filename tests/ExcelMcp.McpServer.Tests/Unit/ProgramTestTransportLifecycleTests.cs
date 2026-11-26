@@ -19,6 +19,49 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
 {
     [Fact]
+    public async Task ProcessDiagnostics_UnknownSessionRemainsUnknownThroughToolAndBatch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var input = new Pipe();
+        var outputPipe = new Pipe();
+        var host = await ProgramTransportTestHost.StartAsync(input, outputPipe, cancellation.Token, "ProcessDiagnosticsClient");
+        try
+        {
+            var session = Guid.NewGuid().ToString("N");
+            var response = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?>
+            {
+                ["action"] = "process-diagnostics",
+                ["workbook_session_id"] = session,
+                ["include_crash_event"] = true
+            }, cancellationToken: cancellation.Token);
+            Assert.False(response.IsError, response.StructuredContent?.GetRawText());
+            AssertUnknownProcess(response.StructuredContent!.Value);
+
+            var batch = await host.Client.CallToolAsync("batch", new Dictionary<string, object?>
+            {
+                ["action"] = "run",
+                ["workbook_session_id"] = session,
+                ["commands"] = new[] { new { command = "session.process-diagnostics", args = new { includeCrashEvent = true } } }
+            }, cancellationToken: cancellation.Token);
+            Assert.False(batch.IsError, batch.StructuredContent?.GetRawText());
+            AssertUnknownProcess(Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray()));
+        }
+        finally
+        {
+            await ProgramTransportTestHost.StopAsync(host.Client, input, outputPipe, host.ServerTask, output, cancellation);
+        }
+    }
+
+    private static void AssertUnknownProcess(JsonElement payload)
+    {
+        Assert.Equal("unknown", payload.GetProperty("status").GetString());
+        var process = payload.GetProperty("excelProcess");
+        Assert.Equal("unknown", process.GetProperty("status").GetString());
+        Assert.False(process.TryGetProperty("processId", out _));
+        Assert.False(payload.TryGetProperty("crashEvent", out _));
+    }
+
+    [Fact]
     public async Task OperationResult_InvalidAndMissingReceiptsStayDistinct()
     {
         using var cancellation = new CancellationTokenSource();

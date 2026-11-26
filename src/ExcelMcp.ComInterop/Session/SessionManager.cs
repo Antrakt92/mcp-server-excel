@@ -2271,7 +2271,10 @@ public sealed class SessionManager : IDisposable
                         if (batch is ExcelBatch { MacroReopenQuarantine: not null } retained)
                             path = retained.QuarantinedMacroReopenPath;
                         snapshot.Add(new SessionDescriptor(
-                            sessionId, path, origin, createdAt == default ? null : createdAt));
+                            sessionId, path, origin, createdAt == default ? null : createdAt)
+                        {
+                            ObservedOwnedProcess = (batch as ExcelBatch)?.ObserveOwnedWorkbookProcess()
+                        });
                     }
                 }
                 else
@@ -2612,7 +2615,10 @@ public sealed record SessionDescriptor(
     SessionOrigin Origin = SessionOrigin.Unknown,
     DateTime? CreatedAt = null,
     string? WorkbookName = null,
-    bool IsAttached = false);
+    bool IsAttached = false)
+{
+    internal ExcelProcessIdentity? ObservedOwnedProcess { get; init; }
+}
 
 /// <summary>
 /// Indicates which client created a session.

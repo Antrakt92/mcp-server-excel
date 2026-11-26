@@ -387,7 +387,8 @@ public sealed class ExcelMcpService : IDisposable
                 args.RootElement.TryGetProperty(name, out var value) && value.GetBoolean();
             var result = owner.ApplyWorkbookSecurity(action, ReadApproval("approved"),
                 ReadApproval("allowRememberedTrust"), ReadApproval("allowReopen"), workbookId);
-            return WrapResult(JsonSerializer.Serialize(new { success = true, security = result }, ServiceProtocol.JsonOptions));
+            var excelProcess = action == "enable-macros" ? DescribeExcelProcess(owner.ObserveOwnedWorkbookProcess()) : null;
+            return WrapResult(JsonSerializer.Serialize(new { success = true, security = result, excelProcess }, ServiceProtocol.JsonOptions));
         });
 
     private async Task<ServiceResponse> HandleSessionDiscoverAsync()
@@ -506,6 +507,7 @@ public sealed class ExcelMcpService : IDisposable
         ["allowRememberedTrust"] = "true only after approval that Excel can remember this file as trusted",
         ["allowReopen"] = "true only after separate approval to close and reopen the saved workbook; opening macros can run",
         ["operationId"] = "UUID from a tracked table.append, session.save, or vba.invoke request",
+        ["includeCrashEvent"] = "whether to check the local Windows Application log for a confirmed abnormal exit",
     };
 
     internal static void ValidateSessionActionArguments(string action, string? argsJson)
@@ -520,6 +522,7 @@ public sealed class ExcelMcpService : IDisposable
             "enable-editing" or "enable-connections" => ["approved", "allowRememberedTrust"],
             "enable-macros" => ["approved", "allowReopen"],
             "operation-result" => ["operationId"],
+            "process-diagnostics" => ["includeCrashEvent"],
             "compare-packages" => ["beforePath", "afterPath", "allowedParts", "includeStructure"],
             _ => []
         };
@@ -534,7 +537,7 @@ public sealed class ExcelMcpService : IDisposable
             throw new ArgumentException(
                 $"Unknown parameter(s) for session.{action}: {string.Join(", ", unknownParameters)}. Valid parameters: {validParameters}.");
         }
-        if (action is "enable-editing" or "enable-connections" or "enable-macros")
+        if (action is "enable-editing" or "enable-connections" or "enable-macros" or "process-diagnostics")
         {
             using var args = JsonDocument.Parse(argsJson ?? "{}");
             foreach (var parameter in args.RootElement.EnumerateObject())
@@ -648,6 +651,7 @@ public sealed class ExcelMcpService : IDisposable
                     sessionId,
                     filePath,
                     auditOnly = _sessionManager.IsAuditSession(sessionId),
+                    excelProcess = DescribeExcelProcess((batch as ExcelBatch)?.ObserveOwnedWorkbookProcess()),
                     autoSaveOn,
                     warning = ExcelCapabilities.AutoSaveWarning(autoSaveOn)
                 }, ServiceProtocol.JsonOptions)
@@ -853,6 +857,10 @@ public sealed class ExcelMcpService : IDisposable
         }
     }
 
+    internal static SessionExcelProcess DescribeExcelProcess(ExcelProcessIdentity? identity) => identity is { } process
+        ? new("confirmed", process.ProcessId, process.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture))
+        : new("unknown");
+
     internal ServiceResponse BuildSessionList(IReadOnlyList<SessionDescriptor> activeSessions)
     {
         var sessions = activeSessions
@@ -868,6 +876,7 @@ public sealed class ExcelMcpService : IDisposable
                     FilePaths = _sessionManager.GetOwnedFilePaths(s.SessionId),
                     WorkbookName = s.WorkbookName,
                     IsAttached = s.IsAttached,
+                    ExcelProcess = DescribeExcelProcess(s.ObservedOwnedProcess),
                     IsExcelVisible = validation.IsExcelVisible,
                     ActiveOperations = validation.ActiveOperationCount,
                     OperationPending = validation.OperationPending || operation?.ExecutionPending == true,

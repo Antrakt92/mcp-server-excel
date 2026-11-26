@@ -102,6 +102,7 @@ public sealed class ServiceBridge : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
         // Status and window visibility controls do not queue behind workbook work.
         var slots = command is "session.list" or "service.status" or "service.ping" or OperationReceipts.LookupCommand
+            or ExcelController.ProcessDiagnosticsCommand
             or "window.show" or "window.hide"
             ? _controlDispatchSlots : _dispatchSlots;
         if (!slots.Wait(0))

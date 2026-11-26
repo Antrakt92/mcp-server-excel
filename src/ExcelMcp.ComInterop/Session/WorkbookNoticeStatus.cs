@@ -19,7 +19,11 @@ public sealed record WorkbookNoticeStatus(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? ConnectionCount,
     string ConnectionsState,
     bool Complete,
-    IReadOnlyList<string> Messages);
+    IReadOnlyList<string> Messages)
+{
+    /// <summary>Application setting for subsequent programmatic opens at inspection time.</summary>
+    public string AutomationSecurity { get; init; } = "unknown";
+}
 
 /// <summary>The observed result of an explicitly requested workbook security action.</summary>
 /// <param name="Action">The action that completed.</param>
@@ -30,4 +34,8 @@ public sealed record WorkbookNoticeStatus(
 public sealed record WorkbookSecurityResult(
     string Action,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? Changed,
-    bool TrustMayBeRemembered, bool Reopened, string Message);
+    bool TrustMayBeRemembered, bool Reopened, string Message)
+{
+    /// <summary>Whether an approved macro reopen used the same observed Excel process.</summary>
+    public string? ExcelProcessContinuity { get; init; }
+}

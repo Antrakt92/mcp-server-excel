@@ -1227,6 +1227,12 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
     internal ExcelNativeProcessObservation? ProcessObservation =>
         Volatile.Read(ref _nativeProcessObserver)?.Observe();
 
+    internal ExcelProcessIdentity? ObserveOwnedWorkbookProcess() =>
+        _attachedApplication is null && !_ownedProcessLeftOpen && !HasFailedStartup
+        && _securityReopenFailure is null
+        && ProcessObservation is { State: ExcelNativeProcessState.Alive } observation
+            ? observation.Identity : null;
+
     ExcelNativeProcessObservation? IExcelBatchProcessObservation.ProcessObservation => ProcessObservation;
 
     private void CaptureNativeProcessObserver(ExcelProcessIdentity identity)
