@@ -9,7 +9,7 @@ namespace Sbroenne.ExcelMcp.Core.Commands;
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed class ConditionalRuleUpdateOptions
 {
-    /// <summary>Exact worksheet range, named range, or disjoint scope.</summary>
+    /// <summary>Exact worksheet A1 range or comma-separated disjoint A1 ranges.</summary>
     public string? AppliesTo { get; set; }
     /// <summary>Stop evaluating lower-priority rules when true; unavailable for visual scales/bars/icons.</summary>
     public bool? StopIfTrue { get; set; }
