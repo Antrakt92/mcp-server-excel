@@ -38,9 +38,11 @@ addresses on one worksheet. For example:
 ```
 
 Use `value: null` for a blank. A string under `value` stays literal even if
-it starts with `=`. Supply formulas in Excel's stored A1 spelling. The
-action uses scalar formula entry and excludes tables, merged cells, spills,
-legacy arrays, and protected locked cells.
+it starts with `=`. Use the stored A1 formula from the read result for
+`expected.formula`. The action writes `replacement.formula` as a scalar.
+Excel can show an explicit `@` in the stored formula after the write.
+Tables, merged cells, spills, legacy arrays, and protected locked cells are
+excluded.
 
 A conflict in the initial pass returns before any write. Excel events and
 other edits can intervene after that pass, so every write has another

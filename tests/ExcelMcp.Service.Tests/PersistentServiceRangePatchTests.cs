@@ -62,6 +62,35 @@ public sealed class PersistentServiceRangePatchTests(PersistentServiceWorkbookFi
     }
 
     [Fact]
+    public void ScalarReplacementConfirmsExcelImplicitIntersectionWithoutChangingAdjacentCells()
+    {
+        var batch = _fixture.BatchToken;
+        var sheetName = _fixture.CreateTestSheet(batch);
+        bool supportsFormula2 = _fixture.ExecuteRawVerification((context, _) => context.Capabilities.SupportsFormula2);
+        RequireSuccess(_commands.SetValues(batch, sheetName, "A1:A4", [[1], [4], [9], [16]]));
+        RequireSuccess(_commands.SetValues(batch, sheetName, "B3", [[91]]));
+
+        using var options = JsonDocument.Parse("""
+            {"edits":[
+              {"address":"B2","expected":{"value":null},"replacement":{"formula":"=SQRT(A1:A4)"}},
+              {"address":"C2","expected":{"value":null},"replacement":{"value":17}}
+            ]}
+            """);
+        var response = _fixture.Send("range.patch-cells", new { sheetName, patchOptions = options.RootElement });
+        Assert.NotNull(response.Result);
+        using var result = JsonDocument.Parse(response.Result);
+        Assert.True(result.RootElement.GetProperty("success").GetBoolean(), response.Result);
+        Assert.Equal(["B2", "C2"], result.RootElement.GetProperty("confirmedAddresses").EnumerateArray().Select(cell => cell.GetString()));
+
+        var readback = RequireSuccess(_commands.GetFormulas(batch, sheetName, "B2:C3"));
+        Assert.Equal(supportsFormula2 ? "=SQRT(@A1:A4)" : "=SQRT(A1:A4)", readback.Formulas[0][0]);
+        RangeReadAssertions.Number(2, readback.Values[0][0]);
+        RangeReadAssertions.Number(17, readback.Values[0][1]);
+        RangeReadAssertions.Number(91, readback.Values[1][0]);
+        Assert.Null(readback.Values[1][1]);
+    }
+
+    [Fact]
     public async Task OversizedLiteralIsRejectedBeforeAnyPatchWrite()
     {
         var batch = _fixture.BatchToken;

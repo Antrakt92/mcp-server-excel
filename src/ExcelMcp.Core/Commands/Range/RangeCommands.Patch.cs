@@ -29,9 +29,11 @@ public partial class RangeCommands
             if (result.ConflictAddresses.Count > 0)
                 return PatchConflict(result);
 
+            var confirmedReplacements = new List<(string Address, PreparedCellState State)>(edits.Count);
             foreach (var edit in edits)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var confirmedReplacement = edit.Replacement;
                 if (!WithPatchCell(context, sheetName, edit.Address, cell =>
                 {
                     ValidatePatchTarget(context, cell, edit.Address);
@@ -43,7 +45,7 @@ public partial class RangeCommands
                         result.UnconfirmedAddress = edit.Address;
                         WritePatchCell(cell, edit.Replacement);
                         result.WriteReturnedAddresses.Add(edit.Address);
-                        if (!PatchCellMatches(context, cell, edit.Replacement))
+                        if (!PatchReplacementMatches(context, cell, edit.Replacement, out confirmedReplacement))
                         {
                             result.ReadbackMismatch = true;
                             throw new InvalidOperationException($"Excel readback differs from the requested content at {edit.Address}.");
@@ -58,17 +60,18 @@ public partial class RangeCommands
                     result.ConflictAddresses.Add(edit.Address);
                     return PatchConflict(result);
                 }
+                confirmedReplacements.Add((edit.Address, confirmedReplacement));
             }
 
             // A later edit or a workbook event can change a previously read-back cell.
-            foreach (var edit in edits)
+            foreach (var (address, state) in confirmedReplacements)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!WithPatchCell(context, sheetName, edit.Address,
-                    cell => PatchCellMatches(context, cell, edit.Replacement), result))
+                if (!WithPatchCell(context, sheetName, address,
+                    cell => PatchCellMatches(context, cell, state), result))
                 {
-                    result.ConfirmedAddresses.Remove(edit.Address);
-                    result.ConflictAddresses.Add(edit.Address);
+                    result.ConfirmedAddresses.Remove(address);
+                    result.ConflictAddresses.Add(address);
                 }
             }
 
@@ -190,6 +193,26 @@ public partial class RangeCommands
         object? actual = cell.Value2;
         return Equals(actual, expected.Content)
             && (!ExcelErrorMapper.TryGet(actual, out _, out _) || !IsNativeError(context, cell, 1, 1));
+    }
+
+    private static bool PatchReplacementMatches(ExcelContext context, Excel.Range cell,
+        PreparedCellState requested, out PreparedCellState confirmed)
+    {
+        confirmed = requested;
+        if (!requested.IsFormula || !context.Capabilities.SupportsFormula2)
+            return PatchCellMatches(context, cell, requested);
+        if (cell.HasFormula is not true || ReadFormulas(context, cell) is not string stored)
+            return false;
+        if (Equals(stored, requested.Content))
+            return true;
+
+        // Excel can expose its scalar Formula write with explicit implicit intersection in Formula2.
+        // Verify the original spelling through Formula, then retain Formula2 for the final conflict check.
+        if (!Equals((object?)cell.Formula, requested.Content) || cell.HasArray ||
+            cell.HasSpill is not false || cell.SavedAsArray is not false)
+            return false;
+        confirmed = new(true, stored);
+        return true;
     }
 
     private static void WritePatchCell(Excel.Range cell, PreparedCellState replacement)
