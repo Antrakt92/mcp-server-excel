@@ -135,7 +135,8 @@ internal abstract class ServiceCommandBase<TSettings> : AsyncCommand<TSettings>
             return (null, null);
         var callerDirectory = Environment.CurrentDirectory;
         var (request, protectedPaths) = CliInputPolicy.BindArtifactPaths(command,
-            JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), callerDirectory);
+            JsonSerializer.Serialize(args, ServiceProtocol.JsonOptions), callerDirectory,
+            protectLocalInputs: !string.IsNullOrEmpty(outputPath));
         if (string.IsNullOrEmpty(outputPath) || protectedPaths.Count == 0)
             return (request, null);
         var guard = new OutputPathGuard(Path.GetFullPath(outputPath, callerDirectory), protectedPaths);

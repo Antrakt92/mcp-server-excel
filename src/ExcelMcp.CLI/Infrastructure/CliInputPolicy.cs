@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sbroenne.ExcelMcp.Generated;
 using Sbroenne.ExcelMcp.Service;
@@ -21,7 +22,7 @@ internal static class CliInputPolicy
     internal static bool IsHelpFlag(string argument) => argument is "--help" or "-h" or "-?";
 
     internal static (string? Args, IReadOnlyList<(string Path, string Option)> ProtectedPaths) BindArtifactPaths(
-        string command, string? argsJson, string callerDirectory)
+        string command, string? argsJson, string callerDirectory, bool protectLocalInputs = false)
     {
         (string Name, string Option)[] operands = command switch
         {
@@ -31,12 +32,13 @@ internal static class CliInputPolicy
                 [("sourceFile", "--source-file"), ("targetFile", "--target-file")],
             _ => []
         };
-        if (argsJson is null || operands.Length == 0)
+        var localInputs = protectLocalInputs ? ServiceRegistry.GetLocalInputFileArgumentNames(command) : [];
+        if (argsJson is null || (operands.Length == 0 && localInputs.Length == 0))
             return (argsJson, []);
 
         if (JsonNode.Parse(argsJson) is not JsonObject request)
             throw new ArgumentException("Command arguments must be a JSON object.", nameof(argsJson));
-        var protectedPaths = new List<(string Path, string Option)>(operands.Length);
+        var protectedPaths = new List<(string Path, string Option)>(operands.Length + localInputs.Length);
         var changed = false;
         foreach (var (name, option) in operands)
         {
@@ -53,6 +55,16 @@ internal static class CliInputPolicy
                 changed = true;
             }
             protectedPaths.Add((absolute, option));
+        }
+
+        foreach (var name in localInputs)
+        {
+            if (request[name] is JsonValue value && value.TryGetValue<string>(out var path)
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                var option = "--" + JsonNamingPolicy.KebabCaseLower.ConvertName(name);
+                protectedPaths.Add((Path.GetFullPath(path, callerDirectory), option));
+            }
         }
 
         if (command == "workbook.save-copy-as" && request["packageCheck"] is JsonObject packageCheck

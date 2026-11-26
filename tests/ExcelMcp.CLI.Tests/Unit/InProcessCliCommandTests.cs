@@ -177,6 +177,75 @@ public sealed class InProcessCliCommandTests
     }
 
     [Fact]
+    public async Task OutputFile_DistinctPathLeavesDeclaredLocalInputIntact()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelcli-distinct-input-");
+        try
+        {
+            var input = Path.Combine(directory.FullName, "values.json");
+            var outputPath = Path.Combine(directory.FullName, "response.json");
+            const string original = "[[42]]";
+            await File.WriteAllTextAsync(input, original);
+            await File.WriteAllTextAsync(outputPath, "previous response");
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true,"cellsWritten":1}""" });
+
+            var exit = await Program.RunAsync(
+                ["--quiet", "range", "set-values", "--session", "target", "--sheet-name", "Data",
+                    "--range-address", "A1", "--values-file", input, "--output", outputPath],
+                CreateRuntime(factory, new StringWriter(), new StringWriter()));
+
+            Assert.Equal(0, exit);
+            var request = Assert.Single(factory.Requests);
+            using var args = JsonDocument.Parse(request.Args!);
+            Assert.Equal(input, args.RootElement.GetProperty("valuesFile").GetString());
+            using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath));
+            Assert.Equal(1, saved.RootElement.GetProperty("data").GetProperty("cellsWritten").GetInt32());
+            Assert.Equal(original, await File.ReadAllTextAsync(input));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("range", "set-values", "--values-file", "json", "[[42]]", "--sheet-name Data --range-address A1")]
+    [InlineData("table", "append", "--rows-file", "json", "[[42]]", "--table-name Example")]
+    [InlineData("querytable", "create-text", "--source-path", "csv", "Amount\n42", "--query-table-name Example --sheet-name Data --destination-address A1")]
+    public async Task OutputFile_RejectsDeclaredLocalInputBeforeConnecting(string category, string action,
+        string option, string extension, string original, string requiredOptions)
+    {
+        var callerDirectory = Environment.CurrentDirectory;
+        var directory = Directory.CreateDirectory(Path.Combine(callerDirectory, $"excelcli-input-{Guid.NewGuid():N}"));
+        try
+        {
+            var input = Path.Combine(directory.FullName, $"Input.{extension}");
+            var outputPath = Path.Combine(directory.FullName, ".", $"input.{extension}");
+            await File.WriteAllTextAsync(input, original);
+            var factory = new RecordingClientFactory(new ServiceResponse { Success = true, Result = """{"success":true}""" });
+            using var output = new StringWriter();
+
+            var exit = await Program.RunAsync(
+                ["--quiet", category, action, "--session", "target", option, Path.GetRelativePath(callerDirectory, input),
+                    "--output", outputPath, .. requiredOptions.Split(' ')],
+                CreateRuntime(factory, output, new StringWriter()));
+
+            Assert.Equal(1, exit);
+            Assert.Equal(0, factory.ConnectionCount);
+            Assert.Empty(factory.Requests);
+            using var result = JsonDocument.Parse(output.ToString());
+            var error = result.RootElement.GetProperty("error");
+            Assert.Equal("InvalidInput", error.GetProperty("category").GetString());
+            Assert.Contains(option, error.GetProperty("message").GetString());
+            Assert.Equal(original, await File.ReadAllTextAsync(input));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task OutputFile_StillWritesToDistinctPathAndDispatchesAbsoluteTarget()
     {
         var callerDirectory = Environment.CurrentDirectory;
