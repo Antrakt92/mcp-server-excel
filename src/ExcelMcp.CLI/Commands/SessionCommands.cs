@@ -365,6 +365,37 @@ internal sealed class SessionOperationResultCommand : AsyncCommand<SessionOperat
     }
 }
 
+internal sealed class SessionProcessDiagnosticsCommand : AsyncCommand<SessionProcessDiagnosticsCommand.Settings>
+{
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.SessionId))
+            return CliErrorOutput.WriteError("Session ID is required.");
+        var pipeName = DaemonAutoStart.GetPipeName();
+        var connection = CliCommandRuntime.Current.DaemonConnection;
+        var request = new ServiceRequest
+        {
+            Command = ExcelController.ProcessDiagnosticsCommand,
+            SessionId = settings.SessionId,
+            Args = JsonSerializer.Serialize(new { includeCrashEvent = settings.IncludeCrashEvent }, ServiceProtocol.JsonOptions)
+        };
+        var response = await CliTelemetry.TrackCommandAsync(request, () => connection.SendControlRequestAsync(
+            pipeName, request, cancellationToken, DaemonConnectionPolicy.ControlTimeout));
+        return CliResultOutput.Write(response, request.Command);
+    }
+
+    internal sealed class Settings : CommandSettings
+    {
+        [CommandOption("-s|--session <SESSION>")]
+        [Description("Exact current or recently closed workbook session.")]
+        public string? SessionId { get; init; }
+
+        [CommandOption("--include-crash-event")]
+        [Description("Look up a matching local Application Error event after a confirmed abnormal Excel process exit.")]
+        public bool IncludeCrashEvent { get; init; }
+    }
+}
+
 internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionComparePackagesCommand.Settings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
@@ -377,7 +408,8 @@ internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionCompar
                 beforePath = settings.BeforePath,
                 afterPath = settings.AfterPath,
                 allowedParts = settings.AllowedParts,
-                includeStructure = settings.IncludeStructure
+                includeStructure = settings.IncludeStructure,
+                includeVbaProject = settings.IncludeVbaProject
             }, ServiceProtocol.JsonOptions)
         };
         using var client = await CliCommandRuntime.Current.ClientFactory.ConnectAsync(cancellationToken);
@@ -402,6 +434,10 @@ internal sealed class SessionComparePackagesCommand : AsyncCommand<SessionCompar
         [CommandOption("--include-structure")]
         [Description("Include saved sheet identities, relationship owners, local name scopes and parent-style candidates. Does not change allowlist decisions.")]
         public bool IncludeStructure { get; init; }
+
+        [CommandOption("--include-vba-project")]
+        [Description("Compare saved VBA project data without returning contents or changing allowlist decisions.")]
+        public bool IncludeVbaProject { get; init; }
     }
 }
 

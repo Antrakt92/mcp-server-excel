@@ -15,7 +15,8 @@ internal sealed record ExcelNativeProcessObservation(
     ExcelProcessIdentity Identity,
     ExcelNativeProcessState State,
     uint? ExitCode,
-    int? NativeError);
+    int? NativeError,
+    DateTimeOffset? ExitedAtUtc = null);
 
 /// <summary>
 /// Observes one process through its retained, identity-checked handle without
@@ -81,6 +82,22 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
         }
     }
 
+    internal ExcelProcessResourceSnapshot ReadResources()
+    {
+        lock (_sync)
+        {
+            var before = ObserveCore().State;
+            if (before != ExcelNativeProcessState.Alive)
+                return ExcelProcessResourceSnapshot.FromProcessState(before);
+
+            var sample = ExcelProcessResourceProbe.ReadCounters(_handle);
+            var after = ObserveCore().State;
+            return after == ExcelNativeProcessState.Alive
+                ? sample
+                : ExcelProcessResourceSnapshot.FromProcessState(after);
+        }
+    }
+
     private ExcelNativeProcessObservation ObserveCore()
     {
         if (_disposed || _lastObservation is { State: ExcelNativeProcessState.Exited, ExitCode: not null })
@@ -103,8 +120,12 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
     private ExcelNativeProcessObservation ObserveExitCode()
     {
         var queried = _api.GetExitCode(_handle, out var exitCode, out var error);
+        var exitTime = _lastObservation?.ExitedAtUtc;
+        if (exitTime is null && _api.GetExitTime(_handle) is long fileTime
+            && fileTime >= Identity.StartedAtUtcFileTime && fileTime <= DateTime.MaxValue.ToFileTimeUtc())
+            exitTime = DateTime.FromFileTimeUtc(fileTime);
         return _lastObservation = new(Identity, ExcelNativeProcessState.Exited,
-            queried ? exitCode : null, queried ? null : error);
+            queried ? exitCode : null, queried ? null : error, exitTime);
     }
 
     public void Dispose()
@@ -135,6 +156,7 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
         bool GetCreationTime(SafeProcessHandle handle, out long creationTime, out int error);
         uint Wait(SafeProcessHandle handle, out int error);
         bool GetExitCode(SafeProcessHandle handle, out uint exitCode, out int error);
+        long? GetExitTime(SafeProcessHandle handle) => null;
     }
 
     private sealed class WindowsProcessApi : IProcessApi
@@ -168,6 +190,9 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
             error = result ? 0 : Marshal.GetLastWin32Error();
             return result;
         }
+
+        public long? GetExitTime(SafeProcessHandle handle) =>
+            GetProcessTimes(handle, out _, out var exitTime, out _, out _) && exitTime > 0 ? exitTime : null;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

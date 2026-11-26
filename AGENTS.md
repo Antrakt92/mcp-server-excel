@@ -124,8 +124,9 @@ assumption that passing compilation proves runtime correctness.
   hashing parts of two caller-selected, saved XLSX/XLSM files and optional
   bounded structural metadata inspection. Keep it read-only, bound its archive
   inputs and output, and return part identities, hashes and requested sheet,
-  relationship, name-scope and parent-style metadata without cell values,
-  defined-name formulas or external relationship targets. Structural matches
+  relationship, name-scope, parent-style and VBA project change metadata without
+  cell values, defined-name formulas, external relationship targets, VBA source,
+  reference paths or protection values. Structural matches
   never widen the exact part allowlist or authorize package rewriting.
   The optional package check for
   `workbook.save-copy-as` uses the same read-only comparator on a saved

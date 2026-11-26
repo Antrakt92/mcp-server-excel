@@ -9,6 +9,40 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ExcelControllerTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProcessDiagnostics_OnlyOwnedCloseCanResolveRecordedExit(bool owned)
+    {
+        using var controller = new ExcelController(launcher: Launcher);
+        await StopNativeObservationPollingAsync(controller);
+        const string session = "recorded-close";
+        var identity = new ExcelProcessIdentity(123, 134_381_234_567_890_123);
+        var history = Assert.IsType<CloseHistory>(typeof(ExcelController)
+            .GetField("_closeHistory", NativeObservationHidden)!.GetValue(controller));
+        history.Record(new(session, identity), new ServiceResponse { Success = true }, owned: owned);
+        PublishNativeObservation(controller, identity, ExcelNativeProcessState.Exited, 0xC0000005u, null);
+        PublishNativeObservation(controller, identity with { StartedAtUtcFileTime = 456 }, ExcelNativeProcessState.Exited, 0, null);
+
+        var response = await controller.ProcessAsync(new ServiceRequest
+        {
+            Command = ExcelController.ProcessDiagnosticsCommand,
+            SessionId = session
+        });
+        Assert.True(response.Success, response.ErrorMessage);
+        using var result = JsonDocument.Parse(response.Result!);
+        Assert.Equal(owned ? "exited" : "unknown", result.RootElement.GetProperty("status").GetString());
+        Assert.False(result.RootElement.TryGetProperty("crashEvent", out _));
+        if (owned)
+        {
+            var exit = result.RootElement.GetProperty("nativeExit");
+            Assert.Equal(0xC0000005u, exit.GetProperty("exitCode").GetUInt32());
+            Assert.Equal("0xC0000005", exit.GetProperty("exitCodeHex").GetString());
+        }
+        else
+            Assert.False(result.RootElement.TryGetProperty("nativeExit", out _));
+    }
+
     [Fact]
     public void WorkerRegistration_OlderRecordDefaultsObservationToNull()
     {

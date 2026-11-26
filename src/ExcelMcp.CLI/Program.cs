@@ -230,6 +230,8 @@ internal sealed class Program
                     .WithDescription("Save the current workbook without closing its session. Excel must be ready.");
                 branch.AddCommand<SessionListCommand>("list")
                     .WithDescription("List sessions with canClose, closeReadiness, blocker details and recentCloseAttempts. A pending operation is not a completed or failed operation. activeOperations:0 does not prove Excel has finished. After a timeout, check the operation's outcome and inspect the workbook before repeating a change. Confirmed blocking dialogs automatically reveal Excel and include readable dialog text in blockingMessage; partial or unavailable reads are reported. Ask the user to respond in Excel. Dialog types are not identified and input values are not read.");
+                branch.AddCommand<SessionProcessDiagnosticsCommand>("process-diagnostics")
+                    .WithDescription("Inspect resources or recorded process exit for a workbook session");
                 branch.AddCommand<SessionOperationResultCommand>("operation-result")
                     .WithDescription("Look up a tracked table.append, session.save, or vba.invoke command by operation ID and session.");
                 branch.AddCommand<SessionComparePackagesCommand>("compare-packages")

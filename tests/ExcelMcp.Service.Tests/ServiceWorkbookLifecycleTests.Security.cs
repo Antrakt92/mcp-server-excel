@@ -76,7 +76,13 @@ public sealed partial class ServiceWorkbookLifecycleTests
             await CloseSessionAsync(service, created, save: true);
             sessions.TryRemove(created, out _);
 
-            var id = await OpenSessionAsync(service, path);
+            var opened = await service.ProcessAsync(new ServiceRequest
+            {
+                Command = "session.open",
+                Args = JsonSerializer.Serialize(new { filePath = path })
+            });
+            RequireSuccess(opened);
+            var id = opened.SessionId!;
             sessions[id] = 0;
             Assert.Equal("not-run", await ReadMarkerAsync(service, id));
             var blockedRun = await service.ProcessAsync(new ServiceRequest
@@ -90,6 +96,34 @@ public sealed partial class ServiceWorkbookLifecycleTests
             Assert.Equal("not-run", await ReadMarkerAsync(service, id));
             var before = service.SessionManager.GetSession(id)!;
             var processId = before.ExcelProcessId;
+            var expectedProcess = service.SessionManager.GetSessionProcessIdentity(id)!.Value;
+            using (var openPayload = JsonDocument.Parse(opened.Result!))
+            {
+                var process = openPayload.RootElement.GetProperty("excelProcess");
+                Assert.Equal("confirmed", process.GetProperty("status").GetString());
+                Assert.Equal(expectedProcess.ProcessId, process.GetProperty("processId").GetInt32());
+            }
+            var second = await CreateSessionAsync(service, Path.Join(directory, "other-process.xlsx"));
+            sessions[second] = 0;
+            var otherProcess = service.SessionManager.GetSessionProcessIdentity(second)!.Value;
+            Assert.NotEqual(expectedProcess, otherProcess);
+            async Task AssertListedProcessesAsync()
+            {
+                var list = await service.ProcessAsync(new ServiceRequest { Command = "session.list" });
+                RequireSuccess(list);
+                using var document = JsonDocument.Parse(list.Result!);
+                foreach (var (session, expected) in new[] { (id, expectedProcess), (second, otherProcess) })
+                {
+                    var row = document.RootElement.GetProperty("sessions").EnumerateArray()
+                        .Single(item => item.GetProperty("sessionId").GetString() == session);
+                    var observed = row.GetProperty("excelProcess");
+                    Assert.Equal("confirmed", observed.GetProperty("status").GetString());
+                    Assert.Equal(expected.ProcessId, observed.GetProperty("processId").GetInt32());
+                    Assert.Equal(expected.StartedAtUtcFileTime.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        observed.GetProperty("startedAtUtcFileTime").GetString());
+                }
+            }
+            await AssertListedProcessesAsync();
             var settings = before.Execute((ctx, _) => (ctx.App.AutomationSecurity, ctx.App.DisplayAlerts));
             var inspection = await SendSecurityAsync(service, id, "notices");
             RequireSuccess(inspection);
@@ -98,6 +132,7 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 var notices = json.RootElement.GetProperty("notices");
                 Assert.True(notices.GetProperty("hasVbaProject").GetBoolean());
                 Assert.Equal("disabledAtOpen", notices.GetProperty("vbaState").GetString());
+                Assert.Equal("forceDisabled", notices.GetProperty("automationSecurity").GetString());
             }
             await WriteMarkerAsync(service, id, "unsaved");
             var refused = await SendSecurityAsync(service, id, "enable-macros", new { approved = true, allowReopen = true });
@@ -114,7 +149,9 @@ public sealed partial class ServiceWorkbookLifecycleTests
                 Assert.True(security.GetProperty("changed").GetBoolean());
                 Assert.True(security.GetProperty("reopened").GetBoolean());
                 Assert.False(security.GetProperty("trustMayBeRemembered").GetBoolean());
+                Assert.Equal("same", security.GetProperty("excelProcessContinuity").GetString());
             }
+            await AssertListedProcessesAsync();
             Assert.Equal("opening-ran", await ReadMarkerAsync(service, id));
             Assert.Same(before, service.SessionManager.GetSession(id));
             Assert.Equal(processId, before.ExcelProcessId);
@@ -129,7 +166,11 @@ public sealed partial class ServiceWorkbookLifecycleTests
             var repeated = await SendSecurityAsync(service, id, "enable-macros", new { approved = true, allowReopen = true });
             RequireSuccess(repeated);
             using (var json = JsonDocument.Parse(repeated.Result!))
-                Assert.False(json.RootElement.GetProperty("security").GetProperty("reopened").GetBoolean());
+            {
+                var security = json.RootElement.GetProperty("security");
+                Assert.False(security.GetProperty("reopened").GetBoolean());
+                Assert.Equal("notReopened", security.GetProperty("excelProcessContinuity").GetString());
+            }
             Assert.Equal("explicit-ran-3", await ReadMarkerAsync(service, id));
         });
     }

@@ -20,7 +20,48 @@ public sealed class WorkbookPackageComparisonResult : ResultBase
     /// <summary>Optional saved-package structural diagnostics. These do not change allowlist decisions.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WorkbookPackageStructureReport? Structure { get; init; }
+
+    /// <summary>Optional saved VBA project comparison, independent of the ZIP allowlist.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WorkbookVbaProjectComparison? VbaProject { get; init; }
 }
+
+/// <summary>Comparison of serialized VBA project data without exposing stream contents.</summary>
+public sealed class WorkbookVbaProjectComparison
+{
+    /// <summary>One of compared, identical-bytes, absent, or unavailable.</summary>
+    public required string Status { get; init; }
+
+    /// <summary>Exact saved project part in the first workbook, when identified.</summary>
+    public string? BeforePart { get; init; }
+
+    /// <summary>Exact saved project part in the second workbook, when identified.</summary>
+    public string? AfterPart { get; init; }
+
+    /// <summary>Why the optional comparison was unavailable, without file contents.</summary>
+    public string? Reason { get; init; }
+
+    /// <summary>Whether the serialized reference records changed, or unknown.</summary>
+    public string References { get; init; } = "unknown";
+
+    /// <summary>Number of serialized reference records in the first VBA project, when inspected.</summary>
+    public int? BeforeReferenceCount { get; init; }
+
+    /// <summary>Number of serialized reference records in the second VBA project, when inspected.</summary>
+    public int? AfterReferenceCount { get; init; }
+
+    /// <summary>Whether the serialized protection metadata changed, or unknown.</summary>
+    public string ProtectionMetadata { get; init; } = "unknown";
+
+    /// <summary>Number of changed streams outside the recognized project categories.</summary>
+    public int OtherChangedStreams { get; init; }
+
+    /// <summary>Changed serialized items. Changes to a designer do not establish a visual or behavioral difference.</summary>
+    public IReadOnlyList<WorkbookVbaProjectItemChange> Changes { get; init; } = [];
+}
+
+/// <summary>A classified item whose serialized data or presence changed.</summary>
+public sealed record WorkbookVbaProjectItemChange(string Category, string Name, string ChangeKind);
 
 /// <summary>A saved workbook package entry whose presence or decompressed bytes changed.</summary>
 public sealed class WorkbookPackagePartChange

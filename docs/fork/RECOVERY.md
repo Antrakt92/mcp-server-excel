@@ -212,6 +212,40 @@ phase marks for individual operations inside a macro when debugging a fixture.
 
 ### Match a Windows crash report
 
+For an owned session, `excelcli session open` and `session list`, or MCP
+`file open` and `file_read list`, return an `excelProcess` observation.
+When its status is `confirmed`, keep `processId` and
+`startedAtUtcFileTime` together with the session ID. Compare the FILETIME
+as exact decimal text. The observation records a previously checked identity
+and does not authorize ending the process. A missing or unverified connection
+reports `unknown`.
+
+After `enable-macros`, `security.excelProcessContinuity` describes the
+actual reopen. `notReopened` means the workbook was already opened
+with approval. The approval applies to the selected workbook reopen.
+`session notices` in CLI or `file_read notices` in MCP reports the
+observed application `automationSecurity` for later programmatic opens
+when available. This setting can change and does not establish whether
+another workbook's opening event ran.
+
+Use `excelcli session process-diagnostics --session <ID>` or
+`file_read` with `action: "process-diagnostics"` and
+`workbook_session_id` to take an optional snapshot. For an active owned
+Excel process it reports handles, GDI and USER objects, and private bytes
+where Windows permits the read. Compare the exact process identity before
+and after the action. Sample a stable control and individual actions
+separately. A single sample or an increase while Excel processes messages
+does not establish a leak.
+
+After close, call the same action to look up a retained exit. A closed
+workbook can share a still-running Excel process. When the process exit
+isn't confirmed for that session the result is `unknown`.
+`--include-crash-event` in CLI or `include_crash_event: true` in MCP
+also checks the local Application log for a confirmed abnormal exit.
+Retry the diagnostic read later if Windows has not written the event.
+Matching preserves the original exit code and helps distinguish signatures;
+it cannot tell what caused the crash or whether workbook changes persisted.
+
 For a confirmed Excel process exit, inspect the local Windows **Application**
 log around the incident for source **Application Error**, event **1000**. Match
 `AppName` (`EXCEL.EXE`), `ProcessId`, and `ProcessCreationTime` in the event XML
@@ -223,6 +257,58 @@ If there is an exact match, record the event time, `ExceptionCode`, and
 `IntegratorReportId` when present. A missing or delayed event leaves the report
 unconfirmed. Keep the event details local and omit raw messages and paths from
 shared diagnostics. See [Microsoft's Application Error guidance](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/troubleshoot-application-service-crashing-behavior).
+
+## Keep operation and cleanup failures
+
+When a disposable test owns the session, record its ID and confirmed
+`excelProcess` when opening it. A `finally` block that throws on close can
+hide the original operation failure. Preserve both replies locally and
+check both the native CLI exit code and its JSON envelope.
+
+```powershell
+# $opened is the successful open reply from the configured $excelcli launcher.
+$session = $opened.data.sessionId
+function Invoke-RecordedCli([string[]]$Arguments) {
+    $PSNativeCommandUseErrorActionPreference = $false
+    $raw = & $excelcli -q @Arguments
+    $exitCode = $LASTEXITCODE
+    $reply = $null
+    $parseError = $null
+    try { $reply = $raw | ConvertFrom-Json -ErrorAction Stop }
+    catch { $parseError = $_ }
+    [pscustomobject]@{ ExitCode = $exitCode; Reply = $reply; ParseError = $parseError }
+}
+$invoke = $null
+$invokeError = $null
+$close = $null
+$closeError = $null
+try {
+    $invoke = Invoke-RecordedCli @('vba', 'invoke', '--session', $session, '--procedure-name', 'Probe.Run')
+    if ($invoke.ExitCode -ne 0 -or !$invoke.Reply.success) { throw 'VBA invoke failed' }
+} catch {
+    $invokeError = $_
+} finally {
+    try {
+        $close = Invoke-RecordedCli @('session', 'close', '--session', $session, '--save', 'false')
+        if ($close.ExitCode -ne 0 -or !$close.Reply.success) { throw 'Fixture close failed' }
+    } catch {
+        $closeError = $_
+    }
+}
+$receipt = [pscustomobject]@{
+    SessionId = $session
+    ExcelProcess = $opened.data.excelProcess
+    OperationError = $invokeError
+    OperationReply = $invoke
+    CleanupError = $closeError
+    CleanupReply = $close
+}
+```
+
+Use this pattern only where the test may discard its disposable workbook.
+Treat either failure as a failed test. If the operation may have run,
+inspect the retained operation receipt and workbook state before any retry.
+Keep the receipt local because CLI replies can include workbook details.
 
 ## Rebuild or report a problem
 

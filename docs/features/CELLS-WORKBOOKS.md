@@ -10,10 +10,11 @@ current command details, and the linked guidance for workflow decisions.
 
 ---
 
-## File Operations (14 operations)
+## File Operations (15 operations)
 
 - **Start work:** Open an existing workbook or create a new one and retain its Excel session.
 - **Discover sessions:** List managed sessions or discover already-open workbooks in the current user's Windows session.
+- **Inspect an owned Excel process:** Sample Windows resource counters for a session and inspect a confirmed exit after close.
 - **Reconnect safely:** Discover and attach to an already-open workbook without reopening it; unsaved workbooks can have no file location.
 - **Check access:** Test whether Excel can open a file and identify protection or authentication requirements.
 - **Compare saved packages:** Check the parts and SHA-256 hashes of two XLSX or XLSM files against an exact allowlist.

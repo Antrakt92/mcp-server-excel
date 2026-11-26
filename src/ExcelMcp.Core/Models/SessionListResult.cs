@@ -37,6 +37,8 @@ public sealed class SessionListEntry
     public string? WorkbookName { get; init; }
     /// <summary>Whether the session attaches to an existing workbook.</summary>
     public bool IsAttached { get; init; }
+    /// <summary>Last confirmed owned process identity at the time session status was captured.</summary>
+    public SessionExcelProcess? ExcelProcess { get; init; }
     /// <summary>Whether Excel is visible.</summary>
     public bool IsExcelVisible { get; init; }
     /// <summary>Number of active operations.</summary>
@@ -54,3 +56,9 @@ public sealed class SessionListEntry
     /// <summary>Pending or retained operation state.</summary>
     public ExcelOperationStatus? Operation { get; init; }
 }
+
+/// <summary>Observed identity of the Excel process of an owned workbook session.</summary>
+/// <param name="Status">Whether a matching process was observed: confirmed or unknown.</param>
+/// <param name="ProcessId">Windows process ID when confirmed.</param>
+/// <param name="StartedAtUtcFileTime">Exact decimal Windows creation FILETIME, serialized as text.</param>
+public sealed record SessionExcelProcess(string Status, int? ProcessId = null, string? StartedAtUtcFileTime = null);

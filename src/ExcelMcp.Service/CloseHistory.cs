@@ -10,7 +10,7 @@ internal sealed class CloseHistory
 {
     internal sealed record Target(string SessionId, ExcelProcessIdentity? Excel);
     private sealed record Failure(string? Category, string? ExceptionType, string? HResult);
-    private sealed record Entry(Target Workbook, bool CloseConfirmed, bool SaveConfirmed, bool InitialSaveConfirmed,
+    private sealed record Entry(Target Workbook, bool Owned, bool CloseConfirmed, bool SaveConfirmed, bool InitialSaveConfirmed,
         Failure? LastFailure, IReadOnlyList<Failure> RecordingFailures, JsonObject? PriorStatus,
         ExcelOperationBlocker? PriorSaveBlocker);
 
@@ -20,7 +20,7 @@ internal sealed class CloseHistory
 
     internal (bool CloseConfirmed, bool SaveConfirmed) Record(
         Target target, ServiceResponse response, JsonObject? priorStatus = null, bool onlyIfMissing = false,
-        ExcelOperationBlocker? priorSaveBlocker = null)
+        ExcelOperationBlocker? priorSaveBlocker = null, bool owned = false)
     {
         var recordingFailures = new List<Failure>();
         var close = response;
@@ -52,7 +52,8 @@ internal sealed class CloseHistory
             var failure = previous?.Value.LastFailure;
             if (!close.Success && (failure is null || !HasTrueFlag(close.PartialState, "reconciledFailedClose")))
                 failure = new Failure(close.ErrorCategory, close.ExceptionType, close.HResult);
-            _entries.AddLast(new Entry(target, confirmed || previous?.Value.CloseConfirmed == true,
+            _entries.AddLast(new Entry(target, owned || previous?.Value.Owned == true,
+                confirmed || previous?.Value.CloseConfirmed == true,
                 saved || previous?.Value.SaveConfirmed == true,
                 initialSaveConfirmed || previous?.Value.InitialSaveConfirmed == true, failure,
                 recordingFailures.Count > 0 ? recordingFailures : previous?.Value.RecordingFailures ?? [],
@@ -67,6 +68,16 @@ internal sealed class CloseHistory
     {
         lock (_gate)
             return _entries.Any(entry => entry.Workbook == target && !entry.CloseConfirmed && entry.LastFailure is not null);
+    }
+
+    internal ExcelProcessIdentity? FindUniqueOwnedProcess(string sessionId)
+    {
+        lock (_gate)
+        {
+            var matches = _entries.Where(entry => entry.Owned && entry.Workbook.SessionId == sessionId)
+                .Select(entry => entry.Workbook.Excel).Distinct().Take(2).ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
     }
 
     internal JsonArray Snapshot(IEnumerable<ExcelNativeProcessObservation> nativeExits, Func<string, bool> sessionReleased)
@@ -129,8 +140,11 @@ internal sealed class CloseHistory
     internal static bool IsStrongerNativeExit(ExcelNativeProcessObservation candidate,
         ExcelNativeProcessObservation? previous) =>
         candidate.State == ExcelNativeProcessState.Exited
-        && (previous is null || previous.Identity == candidate.Identity && previous.ExitCode is null
-            && (candidate.ExitCode is not null || previous.NativeError is null && candidate.NativeError is not null));
+        && (previous is null || previous.Identity == candidate.Identity
+            && (previous.ExitCode is null
+                && (candidate.ExitCode is not null || previous.NativeError is null && candidate.NativeError is not null)
+                || previous.ExitCode == candidate.ExitCode && previous.NativeError == candidate.NativeError
+                    && previous.ExitedAtUtc is null && candidate.ExitedAtUtc is not null));
 
     internal static JsonObject NativeDiagnostic(ExcelNativeProcessObservation observation) => new()
     {

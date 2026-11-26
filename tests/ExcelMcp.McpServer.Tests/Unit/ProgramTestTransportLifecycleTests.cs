@@ -19,6 +19,49 @@ namespace Sbroenne.ExcelMcp.McpServer.Tests.Unit;
 public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
 {
     [Fact]
+    public async Task ProcessDiagnostics_UnknownSessionRemainsUnknownThroughToolAndBatch()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var input = new Pipe();
+        var outputPipe = new Pipe();
+        var host = await ProgramTransportTestHost.StartAsync(input, outputPipe, cancellation.Token, "ProcessDiagnosticsClient");
+        try
+        {
+            var session = Guid.NewGuid().ToString("N");
+            var response = await host.Client.CallToolAsync("file_read", new Dictionary<string, object?>
+            {
+                ["action"] = "process-diagnostics",
+                ["workbook_session_id"] = session,
+                ["include_crash_event"] = true
+            }, cancellationToken: cancellation.Token);
+            Assert.False(response.IsError, response.StructuredContent?.GetRawText());
+            AssertUnknownProcess(response.StructuredContent!.Value);
+
+            var batch = await host.Client.CallToolAsync("batch", new Dictionary<string, object?>
+            {
+                ["action"] = "run",
+                ["workbook_session_id"] = session,
+                ["commands"] = new[] { new { command = "session.process-diagnostics", args = new { includeCrashEvent = true } } }
+            }, cancellationToken: cancellation.Token);
+            Assert.False(batch.IsError, batch.StructuredContent?.GetRawText());
+            AssertUnknownProcess(Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray()));
+        }
+        finally
+        {
+            await ProgramTransportTestHost.StopAsync(host.Client, input, outputPipe, host.ServerTask, output, cancellation);
+        }
+    }
+
+    private static void AssertUnknownProcess(JsonElement payload)
+    {
+        Assert.Equal("unknown", payload.GetProperty("status").GetString());
+        var process = payload.GetProperty("excelProcess");
+        Assert.Equal("unknown", process.GetProperty("status").GetString());
+        Assert.False(process.TryGetProperty("processId", out _));
+        Assert.False(payload.TryGetProperty("crashEvent", out _));
+    }
+
+    [Fact]
     public async Task OperationResult_InvalidAndMissingReceiptsStayDistinct()
     {
         using var cancellation = new CancellationTokenSource();
@@ -87,6 +130,7 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             Assert.NotEqual(change.GetProperty("beforeSha256").GetString(), change.GetProperty("afterSha256").GetString());
             Assert.False(change.GetProperty("allowed").GetBoolean());
             Assert.False(payload.TryGetProperty("structure", out _));
+            Assert.False(payload.TryGetProperty("vbaProject", out _));
 
             var structural = Path.Join(directory.FullName, "structural.xlsx");
             CreateComparisonPackage(structural,
@@ -96,7 +140,8 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["action"] = "compare-packages",
                 ["before_path"] = structural,
                 ["after_path"] = structural,
-                ["include_structure"] = true
+                ["include_structure"] = true,
+                ["include_vba_project"] = true
             }, cancellationToken: cancellation.Token);
             Assert.False(structuralResponse.IsError, structuralResponse.StructuredContent?.GetRawText());
             var structure = structuralResponse.StructuredContent!.Value.GetProperty("structure");
@@ -104,6 +149,8 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             Assert.Empty(structure.GetProperty("after").GetProperty("sheets").EnumerateArray());
             Assert.Single(structure.GetProperty("after").GetProperty("relationships").EnumerateArray());
             Assert.Empty(structure.GetProperty("parentStyleMappings").EnumerateArray());
+            var vba = structuralResponse.StructuredContent!.Value.GetProperty("vbaProject");
+            Assert.Equal("absent", vba.GetProperty("status").GetString());
 
             var malformedMetadata = Path.Join(directory.FullName, "malformed-metadata.xlsx");
             CreateComparisonPackage(malformedMetadata,
@@ -129,12 +176,13 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["workbook_session_id"] = "unused",
                 ["commands"] = new object[]
                 {
-                    new { command = "session.compare-packages", args = new { beforePath = before, afterPath = after } }
+                    new { command = "session.compare-packages", args = new { beforePath = before, afterPath = after, includeVbaProject = true } }
                 }
             }, cancellationToken: cancellation.Token);
             Assert.False(batch.IsError, batch.StructuredContent?.GetRawText());
             var item = Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray());
             Assert.Equal("session.compare-packages", item.GetProperty("command").GetString());
+            Assert.Equal("absent", item.GetProperty("vbaProject").GetProperty("status").GetString());
 
             var invalid = Path.Join(directory.FullName, "invalid.xlsx");
             await File.WriteAllTextAsync(invalid, "not an Excel package", cancellation.Token);

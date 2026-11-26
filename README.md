@@ -180,7 +180,7 @@ Do not terminate unrelated Excel or MCP processes during recovery. See [recovery
 
 ## Command coverage
 
-The combined catalogue provides **64 MCP tools across 33 feature areas, with 449 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 449 operations. These counts are checked against the compiled contracts.
+The combined catalogue provides **64 MCP tools across 33 feature areas, with 450 operations**. See [FEATURES.md](FEATURES.md) and current tool descriptions for all 450 operations. These counts are checked against the compiled contracts.
 
 ## Source and contributions
 
