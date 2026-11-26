@@ -235,7 +235,7 @@ public sealed partial class ExcelControllerTests
         public Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId,
             CancellationToken cancellationToken = default) => Task.FromResult<ServiceResponse?>(null);
 
-        public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default)
+        public Task<WorkerRelease> ReleaseAsync(string generation, bool onlyIfEmpty, CancellationToken cancellationToken = default)
         {
             attached = false;
             registration = registration with { ReleaseConfirmed = true };

@@ -51,6 +51,38 @@ public sealed class WorkerNativeObservationDurabilityTests
     }
 
     [Fact]
+    public void RecordObservation_LateStatusCannotReplaceRicherExitEvidenceForTheSameProcess()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"excelmcp-native-observation-{Guid.NewGuid():N}");
+        try
+        {
+            var registry = new WorkerRegistry(directory);
+            var initial = Registration(released: true);
+            registry.Write(initial);
+            using var host = new ExcelWorkerHost(initial, registry: registry);
+            var exit = new ExcelNativeProcessObservation(initial.ReleasedExcel!.Value,
+                ExcelNativeProcessState.Exited, 17, null);
+            var enriched = exit with { ExitedAtUtc = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero) };
+
+            Record(host, exit);
+            Record(host, enriched);
+            Record(host, exit);
+            Record(host, exit with { State = ExcelNativeProcessState.Alive, ExitCode = null });
+            Record(host, exit with { State = ExcelNativeProcessState.Indeterminate, ExitCode = null, NativeError = 5 });
+
+            var updated = CurrentRegistration(host);
+            Assert.Equal(enriched, updated.LastExcelObservation);
+            Assert.False(updated.OwnsExcel);
+            Assert.Equal(updated, registry.Read(initial.PipeName));
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void RecordObservation_WriteFailureRetainsRegistrationAndCanRetry()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"excelmcp-native-observation-{Guid.NewGuid():N}");

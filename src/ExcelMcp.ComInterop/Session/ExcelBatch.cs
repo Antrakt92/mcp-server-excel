@@ -1133,8 +1133,7 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                         failedStartupIdentity,
                         FailedStartupExitConfirmationHook
                         ?? WaitForOwnedProcessExit,
-                        RecordNativeProcessObservation);
-                    RetireNativeProcessObserver();
+                        RecordAndRetireNativeExit);
                 }
                 catch (Exception teardownFailure)
                 {
@@ -1253,6 +1252,21 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             return;
 
         observer.Dispose();
+    }
+
+    private void RecordAndRetireNativeExit()
+    {
+        var observer = Volatile.Read(ref _nativeProcessObserver);
+        if (observer is null)
+            return;
+
+        var before = observer.Observe();
+        SessionManager.RecordExcelProcessObservation(before);
+        // Disposal takes one final sample. Preserve any later exit details
+        // before untracking, so a failed record still leaves teardown retryable.
+        observer.Dispose();
+        if (observer.Observe() is { State: ExcelNativeProcessState.Exited } final && final != before)
+            SessionManager.RecordExcelProcessObservation(final);
     }
 
     private void WriteNativeProcessShutdownObservation()
@@ -2345,8 +2359,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
             _teardownCompletion.Task.GetAwaiter().GetResult();
         });
 
-        if (_excelProcessIdentity is { } identity
-            && (_attachedApplication is null || _quitEmptyOwnedApplication))
+        var ownsProcess = _attachedApplication is null || _quitEmptyOwnedApplication;
+        if (_excelProcessIdentity is { } identity && ownsProcess)
         {
             if (_ownedProcessLeftOpen)
             {
@@ -2359,13 +2373,19 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
                 // ownership and recoverable teardown state until exit is known.
                 FinalizeOwnedProcessTeardown(identity,
                     OwnedProcessExitConfirmationHookForTests ?? WaitForOwnedProcessExit,
-                    RecordNativeProcessObservation);
+                    RecordAndRetireNativeExit);
             }
         }
         // Intentional detach/preservation ends observation without claiming native exit.
-        if (_ownedProcessLeftOpen || (_attachedApplication is not null && !_quitEmptyOwnedApplication))
+        if (_ownedProcessLeftOpen || !ownsProcess)
+        {
             RecordNativeProcessObservation();
-        RetireNativeProcessObserver();
+            RetireNativeProcessObserver();
+        }
+        else if (_excelProcessIdentity is null)
+        {
+            RetireNativeProcessObserver();
+        }
         FinishOperation(null);
         _teardownConfirmed = true;
         _shutdownCts.Dispose();
@@ -2440,9 +2460,8 @@ internal sealed partial class ExcelBatch : IExcelBatch, IExcelBatchTeardownState
 
         _applicationLease?.Dispose();
         _applicationLease = null;
-        RecordNativeProcessObservation();
+        RecordAndRetireNativeExit();
         SessionManager.UntrackExcelProcess(identity);
-        RetireNativeProcessObserver();
         return true;
     }
 

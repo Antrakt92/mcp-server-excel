@@ -100,10 +100,10 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
 
     private ExcelNativeProcessObservation ObserveCore()
     {
-        if (_disposed || _lastObservation is { State: ExcelNativeProcessState.Exited, ExitCode: not null })
+        if (_disposed || _lastObservation is { State: ExcelNativeProcessState.Exited, ExitCode: not null, ExitedAtUtc: not null })
             return _lastObservation!;
         if (_lastObservation is { State: ExcelNativeProcessState.Exited })
-            return ObserveExitCode();
+            return ObserveExitDetails();
 
         var waitResult = _api.Wait(_handle, out var error);
         if (waitResult == WaitTimeout)
@@ -114,18 +114,30 @@ internal sealed class ExcelNativeProcessObserver : IDisposable
 
         // WHY: A signaled handle proves exit independently of the exit-code query.
         // A failed BOOL must not turn the native out parameter into a successful zero.
-        return ObserveExitCode();
+        return ObserveExitDetails();
     }
 
-    private ExcelNativeProcessObservation ObserveExitCode()
+    private ExcelNativeProcessObservation ObserveExitDetails()
     {
-        var queried = _api.GetExitCode(_handle, out var exitCode, out var error);
+        var exitCode = _lastObservation?.ExitCode;
+        var nativeError = _lastObservation is { State: ExcelNativeProcessState.Exited } previous
+            ? previous.NativeError : null;
+        if (exitCode is null)
+        {
+            if (_api.GetExitCode(_handle, out var queriedCode, out var error))
+            {
+                exitCode = queriedCode;
+                nativeError = null;
+            }
+            else
+                nativeError ??= error;
+        }
+
         var exitTime = _lastObservation?.ExitedAtUtc;
         if (exitTime is null && _api.GetExitTime(_handle) is long fileTime
             && fileTime >= Identity.StartedAtUtcFileTime && fileTime <= DateTime.MaxValue.ToFileTimeUtc())
             exitTime = DateTime.FromFileTimeUtc(fileTime);
-        return _lastObservation = new(Identity, ExcelNativeProcessState.Exited,
-            queried ? exitCode : null, queried ? null : error, exitTime);
+        return _lastObservation = new(Identity, ExcelNativeProcessState.Exited, exitCode, nativeError, exitTime);
     }
 
     public void Dispose()

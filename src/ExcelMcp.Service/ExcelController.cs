@@ -703,8 +703,10 @@ internal sealed partial class ExcelController : IDisposable
             return;
         try
         {
-            var released = await worker.ReleaseAsync(CancellationToken.None);
+            var released = await worker.ReleaseAsync(CancellationToken.None, onlyIfEmpty: true);
             var applied = ApplyWorkerSnapshot(worker);
+            if (released.ErrorCategory == WorkerRelease.RetainedCategory)
+                return;
             if (!released.Success)
                 throw new InvalidOperationException(released.ErrorMessage);
             if (released.PartialState is not null)

@@ -140,7 +140,10 @@ internal sealed class ExcelWorkerHost : IDisposable
         {
             if (_registration.Excel != observation.Identity && _registration.ReleasedExcel != observation.Identity)
                 throw new InvalidOperationException("The observed Excel application does not match this worker.");
-            if (_registration.LastExcelObservation == observation)
+            var previous = _registration.LastExcelObservation;
+            if (previous == observation
+                || previous is { State: ExcelNativeProcessState.Exited } && previous.Identity == observation.Identity
+                    && !CloseHistory.IsStrongerNativeExit(observation, previous))
                 return;
             var observed = _registration with { LastExcelObservation = observation };
             _registry.Write(observed);
@@ -454,17 +457,23 @@ internal sealed class ExcelWorkerHost : IDisposable
             return new(response, SnapshotCore());
     }
 
-    private async Task<WorkerRelease> ReleaseAsync(string generation, int clientId)
+    private async Task<WorkerRelease> ReleaseAsync(string generation, int clientId, bool onlyIfEmpty)
     {
         Authorize(generation, clientId);
         if (!await _execution.WaitAsync(0))
-            return Released(Failure(new ServiceRequest { Command = "service.shutdown" }, "Busy",
+            return Released(Failure(new ServiceRequest { Command = "service.shutdown" },
+                onlyIfEmpty ? WorkerRelease.RetainedCategory : "Busy",
                 "An Excel request is still running. Its worker was retained without saving or discarding work."));
         try
         {
             TryRefreshSnapshot();
             lock (_stateLock)
             {
+                // The controller's empty snapshot may predate the completion of an open or attach.
+                if (onlyIfEmpty && _statusFailure is null
+                    && (_snapshot.Sessions.Count > 0 || _service.SessionManager.HasPendingExecution))
+                    return Released(Failure(new ServiceRequest { Command = "service.shutdown" },
+                        WorkerRelease.RetainedCategory, "The Excel worker still owns a session or an outstanding operation."));
                 if (_statusFailure is not null
                     || _snapshot.Sessions.Any(session =>
                         _service.SessionManager.GetOperationStatus(session.SessionId, reconcilePaths: false)?.ExecutionPending == true))
@@ -615,7 +624,7 @@ internal sealed class ExcelWorkerHost : IDisposable
             return completion is null ? null : await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default) =>
-            host.ReleaseAsync(generation, clientId);
+        public Task<WorkerRelease> ReleaseAsync(string generation, bool onlyIfEmpty, CancellationToken cancellationToken = default) =>
+            host.ReleaseAsync(generation, clientId, onlyIfEmpty);
     }
 }
