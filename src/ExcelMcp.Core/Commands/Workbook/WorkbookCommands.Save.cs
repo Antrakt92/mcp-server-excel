@@ -72,11 +72,8 @@ public partial class WorkbookCommands
                 OperationCleanup.Run(() =>
                 {
                     context.App.DisplayAlerts = displayAlerts;
-                    // OneDrive can resolve a local target to a SharePoint URL.
-                    targetAccepted =
-                        string.Equals(context.Book.Name, Path.GetFileName(normalizedPath), StringComparison.OrdinalIgnoreCase) &&
-                        (string.Equals(batch.WorkbookPath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
-                         !string.Equals(context.Book.FullName, originalFullName, StringComparison.OrdinalIgnoreCase));
+                    targetAccepted = SaveAsReachedTarget(normalizedPath, batch.WorkbookPath, originalFullName,
+                        context.Book.FullName);
                     if (targetAccepted)
                         batch.UpdateWorkbookPath(normalizedPath);
                 }, operationFailure);
@@ -86,7 +83,8 @@ public partial class WorkbookCommands
             {
                 throw new InvalidOperationException(
                     "Workbook was not saved to the requested path. Excel cancelled Save As or left unsaved changes. " +
-                    "The workbook remains open; inspect its saved state and fullName before continuing.");
+                    "The workbook remains open. Use CLI 'session discover' or MCP 'file_read' action 'discover' " +
+                    "to verify its current location and saved state before retrying.");
             }
 
             return new OperationResult
@@ -97,6 +95,24 @@ public partial class WorkbookCommands
                 Message = $"Workbook saved as '{normalizedPath}'"
             };
         });
+    }
+
+    internal static bool SaveAsReachedTarget(
+        string targetPath, string trackedPath, string originalFullName, string actualFullName)
+    {
+        var locationConfirmed = string.Equals(trackedPath, targetPath, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(actualFullName, originalFullName, StringComparison.OrdinalIgnoreCase);
+        if (WorkbookLocation.IsRemote(actualFullName))
+        {
+            // OneDrive can report a SharePoint URL for an Excel-owned local target.
+            var remoteName = Path.GetFileName(Uri.UnescapeDataString(new Uri(actualFullName).AbsolutePath));
+            return string.Equals(remoteName, Path.GetFileName(targetPath), StringComparison.OrdinalIgnoreCase)
+                && locationConfirmed;
+        }
+
+        return Path.IsPathFullyQualified(actualFullName)
+            && (string.Equals(actualFullName, targetPath, StringComparison.OrdinalIgnoreCase)
+                || locationConfirmed && WorkbookLocation.MatchesReportedLocation(targetPath, actualFullName));
     }
 
     /// <inheritdoc />
