@@ -14,7 +14,8 @@ internal sealed class OleCompoundFileReader : IDisposable
     private const string DataSpaceInfoStorage = "DataSpaceInfo";
     private const string LegacyDrmDataSpace = "\tDRMDataSpace";
     private const string ModernDrmDataSpace = "DRMEncryptedDataSpace";
-    private readonly FileStream _stream;
+    private readonly Stream _stream;
+    private readonly CancellationToken _cancellationToken;
     private readonly int _sectorSize;
     private readonly int _miniSectorSize;
     private readonly uint _miniStreamCutoff;
@@ -29,9 +30,10 @@ internal sealed class OleCompoundFileReader : IDisposable
     private byte[]? _miniStream;
     private uint[]? _miniFat;
 
-    private OleCompoundFileReader(FileStream stream)
+    private OleCompoundFileReader(Stream stream, bool indexProjectStreams = false, CancellationToken cancellationToken = default)
     {
         _stream = stream;
+        _cancellationToken = cancellationToken;
         Span<byte> header = stackalloc byte[512];
         stream.ReadExactly(header);
         ReadOnlySpan<byte> signature =
@@ -58,8 +60,12 @@ internal sealed class OleCompoundFileReader : IDisposable
         var fatSectorCount = BinaryPrimitives.ReadUInt32LittleEndian(header[44..]);
         var firstDirectorySector = BinaryPrimitives.ReadUInt32LittleEndian(header[48..]);
         _miniStreamCutoff = BinaryPrimitives.ReadUInt32LittleEndian(header[56..]);
+        if (indexProjectStreams && _miniStreamCutoff != 4096)
+            throw new InvalidDataException("The VBA project OLE mini stream cutoff is invalid.");
         _firstMiniFatSector = BinaryPrimitives.ReadUInt32LittleEndian(header[60..]);
         _miniFatSectorCount = BinaryPrimitives.ReadUInt32LittleEndian(header[64..]);
+        if (indexProjectStreams && _miniFatSectorCount > (uint)sectorCount)
+            throw new InvalidDataException("The VBA project OLE mini FAT exceeds the compound file.");
         var firstDifatSector = BinaryPrimitives.ReadUInt32LittleEndian(header[68..]);
         var difatSectorCount = BinaryPrimitives.ReadUInt32LittleEndian(header[72..]);
 
@@ -70,14 +76,19 @@ internal sealed class OleCompoundFileReader : IDisposable
             difatSectorCount,
             sectorCount);
         _fat = ReadFat(fatSectorIds, sectorCount);
-        var directoryBytes = ReadRegularChain(firstDirectorySector, maximumSectors: sectorCount);
+        int directoryLimit = indexProjectStreams ? Math.Min(sectorCount, 1024 * 1024 / _sectorSize) : sectorCount;
+        var directoryBytes = ReadRegularChain(firstDirectorySector, maximumSectors: directoryLimit);
         _directoryEntries = ReadDirectoryEntries(directoryBytes);
         _rootEntry = _directoryEntries.FirstOrDefault(entry => entry.Type == 5)
             ?? throw new InvalidDataException("The OLE root storage is missing.");
-        IndexRelevantChildren(
-            _rootEntry.Child,
-            DirectorySearchScope.Root,
-            new HashSet<int>());
+        if (indexProjectStreams)
+        {
+            if (_rootEntry.Id != 0 || _directoryEntries.Count(entry => entry.Type == 5) != 1)
+                throw new InvalidDataException("The VBA project OLE root storage is invalid.");
+            IndexProjectStreams();
+        }
+        else
+            IndexRelevantChildren(_rootEntry.Child, DirectorySearchScope.Root, new HashSet<int>());
     }
 
     internal static OleCompoundFileReader Open(string filePath)
@@ -98,6 +109,23 @@ internal sealed class OleCompoundFileReader : IDisposable
             throw;
         }
     }
+
+    // The package comparator admits only a size-limited vbaProject part from a pinned workbook.
+    internal static OleCompoundFileReader OpenProject(byte[] bytes, CancellationToken cancellationToken)
+    {
+        var stream = new MemoryStream(bytes, writable: false);
+        try
+        {
+            return new OleCompoundFileReader(stream, indexProjectStreams: true, cancellationToken);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    internal IEnumerable<string> StreamPaths => _entriesByPath.Keys;
 
     internal static int GetSectorCount(long streamLength, int sectorSize)
     {
@@ -128,6 +156,9 @@ internal sealed class OleCompoundFileReader : IDisposable
         {
             return false;
         }
+
+        if (entry.StreamSize == 0)
+            return true;
 
         contents = entry.StreamSize < _miniStreamCutoff
             ? ReadMiniStream(entry)
@@ -330,6 +361,41 @@ internal sealed class OleCompoundFileReader : IDisposable
         }
     }
 
+    private void IndexProjectStreams()
+    {
+        const int maxDepth = 16;
+        const int maxStreams = 4096;
+        var savedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<int> { _rootEntry.Id };
+        long remainingBytes = _stream.Length;
+        var pending = new Stack<(int EntryId, string Parent, int Depth)>();
+        pending.Push((_rootEntry.Child, string.Empty, 1));
+        while (pending.TryPop(out var current))
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            if (current.EntryId == -1)
+                continue;
+            var entry = GetDirectoryEntry(current.EntryId);
+            if (current.Depth > maxDepth || !visited.Add(entry.Id) || entry.Type is not (1 or 2) ||
+                entry.Name.Length == 0 || entry.Name.IndexOfAny(['/', '\\', '\0']) >= 0)
+                throw new InvalidDataException("The VBA project OLE directory is unsupported or invalid.");
+            string path = current.Parent + entry.Name;
+            if (!savedPaths.Add(path))
+                throw new InvalidDataException("The VBA project OLE directory has ambiguous names.");
+            pending.Push((entry.LeftSibling, current.Parent, current.Depth));
+            pending.Push((entry.RightSibling, current.Parent, current.Depth));
+            if (entry.Type == 1)
+            {
+                pending.Push((entry.Child, path + "/", current.Depth + 1));
+                continue;
+            }
+            if (_entriesByPath.Count == maxStreams || entry.StreamSize < 0 || entry.StreamSize > remainingBytes)
+                throw new InvalidDataException("The VBA project OLE stream exceeds the inspection limit.");
+            remainingBytes -= entry.StreamSize;
+            _entriesByPath.Add(path, entry);
+        }
+    }
+
     private static DirectorySearchScope? GetChildSearchScope(
         DirectorySearchScope scope,
         DirectoryEntry entry)
@@ -502,6 +568,7 @@ internal sealed class OleCompoundFileReader : IDisposable
 
     private byte[] ReadSector(uint sectorId)
     {
+        _cancellationToken.ThrowIfCancellationRequested();
         var offset = checked(((long)sectorId + 1) * _sectorSize);
         if (offset < _sectorSize || offset + _sectorSize > _stream.Length)
         {

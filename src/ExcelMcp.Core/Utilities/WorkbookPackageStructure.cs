@@ -508,7 +508,7 @@ internal static class WorkbookPackageStructure
         return owner;
     }
 
-    private static string ResolveTarget(string owner, string target)
+    internal static string ResolveTarget(string owner, string target)
     {
         // RFC 3986 forbids ':' in the first segment of a relative reference, where it would introduce a scheme.
         int separator = target.IndexOf('/');

@@ -497,6 +497,7 @@ public sealed class ExcelMcpService : IDisposable
         ["afterPath"] = "absolute path to the resulting saved XLSX/XLSM",
         ["allowedParts"] = "array of exact package part names allowed to change",
         ["includeStructure"] = "include bounded saved-package structural diagnostics",
+        ["includeVbaProject"] = "compare saved VBA project data without exposing its contents",
         ["filePath"] = "absolute path to the workbook",
         ["show"] = "true to show the Excel window",
         ["readOnly"] = "true for a persistent audit session that rejects workbook mutations and saving",
@@ -523,7 +524,7 @@ public sealed class ExcelMcpService : IDisposable
             "enable-macros" => ["approved", "allowReopen"],
             "operation-result" => ["operationId"],
             "process-diagnostics" => ["includeCrashEvent"],
-            "compare-packages" => ["beforePath", "afterPath", "allowedParts", "includeStructure"],
+            "compare-packages" => ["beforePath", "afterPath", "allowedParts", "includeStructure", "includeVbaProject"],
             _ => []
         };
         var unknownParameters = ServiceRegistry.GetJsonPropertyNames(argsJson, includeNullValues: true)

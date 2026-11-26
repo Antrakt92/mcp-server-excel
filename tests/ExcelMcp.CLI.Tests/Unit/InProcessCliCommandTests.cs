@@ -395,7 +395,7 @@ public sealed class InProcessCliCommandTests
         int exit = await Program.RunAsync(
             ["--quiet", "session", "compare-packages", "--before-path", @"C:\source.xlsm",
                 "--after-path", @"C:\saved.xlsm", "--allow-part", "xl/vbaProject.bin",
-                "--allow-part", "docProps/core.xml", "--include-structure"],
+                "--allow-part", "docProps/core.xml", "--include-structure", "--include-vba-project"],
             CreateRuntime(factory, output, new StringWriter()));
 
         Assert.Equal(0, exit);
@@ -406,6 +406,7 @@ public sealed class InProcessCliCommandTests
         Assert.Equal(@"C:\source.xlsm", arguments.RootElement.GetProperty("beforePath").GetString());
         Assert.Equal(@"C:\saved.xlsm", arguments.RootElement.GetProperty("afterPath").GetString());
         Assert.True(arguments.RootElement.GetProperty("includeStructure").GetBoolean());
+        Assert.True(arguments.RootElement.GetProperty("includeVbaProject").GetBoolean());
         string[] expectedParts = ["xl/vbaProject.bin", "docProps/core.xml"];
         Assert.Equal(expectedParts,
             arguments.RootElement.GetProperty("allowedParts").EnumerateArray().Select(part => part.GetString()));
@@ -439,7 +440,7 @@ public sealed class InProcessCliCommandTests
             new ServiceResponse { Success = true, Result = """{"success":true,"worksheets":[]}""" });
         const string input = """
             [
-              {"command":"session.compare-packages","sessionId":"entry","args":{"beforePath":"C:/before.xlsm","afterPath":"C:/after.xlsm"}},
+              {"command":"session.compare-packages","sessionId":"entry","args":{"beforePath":"C:/before.xlsm","afterPath":"C:/after.xlsm","includeVbaProject":true}},
               {"command":"sheet.list"}
             ]
             """;
@@ -454,6 +455,8 @@ public sealed class InProcessCliCommandTests
             {
                 Assert.Equal("session.compare-packages", compare.Command);
                 Assert.Null(compare.SessionId);
+                using var args = JsonDocument.Parse(compare.Args!);
+                Assert.True(args.RootElement.GetProperty("includeVbaProject").GetBoolean());
             },
             sheet => Assert.Equal("active", sheet.SessionId));
     }

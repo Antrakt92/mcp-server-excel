@@ -33,7 +33,7 @@ public static class WorkbookPackageComparison
     /// <summary>Returns the complete difference and checks it against exact case-sensitive ZIP entry names.</summary>
     public static WorkbookPackageComparisonResult Compare(
         string beforePath, string afterPath, IReadOnlyList<string>? allowedParts, CancellationToken cancellationToken,
-        bool includeStructure = false)
+        bool includeStructure = false, bool includeVbaProject = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         string beforeFile = NormalizePackagePath(beforePath);
@@ -42,7 +42,8 @@ public static class WorkbookPackageComparison
         // Hold both inputs open for the comparison. On Windows this sharing mode excludes concurrent writers and renames.
         using var beforeStream = new FileStream(beforeFile, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var afterStream = new FileStream(afterFile, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return ComparePinned(beforeStream, afterStream, beforeFile, afterFile, allowlist, cancellationToken, includeStructure);
+        return ComparePinned(beforeStream, afterStream, beforeFile, afterFile, allowlist, cancellationToken,
+            includeStructure, includeVbaProject);
     }
 
     // The checked save keeps these file identities pinned until publication. The paths supply their expected formats.
@@ -57,10 +58,11 @@ public static class WorkbookPackageComparison
 
     private static WorkbookPackageComparisonResult ComparePinned(
         FileStream beforeStream, FileStream afterStream, string beforeFile, string afterFile,
-        HashSet<string> allowlist, CancellationToken cancellationToken, bool includeStructure = false)
+        HashSet<string> allowlist, CancellationToken cancellationToken, bool includeStructure = false,
+        bool includeVbaProject = false)
     {
-        var beforeInventory = ReadInventory(beforeStream, Path.GetExtension(beforeFile), cancellationToken, includeStructure);
-        var afterInventory = ReadInventory(afterStream, Path.GetExtension(afterFile), cancellationToken, includeStructure);
+        var beforeInventory = ReadInventory(beforeStream, Path.GetExtension(beforeFile), cancellationToken, includeStructure, includeVbaProject);
+        var afterInventory = ReadInventory(afterStream, Path.GetExtension(afterFile), cancellationToken, includeStructure, includeVbaProject);
         var before = beforeInventory.Hashes;
         var after = afterInventory.Hashes;
         var changes = new List<WorkbookPackagePartChange>();
@@ -101,7 +103,9 @@ public static class WorkbookPackageComparison
             AfterPartCount = after.Count,
             MatchesAllowlist = changes.All(part => part.Allowed),
             Changes = changes,
-            Structure = structure
+            Structure = structure,
+            VbaProject = includeVbaProject ? CompareVbaProjects(
+                beforeStream, beforeInventory, afterStream, afterInventory, cancellationToken) : null
         };
     }
 
@@ -197,10 +201,11 @@ public static class WorkbookPackageComparison
     }
 
     private sealed record PackageInventory(Dictionary<string, string> Hashes,
-        Dictionary<string, byte[]> Metadata, Dictionary<string, string?> CodeNames);
+        Dictionary<string, byte[]> Metadata, Dictionary<string, string?> CodeNames,
+        PackageZipEntry? VbaPart, string? VbaUnavailable);
 
     private static PackageInventory ReadInventory(
-        FileStream stream, string extension, CancellationToken cancellationToken, bool includeStructure)
+        FileStream stream, string extension, CancellationToken cancellationToken, bool includeStructure, bool includeVbaProject)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var entries = ReadZipDirectory(stream, cancellationToken);
@@ -260,8 +265,103 @@ public static class WorkbookPackageComparison
                 codeNames.Add(entry.Name, ReadSheetCodeName(stream, entry, cancellationToken));
         }
 
-        ValidateWorkbookIdentity(types, root!, equivalentNames, extension);
-        return new PackageInventory(hashes, metadata, codeNames);
+        string workbookPart = ValidateWorkbookIdentity(types, root!, equivalentNames, extension);
+        var (vbaPart, vbaUnavailable) = includeVbaProject
+            ? FindVbaPart(stream, entries, types, workbookPart, metadata, digest, buffer, cancellationToken)
+            : (null, null);
+        return new PackageInventory(hashes, metadata, codeNames, vbaPart, vbaUnavailable);
+    }
+
+    private static (PackageZipEntry? Part, string? Unavailable) FindVbaPart(FileStream file,
+        Dictionary<string, PackageZipEntry> entries, XElement contentTypes, string workbook,
+        Dictionary<string, byte[]> metadata, IncrementalHash digest, byte[] buffer, CancellationToken cancellationToken)
+    {
+        const string relationshipType = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+        const string vbaContentType = "application/vnd.ms-office.vbaProject";
+        int separator = workbook.LastIndexOf('/') + 1;
+        string relationshipPart = workbook[..separator] + "_rels/" + workbook[separator..] + ".rels";
+        var relationshipEntry = entries.Values.FirstOrDefault(entry => entry.Name.Equals(relationshipPart, StringComparison.OrdinalIgnoreCase));
+        if (relationshipEntry is null)
+            return (null, null);
+        if (relationshipEntry.Length is <= 0 or > MaxMetadataBytes)
+            return (null, "workbook-relationships-unavailable");
+
+        try
+        {
+            if (!metadata.TryGetValue(relationshipEntry.Name, out var bytes))
+            {
+                bytes = new byte[relationshipEntry.Length];
+                HashEntry(file, relationshipEntry, digest, buffer, bytes, cancellationToken);
+            }
+            var relationships = ReadMetadata(relationshipEntry, RelationshipsNamespace + "Relationships", bytes);
+            XElement? project = null;
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var relationship in relationships.Elements())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (relationship.Name != RelationshipsNamespace + "Relationship" ||
+                    (string?)relationship.Attribute("Id") is not { Length: > 0 } id || !ids.Add(id) ||
+                    (string?)relationship.Attribute("Type") is not { Length: > 0 } relationType)
+                    return (null, "workbook-relationships-unavailable");
+                if (relationType != relationshipType)
+                    continue;
+                if (project is not null)
+                    return (null, "unconfirmed-vba-project-relationship");
+                project = relationship;
+            }
+            if (project is null)
+                return (null, null);
+            if ((string?)project.Attribute("TargetMode") is not (null or "Internal") ||
+                (string?)project.Attribute("Target") is not { Length: > 0 } target)
+                return (null, "unconfirmed-vba-project-relationship");
+            string resolved = WorkbookPackageStructure.ResolveTarget(workbook, target);
+            var part = entries.Values.FirstOrDefault(entry => entry.Name.Equals(resolved, StringComparison.OrdinalIgnoreCase));
+            if (part is null)
+                return (null, "unconfirmed-vba-project-relationship");
+            var (overrides, defaults) = ReadContentTypes(contentTypes);
+            string? type = overrides.GetValueOrDefault("/" + part.Name) ??
+                defaults.GetValueOrDefault(Path.GetExtension(part.Name).TrimStart('.'));
+            return string.Equals(type, vbaContentType, StringComparison.OrdinalIgnoreCase)
+                ? (part, null) : (null, "unconfirmed-vba-project-content-type");
+        }
+        catch (InvalidDataException)
+        {
+            return (null, "workbook-relationships-unavailable");
+        }
+    }
+
+    private static WorkbookVbaProjectComparison CompareVbaProjects(FileStream beforeFile, PackageInventory before,
+        FileStream afterFile, PackageInventory after, CancellationToken cancellationToken)
+    {
+        string? beforePart = before.VbaPart?.Name;
+        string? afterPart = after.VbaPart?.Name;
+        WorkbookVbaProjectComparison Status(string status, string? reason = null) =>
+            new() { Status = status, Reason = reason, BeforePart = beforePart, AfterPart = afterPart };
+
+        if ((before.VbaUnavailable ?? after.VbaUnavailable) is { } unavailable)
+            return Status("unavailable", unavailable);
+        if (beforePart is null && afterPart is null)
+            return Status("absent");
+        if (beforePart is not null && afterPart is not null && before.Hashes[beforePart] == after.Hashes[afterPart])
+            return Status("identical-bytes");
+        if (before.VbaPart?.Length > WorkbookVbaProjectInspector.MaxProjectBytes ||
+            after.VbaPart?.Length > WorkbookVbaProjectInspector.MaxProjectBytes)
+            return Status("unavailable", "vba-project-inspection-limit");
+
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[64 * 1024];
+        byte[]? Read(FileStream file, PackageZipEntry? part)
+        {
+            if (part is null)
+                return null;
+            byte[] bytes = new byte[part.Length];
+            HashEntry(file, part, digest, buffer, bytes, cancellationToken);
+            return bytes;
+        }
+
+        byte[]? beforeBytes = Read(beforeFile, before.VbaPart);
+        byte[]? afterBytes = Read(afterFile, after.VbaPart);
+        return WorkbookVbaProjectInspector.Compare(beforeBytes, beforePart, afterBytes, afterPart, cancellationToken);
     }
 
     private static (Dictionary<string, string> Overrides, Dictionary<string, string> Defaults) ReadContentTypes(XElement types)
@@ -568,7 +668,7 @@ public static class WorkbookPackageComparison
         return entry;
     }
 
-    private static void ValidateWorkbookIdentity(XElement types, XElement root,
+    private static string ValidateWorkbookIdentity(XElement types, XElement root,
         HashSet<string> equivalentNames, string extension)
     {
         var officeDocuments = root.Elements(RelationshipsNamespace + "Relationship")
@@ -604,6 +704,7 @@ public static class WorkbookPackageComparison
         if (matchingTypes.Count != 1 ||
             !string.Equals((string?)matchingTypes[0].Attribute("ContentType"), expectedType, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The package workbook content type does not match its .xlsx or .xlsm extension.");
+        return target;
     }
 
     private static XElement ReadMetadata(PackageZipEntry entry, XName expectedRoot, byte[] buffer)

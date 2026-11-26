@@ -207,6 +207,22 @@ at 4 MiB. Sheet properties are read as a stream without loading cell data.
 Unsupported or ambiguous structural metadata and exceeded limits return errors.
 Omit the option for the existing hash-only comparison.
 
+Set MCP `include_vba_project` to `true` or pass CLI `--include-vba-project`
+to compare the VBA project identified by the saved workbook's internal
+relationship. Batch arguments use `includeVbaProject`. The separate
+`vbaProject` result shows changed module source, module metadata, caches,
+and designer streams. It reports whether serialized reference records and
+protection metadata changed without exposing their values. Designer stream
+changes show a change in stored bytes. Check the form in Excel to establish
+appearance or behavior.
+
+The report distinguishes no linked project, identical project bytes, a completed
+comparison, and unavailable inspection. Inspection is capped at 8 MiB per
+VBA part and 512 changed items. Unsupported records and size limits
+leave the outer ZIP comparison intact. Both reports remain useful when
+`matchesAllowlist` is true. VBA project data is read without starting Excel or
+running macros. The comparison does not change either saved file.
+
 ### Check a copy before publishing it
 
 For an XLSX or XLSM copy, set `package_check` on MCP `workbook` action

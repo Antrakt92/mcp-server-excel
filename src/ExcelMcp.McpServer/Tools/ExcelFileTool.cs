@@ -117,6 +117,7 @@ public static partial class ExcelFileTool
     /// <param name="after_path">Absolute Windows path to the resulting saved XLSX/XLSM. Required for compare-packages. Batch args key: afterPath.</param>
     /// <param name="allowed_parts">Exact package part names allowed to change. Omit to allow no changes. Batch args key: allowedParts.</param>
     /// <param name="include_structure">Include bounded saved sheet identities, relationships, local name scopes and parent-style candidates. Does not change matchesAllowlist. Batch args key: includeStructure.</param>
+    /// <param name="include_vba_project">Compare saved VBA modules, forms and project metadata without returning contents. Does not change matchesAllowlist. Batch args key: includeVbaProject.</param>
     [McpServerTool(Name = "file_read", Title = "Read-Only File Operations", ReadOnly = true,
         Destructive = false)]
     [McpMeta("category", "session")]
@@ -135,6 +136,7 @@ public static partial class ExcelFileTool
         [McpActionParameter("compare-packages", Required = true), DefaultValue(null)] string? after_path = null,
         [McpActionParameter("compare-packages"), DefaultValue(null)] string[]? allowed_parts = null,
         [McpActionParameter("compare-packages"), DefaultValue(false)] bool include_structure = false,
+        [McpActionParameter("compare-packages"), DefaultValue(false)] bool include_vba_project = false,
         CancellationToken cancellationToken = default) =>
         action switch
         {
@@ -146,7 +148,14 @@ public static partial class ExcelFileTool
                     new { includeCrashEvent = include_crash_event }, cancellationToken), cancellationToken),
             FileReadAction.ComparePackages => ExcelToolsBase.ExecuteToolActionAsync("file_read", "compare-packages",
                 () => ExcelToolsBase.ForwardToServiceAsync(bridge, ExcelController.PackageComparisonCommand, null,
-                    new { beforePath = before_path, afterPath = after_path, allowedParts = allowed_parts, includeStructure = include_structure },
+                    new
+                    {
+                        beforePath = before_path,
+                        afterPath = after_path,
+                        allowedParts = allowed_parts,
+                        includeStructure = include_structure,
+                        includeVbaProject = include_vba_project
+                    },
                     cancellationToken), cancellationToken),
             _ => ExecuteFileReadAsync(action, bridge, file_path, timeout_seconds, workbook_session_id, cancellationToken)
         };

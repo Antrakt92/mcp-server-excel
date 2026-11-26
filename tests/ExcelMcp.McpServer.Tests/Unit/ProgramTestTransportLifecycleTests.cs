@@ -130,6 +130,7 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             Assert.NotEqual(change.GetProperty("beforeSha256").GetString(), change.GetProperty("afterSha256").GetString());
             Assert.False(change.GetProperty("allowed").GetBoolean());
             Assert.False(payload.TryGetProperty("structure", out _));
+            Assert.False(payload.TryGetProperty("vbaProject", out _));
 
             var structural = Path.Join(directory.FullName, "structural.xlsx");
             CreateComparisonPackage(structural,
@@ -139,7 +140,8 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["action"] = "compare-packages",
                 ["before_path"] = structural,
                 ["after_path"] = structural,
-                ["include_structure"] = true
+                ["include_structure"] = true,
+                ["include_vba_project"] = true
             }, cancellationToken: cancellation.Token);
             Assert.False(structuralResponse.IsError, structuralResponse.StructuredContent?.GetRawText());
             var structure = structuralResponse.StructuredContent!.Value.GetProperty("structure");
@@ -147,6 +149,8 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
             Assert.Empty(structure.GetProperty("after").GetProperty("sheets").EnumerateArray());
             Assert.Single(structure.GetProperty("after").GetProperty("relationships").EnumerateArray());
             Assert.Empty(structure.GetProperty("parentStyleMappings").EnumerateArray());
+            var vba = structuralResponse.StructuredContent!.Value.GetProperty("vbaProject");
+            Assert.Equal("absent", vba.GetProperty("status").GetString());
 
             var malformedMetadata = Path.Join(directory.FullName, "malformed-metadata.xlsx");
             CreateComparisonPackage(malformedMetadata,
@@ -172,12 +176,13 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["workbook_session_id"] = "unused",
                 ["commands"] = new object[]
                 {
-                    new { command = "session.compare-packages", args = new { beforePath = before, afterPath = after } }
+                    new { command = "session.compare-packages", args = new { beforePath = before, afterPath = after, includeVbaProject = true } }
                 }
             }, cancellationToken: cancellation.Token);
             Assert.False(batch.IsError, batch.StructuredContent?.GetRawText());
             var item = Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray());
             Assert.Equal("session.compare-packages", item.GetProperty("command").GetString());
+            Assert.Equal("absent", item.GetProperty("vbaProject").GetProperty("status").GetString());
 
             var invalid = Path.Join(directory.FullName, "invalid.xlsx");
             await File.WriteAllTextAsync(invalid, "not an Excel package", cancellation.Token);
