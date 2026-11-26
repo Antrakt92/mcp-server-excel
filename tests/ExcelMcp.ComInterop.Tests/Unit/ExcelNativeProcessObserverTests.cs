@@ -277,6 +277,28 @@ public sealed class ExcelNativeProcessObserverTests
         Assert.Equal(0xC0000005U, observation.ExitCode);
     }
 
+    [Fact]
+    public void Observe_ExitTimeCanRecoverAfterExitCodeWasRecorded()
+    {
+        var time = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var api = new ProcessApi { WaitResult = 0, ExitCode = 42 };
+        using var observer = Capture(api);
+
+        var first = observer.Observe();
+        Assert.Equal(42u, first.ExitCode);
+        Assert.Null(first.ExitedAtUtc);
+
+        api.ExitTime = time.ToFileTime();
+        api.ExitQuerySucceeded = false;
+        var recovered = observer.Observe();
+        Assert.Equal(time, recovered.ExitedAtUtc);
+        Assert.Equal(42u, recovered.ExitCode);
+        Assert.Null(recovered.NativeError);
+        Assert.Equal(recovered, observer.Observe());
+        Assert.Equal(1, api.WaitCalls);
+        Assert.Equal(1, api.ExitQueries);
+    }
+
     private sealed class ProcessApi : ExcelNativeProcessObserver.IProcessApi
     {
         internal SafeProcessHandle Handle { get; init; } = new(new IntPtr(42), ownsHandle: false);

@@ -35,7 +35,7 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["include_crash_event"] = true
             }, cancellationToken: cancellation.Token);
             Assert.False(response.IsError, response.StructuredContent?.GetRawText());
-            AssertUnknownProcess(response.StructuredContent!.Value);
+            AssertUnknownProcess(response.StructuredContent!.Value, session);
 
             var batch = await host.Client.CallToolAsync("batch", new Dictionary<string, object?>
             {
@@ -44,7 +44,7 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
                 ["commands"] = new[] { new { command = "session.process-diagnostics", args = new { includeCrashEvent = true } } }
             }, cancellationToken: cancellation.Token);
             Assert.False(batch.IsError, batch.StructuredContent?.GetRawText());
-            AssertUnknownProcess(Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray()));
+            AssertUnknownProcess(Assert.Single(batch.StructuredContent!.Value.GetProperty("results").EnumerateArray()), session);
         }
         finally
         {
@@ -52,8 +52,10 @@ public sealed class ProgramTestTransportLifecycleTests(ITestOutputHelper output)
         }
     }
 
-    private static void AssertUnknownProcess(JsonElement payload)
+    private static void AssertUnknownProcess(JsonElement payload, string sessionId)
     {
+        Assert.Equal(sessionId, payload.GetProperty("sessionId").GetString());
+        Assert.False(payload.TryGetProperty("workbook_session_id", out _));
         Assert.Equal("unknown", payload.GetProperty("status").GetString());
         var process = payload.GetProperty("excelProcess");
         Assert.Equal("unknown", process.GetProperty("status").GetString());

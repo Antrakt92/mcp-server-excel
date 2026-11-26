@@ -1476,11 +1476,8 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
         sb.AppendLine("        };");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    /// <summary>Applies entry-point path rules to the action's declared local file inputs.</summary>");
-        sb.AppendLine("    public static string? BindLocalInputFileArguments(string command, string? argsJson, string? callerDirectory)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        if (argsJson is null) return null;");
-        sb.AppendLine("        return command switch");
+        sb.AppendLine("    /// <summary>Returns the argument names of an action's declared local file inputs.</summary>");
+        sb.AppendLine("    public static string[] GetLocalInputFileArgumentNames(string command) => command switch");
         sb.AppendLine("        {");
         foreach (var category in categories)
         foreach (var method in category.Methods)
@@ -1488,10 +1485,17 @@ public class ServiceRegistryGenerator : IIncrementalGenerator
             var inputs = method.Parameters.Select(parameter => parameter.LocalInputFileParameterName)
                 .OfType<string>().ToList();
             if (inputs.Count > 0)
-                sb.AppendLine($"            \"{category.Category}.{method.ActionName}\" => Sbroenne.ExcelMcp.Core.Utilities.ParameterTransforms.BindLocalInputFiles(argsJson, callerDirectory, {BuildStringArrayExpression(inputs)}),");
+                sb.AppendLine($"            \"{category.Category}.{method.ActionName}\" => {BuildStringArrayExpression(inputs)},");
         }
-        sb.AppendLine("            _ => argsJson");
+        sb.AppendLine("            _ => []");
         sb.AppendLine("        };");
+        sb.AppendLine();
+        sb.AppendLine("    /// <summary>Applies entry-point path rules to the action's declared local file inputs.</summary>");
+        sb.AppendLine("    public static string? BindLocalInputFileArguments(string command, string? argsJson, string? callerDirectory)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        if (argsJson is null) return null;");
+        sb.AppendLine("        var inputs = GetLocalInputFileArgumentNames(command);");
+        sb.AppendLine("        return inputs.Length == 0 ? argsJson : Sbroenne.ExcelMcp.Core.Utilities.ParameterTransforms.BindLocalInputFiles(argsJson, callerDirectory, inputs);");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    /// <summary>Validates a service command before transport dispatch.</summary>");

@@ -27,6 +27,26 @@ public sealed class BoundedRangeValueReaderTests
     }
 
     [Fact]
+    public void OversizedVisibleRead_StopsCheckingRowVisibilityWhenItsBudgetIsExhausted()
+    {
+        var range = ExcelInterfaceProxy.Create<Excel.Range>((method, _) => throw new NotSupportedException(method.Name));
+        var budget = new RangeReadBudget();
+        long available = RangeReadBudget.MaximumResponseBytes - budget.EstimatedBytes;
+        var sample = new RangeReadBudget();
+        long initial = sample.EstimatedBytes;
+        sample.ReserveGrid(1, 1, includeFormulas: false);
+        long bytesPerRow = sample.EstimatedBytes - initial;
+        int checkedRows = 0;
+
+        var rejected = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            BoundedRangeValueReader.Read(CreateContext(), range, (100_000, 1), budget, CancellationToken.None,
+                includeRow: _ => ++checkedRows % 2 == 0));
+
+        Assert.Contains("4 MiB response byte budget", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(2 * ((int)(available / bytesPerRow) + 1), checkedRows);
+    }
+
+    [Fact]
     public void VisibleRead_SkipsEntireHiddenTileAndPreservesRowsColumnsAndNativeTypes()
     {
         var tiles = new List<(int Row, int Column, int Rows, int Columns)>();

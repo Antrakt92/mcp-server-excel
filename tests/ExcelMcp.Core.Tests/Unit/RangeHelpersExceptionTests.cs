@@ -47,6 +47,26 @@ public class RangeHelpersExceptionTests
         Assert.Same(comError, actual.InnerException);
     }
 
+    [Theory]
+    [InlineData(unchecked((int)0x800706BE))] // RPC call failed
+    [InlineData(unchecked((int)0x800AC472))] // Excel is busy
+    [InlineData(unchecked((int)0x80004005))] // Unspecified COM failure
+    public void ResolveRange_WhenNameLookupFailsUnexpectedly_PreservesOriginalComError(int hresult)
+    {
+#pragma warning disable CA2201 // Synthetic COM exception exercises pure classification behavior.
+        var expected = new COMException("Name lookup failed.", hresult);
+#pragma warning restore CA2201
+
+        var actual = Assert.Throws<COMException>(() =>
+            RangeHelpers.ResolveRange(
+                CreateWorkbook(expected, enumerationFailure: new InvalidOperationException("Unexpected name enumeration.")),
+                string.Empty,
+                "NamedRange",
+                out _));
+
+        Assert.Same(expected, actual);
+    }
+
     [Fact]
     public void ResolveRange_WhenOnlyWorksheetScopedNameMatches_ThrowsCategorizedNotFound()
     {

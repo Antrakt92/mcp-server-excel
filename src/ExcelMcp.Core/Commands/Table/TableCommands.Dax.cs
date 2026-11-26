@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Sbroenne.ExcelMcp.ComInterop;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Sbroenne.ExcelMcp.Core.Models;
@@ -233,17 +232,11 @@ public partial class TableCommands
                     throw new InvalidOperationException($"Table '{tableName}' is not connected to a data source. Only DAX-backed tables can be updated.");
                 }
 
-                // Get the model connection
-                try
-                {
-                    modelConnection = workbookConnection.ModelConnection;
-                }
-                catch (COMException)
-                {
-                    throw new InvalidOperationException($"Table '{tableName}' does not have a ModelConnection. Use update-dax only with DAX-backed tables.");
-                }
+                if (workbookConnection.Type != Excel.XlConnectionType.xlConnectionTypeMODEL)
+                    throw new InvalidOperationException($"Table '{tableName}' is not backed by a Model connection. Use update-dax only with DAX-backed tables.");
 
-                if (modelConnection == null)
+                modelConnection = workbookConnection.ModelConnection;
+                if (modelConnection is null)
                 {
                     throw new InvalidOperationException($"Table '{tableName}' is not backed by a Model connection. Use update-dax only with DAX-backed tables.");
                 }
@@ -329,7 +322,7 @@ public partial class TableCommands
                 }
 
                 // ModelConnection is only defined for the Data Model connection type.
-                if ((int)workbookConnection.Type != 7)
+                if (workbookConnection.Type != Excel.XlConnectionType.xlConnectionTypeMODEL)
                 {
                     result.HasDaxConnection = false;
                     result.Success = true;

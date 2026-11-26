@@ -42,7 +42,7 @@ function Read-VsixEntry {
 }
 
 function Assert-ExtensionPackage {
-    param([string]$Path, [string]$Stage, [string]$Architecture, [string]$Version)
+    param([string]$Path, [string]$Architecture, [string]$Version)
     $target = "win32-$Architecture"
     $zip = [IO.Compression.ZipFile]::OpenRead($Path)
     try {
@@ -79,7 +79,7 @@ function Complete-ExtensionPackages {
         $filename = if ($architecture -eq 'x64') { "excel-mcp-$Version.vsix" } else { "excel-mcp-$Version-win32-arm64.vsix" }
         $path = Join-Path $OutputDirectory $filename
         Invoke-PackageCommand $Stage 'npm' @('exec', '--', 'vsce', 'package', '--no-dependencies', '--target', "win32-$architecture", '--out', $path) | Out-Host
-        Assert-ExtensionPackage $path $Stage $architecture $Version
+        Assert-ExtensionPackage $path $architecture $Version
     }
     $nativeRuntime = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Runtime.InteropServices.Architecture]::Arm64) { $Prepared['Mcp-arm64'] } else { $Prepared['Mcp'] }
     Copy-PackageItem $nativeRuntime $bundled

@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
+using Sbroenne.ExcelMcp.Service.Rpc;
 using Sbroenne.ExcelMcp.Service.Workers;
 using Xunit;
 
@@ -10,6 +11,71 @@ namespace Sbroenne.ExcelMcp.Service.Tests;
 
 public sealed partial class ExcelMcpServiceErrorTests
 {
+    [Fact(Timeout = 15000)]
+    public async Task Controller_EmptyWorkerCleanupRetainsSessionThatAppearedAfterCachedSnapshot()
+    {
+        var directory = Directory.CreateTempSubdirectory("excelmcp-empty-worker-");
+        try
+        {
+            var registry = new WorkerRegistry(directory.FullName);
+            var launcher = new ProductProcessLauncher(Path.Join(directory.FullName, "must-not-launch.exe"), []);
+            using var controller = new ExcelController(launcher: launcher, registry: registry);
+            GetPrivateField<CancellationTokenSource>(controller, "_stop").Cancel();
+            await GetPrivateField<Task>(controller, "_poll").WaitAsync(TimeSpan.FromSeconds(3));
+
+            using var service = new ExcelMcpService();
+            var identity = WorkerProcess.Current;
+            var generation = GetPrivateField<string>(controller, "_generation");
+            var registration = new WorkerRegistration($"excelmcp-worker-{Guid.NewGuid():N}",
+                identity, identity, generation, WorkerRegistry.Build, null);
+            using var host = new ExcelWorkerHost(registration, service, registry);
+            var worker = new ExcelWorkerClient(registration, identity, generation);
+            var tracked = GetPrivateField<ConcurrentDictionary<string, ExcelWorkerClient>>(controller, "_workers");
+            var newWorkers = GetPrivateField<ConcurrentDictionary<string, byte>>(controller, "_newWorkers");
+            var run = host.RunAsync();
+            try
+            {
+                await worker.InitializeAsync();
+                Assert.Empty(worker.Snapshot!.Sessions);
+                Assert.True(tracked.TryAdd(registration.PipeName, worker));
+                Assert.True(newWorkers.TryAdd(registration.PipeName, 0));
+
+                const string sessionId = "opened-after-empty-observation";
+                var batch = new FakeBatch();
+                RegisterSession(service, sessionId, batch);
+
+                var cleanup = typeof(ExcelController).GetMethod("ReleaseEmptyWorkerAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!;
+                await Assert.IsAssignableFrom<Task>(cleanup.Invoke(controller, [worker]));
+
+                Assert.Contains(sessionId, service.SessionManager.ActiveSessionIds);
+                Assert.Equal(0, batch.DisposeCalls);
+                Assert.Equal(sessionId, Assert.Single(controller.Sessions).SessionId);
+                Assert.Null(worker.StatusError);
+                Assert.False(worker.Registration.ReleaseConfirmed);
+                Assert.False(worker.Snapshot!.Releasing);
+                Assert.False(run.IsCompleted);
+
+                var shutdown = await worker.ReleaseAsync(CancellationToken.None);
+                Assert.True(shutdown.Success, shutdown.ErrorMessage);
+                Assert.Null(shutdown.PartialState);
+                Assert.Empty(service.SessionManager.ActiveSessionIds);
+                Assert.Equal(1, batch.DisposeCalls);
+                Assert.True(worker.Registration.ReleaseConfirmed);
+            }
+            finally
+            {
+                tracked.TryRemove(registration.PipeName, out _);
+                GetPrivateField<DaemonHost>(host, "_server").RequestShutdown();
+                await run.WaitAsync(TimeSpan.FromSeconds(3));
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

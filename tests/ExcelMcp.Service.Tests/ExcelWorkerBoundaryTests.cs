@@ -757,7 +757,7 @@ public sealed class ExcelWorkerBoundaryTests
         public Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId,
             CancellationToken cancellationToken = default) => Task.FromResult<ServiceResponse?>(null);
 
-        public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default) =>
+        public Task<WorkerRelease> ReleaseAsync(string generation, bool onlyIfEmpty, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 }

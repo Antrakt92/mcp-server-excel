@@ -116,9 +116,9 @@ internal sealed class ExcelWorkerClient
         return execution with { Snapshot = RecordSnapshot(execution.Snapshot, observe) };
     }
 
-    internal async Task<ServiceResponse> ReleaseAsync(CancellationToken cancellationToken)
+    internal async Task<ServiceResponse> ReleaseAsync(CancellationToken cancellationToken, bool onlyIfEmpty = false)
     {
-        var released = await CallAsync(rpc => rpc.ReleaseAsync(_generation, cancellationToken),
+        var released = await CallAsync(rpc => rpc.ReleaseAsync(_generation, onlyIfEmpty, cancellationToken),
             cancellationToken, TimeSpan.FromSeconds(5));
         RecordSnapshot(released.Snapshot);
         return released.Response;

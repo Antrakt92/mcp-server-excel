@@ -191,7 +191,7 @@ public sealed class ServiceBridgeControllerCancellationTests
 
         private static ServiceResponse Saved() => new() { Success = true, Result = """{"saved":true}""" };
 
-        public Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default) =>
+        public Task<WorkerRelease> ReleaseAsync(string generation, bool onlyIfEmpty, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 }

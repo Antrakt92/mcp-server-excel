@@ -136,7 +136,10 @@ internal sealed record WorkerClaim(WorkerProcess Controller, string Generation, 
 internal sealed record WorkerCall(string OperationId, string Generation, ServiceRequest Request);
 internal sealed record WorkerExecution(ServiceResponse Response, bool Accepted, WorkerSnapshot Snapshot,
     bool HasLateNativeCompletion = false, ExcelOperationBlocker? PriorSaveBlocker = null);
-internal sealed record WorkerRelease(ServiceResponse Response, WorkerSnapshot Snapshot);
+internal sealed record WorkerRelease(ServiceResponse Response, WorkerSnapshot Snapshot)
+{
+    internal const string RetainedCategory = "WorkerRetained";
+}
 internal sealed record WorkerStatusFailure(string Message, WorkerStatusDiagnostic? Diagnostic = null);
 internal sealed record WorkerStatusDiagnostic(string Stage, string ExceptionType,
     [property: JsonPropertyName("hresult")] string? HResult)
@@ -199,7 +202,7 @@ internal partial interface IExcelWorkerRpc
     Task<WorkerSnapshot> SnapshotAsync(string generation, CancellationToken cancellationToken = default);
     Task<WorkerExecution> ExecuteAsync(WorkerCall call, CancellationToken cancellationToken = default);
     Task<ServiceResponse?> ObserveLateCompletionAsync(string generation, string operationId, CancellationToken cancellationToken = default);
-    Task<WorkerRelease> ReleaseAsync(string generation, CancellationToken cancellationToken = default);
+    Task<WorkerRelease> ReleaseAsync(string generation, bool onlyIfEmpty, CancellationToken cancellationToken = default);
 }
 
 internal static class WorkerPipeIdentity

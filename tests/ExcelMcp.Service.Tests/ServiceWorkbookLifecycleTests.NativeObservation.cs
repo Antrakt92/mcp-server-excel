@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text.Json;
 using Sbroenne.ExcelMcp.ComInterop.Session;
 using Xunit;
 
@@ -134,7 +136,29 @@ public sealed partial class ServiceWorkbookLifecycleTests
                     SessionManager.ExcelProcessObservationRecorded -= RejectObservation;
                 }
 
-                await CloseSessionAsync(service, sessionId, save: false);
+                if (rejectFirstRecord)
+                {
+                    var recovered = await service.ProcessAsync(new ServiceRequest
+                    {
+                        Command = "session.close",
+                        SessionId = sessionId,
+                        Args = """{"save":false}"""
+                    });
+                    Assert.False(recovered.Success);
+                    Assert.Equal("SessionUnavailable", recovered.ErrorCategory);
+                    using var state = JsonDocument.Parse(recovered.PartialState!);
+                    Assert.Equal("unknown", state.RootElement.GetProperty("outcome").GetString());
+                    Assert.True(state.RootElement.GetProperty("reconciledFailedClose").GetBoolean());
+                    var native = state.RootElement.GetProperty("diagnostics").GetProperty("nativeProcess");
+                    Assert.Equal(identity.ProcessId, native.GetProperty("processId").GetInt32());
+                    Assert.Equal(identity.StartedAtUtcFileTime.ToString(CultureInfo.InvariantCulture),
+                        native.GetProperty("startedAtUtcFileTime").GetString());
+                    Assert.Equal(0u, native.GetProperty("exitCode").GetUInt32());
+                }
+                else
+                {
+                    await CloseSessionAsync(service, sessionId, save: false);
+                }
                 sessions.TryRemove(sessionId, out _);
 
                 Assert.NotEmpty(observed);

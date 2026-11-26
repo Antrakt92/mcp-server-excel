@@ -149,7 +149,7 @@ public static partial class ExcelBatchTool
                 var filePath = entry.Args is { ValueKind: JsonValueKind.Object } args &&
                     args.TryGetProperty("filePath", out var path) && path.ValueKind == JsonValueKind.String
                     ? path.GetString() : null;
-                var item = operation is { Tool: "file" or "file_read" } fileOperation
+                var item = operation is { Tool: "file" or "file_read", Action: not "process-diagnostics" } fileOperation
                     ? ExcelFileTool.ConvertSessionResult(outcome, fileOperation.Action, filePath)
                     : outcome.ToToolObject();
                 item["index"] = index;
