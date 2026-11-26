@@ -355,6 +355,9 @@ internal sealed partial class ExcelController : IDisposable
             else if (!ExcelMcpService.IsSessionlessCommand(request.Command) && request.SessionId is { } lostId
                 && _closedSessions.TryGetValue(lostId, out var lostEnd) && lostEnd.Reason is SessionEnd.WorkerExited or SessionEnd.ExcelExited)
                 return LostSessionResponse(request, lostId, lostEnd);
+            else if (request.Command == "session.close" && !string.IsNullOrWhiteSpace(request.SessionId))
+                return ExcelWorkerHost.Failure(request, "SessionNotFound",
+                    "Session not found. This controller has no active session or retained close result for that ID. No close or save was started.");
             else
             {
                 lock (_utilityLock)
@@ -449,7 +452,8 @@ internal sealed partial class ExcelController : IDisposable
             completedResponse = response;
             priorSaveBlocker = execution.PriorSaveBlocker;
             if (closeTarget is not null)
-                RecordCloseAttempt(closeTarget, response, priorCloseStatus, priorSaveBlocker, accepted: execution.Accepted);
+                RecordCloseAttempt(closeTarget, response, priorCloseStatus, priorSaveBlocker,
+                    acceptedWorker: execution.Accepted ? worker : null);
             if (!execution.Accepted)
                 foreach (var path in reservedPaths)
                     _paths.TryRemove(new KeyValuePair<string, PathReservation>(path, reservation));
@@ -561,7 +565,7 @@ internal sealed partial class ExcelController : IDisposable
     }
 
     private void RecordCloseAttempt(CloseHistory.Target target, ServiceResponse response, JsonObject? priorStatus,
-        ExcelOperationBlocker? priorSaveBlocker = null, bool accepted = false)
+        ExcelOperationBlocker? priorSaveBlocker = null, ExcelWorkerClient? acceptedWorker = null)
     {
         lock (_shutdownLock)
         {
@@ -569,13 +573,15 @@ internal sealed partial class ExcelController : IDisposable
             var owned = ended.Owned && ended.Excel == target.Excel
                 || _sessions.TryGetValue(target.SessionId, out var worker) && WasOwnedSession(worker, target.SessionId, target.Excel);
             var confirmation = _closeHistory.Record(target, response, priorStatus, priorSaveBlocker: priorSaveBlocker, owned: owned);
-            if (accepted && confirmation.CloseConfirmed)
+            TrimSettledCloses();
+            if (acceptedWorker is not null && confirmation.CloseConfirmed)
             {
                 // A completed reply can confirm the close independently of worker status publication.
                 var confirmedEnd = new EndedSession(confirmation.SaveConfirmed ? SessionEnd.SavedAndClosed : SessionEnd.Closed);
                 _closedSessions.AddOrUpdate(target.SessionId, confirmedEnd, (_, previous) =>
                     previous.Reason == SessionEnd.SavedAndClosed ? previous : confirmedEnd);
                 _unconfirmedCloseAttempts.Remove(target.SessionId);
+                RetainConfirmedClose(acceptedWorker, target.SessionId);
                 return;
             }
 
@@ -630,7 +636,7 @@ internal sealed partial class ExcelController : IDisposable
                 : "The workbook's Excel helper exited. Its last outcome could not be confirmed; no work was repeated."),
             sent: true, nativeExitObserved: excelExited);
         if (request.Command == "session.close")
-            _closeHistory.Record(new(sessionId, session.Excel), response, onlyIfMissing: true, owned: session.Owned);
+            RecordLostSessionCloseAttempt(sessionId, session.Excel, response);
         return exit is null ? response : response.WithPartialState(
             ExcelMcpService.MergeNativeProcessDiagnostics(response.PartialState, exit)!);
     }
@@ -657,12 +663,17 @@ internal sealed partial class ExcelController : IDisposable
     private static HashSet<string> RecordedPaths(WorkerSnapshot snapshot, string sessionId) =>
         snapshot.OwnershipKeys[sessionId].ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    private void RecordPath(ExcelWorkerClient worker, string path, string sessionId)
+    private void RecordPath(ExcelWorkerClient worker, string path, string sessionId) =>
+        RecordSnapshotPath(worker, path, sessionId, null);
+
+    private void RecordSnapshotPath(ExcelWorkerClient worker, string path, string sessionId,
+        WorkbookPathReservations<PathReservation>.PublicationSweep? sweep)
     {
         BeforeRecordPathPublicationHookForTests?.Invoke(sessionId, path);
         var recorded = new PathReservation("recorded", sessionId);
-        if (!_paths.TryPublish(path, recorded,
-            existing => existing.SessionId is null && existing.Token == worker.Registration.PipeName))
+        bool IsProvisional(PathReservation existing) =>
+            existing.SessionId is null && existing.Token == worker.Registration.PipeName;
+        if (!(sweep?.TryPublish(path, recorded, IsProvisional) ?? _paths.TryPublish(path, recorded, IsProvisional)))
             throw new InvalidOperationException("The workbook's physical path is reserved by another worker or session.");
     }
 
@@ -738,6 +749,7 @@ internal sealed partial class ExcelController : IDisposable
                 _paths.TryRemove(path);
             foreach (var selection in _selections.Where(entry => entry.Value.Worker == worker))
                 _selections.TryRemove(selection);
+            SettleCloseReceipts(worker, settledSnapshot: null);
         }
         ClearUtilityWorker(worker);
     }
@@ -749,9 +761,13 @@ internal sealed partial class ExcelController : IDisposable
                 _utility = null;
     }
 
+    private Task<WorkerSnapshot?> RefreshWorkerAsync(ExcelWorkerClient worker, CancellationToken cancellationToken) =>
+        RefreshWorkerSnapshotAsync(worker, cancellationToken, null);
+
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "Recorded-status failures are exposed on session status and logged. They never replace a completed operation result or manufacture an empty healthy session list.")]
-    private async Task<WorkerSnapshot?> RefreshWorkerAsync(ExcelWorkerClient worker, CancellationToken cancellationToken)
+    private async Task<WorkerSnapshot?> RefreshWorkerSnapshotAsync(ExcelWorkerClient worker, CancellationToken cancellationToken,
+        WorkbookPathReservations<PathReservation>.PublicationSweep? sweep)
     {
         try
         {
@@ -764,7 +780,7 @@ internal sealed partial class ExcelController : IDisposable
                     await beforeRead(worker);
                 await worker.ReadSnapshotAsync(cancellationToken, _operationReceipts.ObserveWorkerEvidence);
             }
-            return ApplyWorkerSnapshot(worker);
+            return ApplyWorkerSnapshotCore(worker, sweep);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -775,7 +791,10 @@ internal sealed partial class ExcelController : IDisposable
         }
     }
 
-    private WorkerSnapshot? ApplyWorkerSnapshot(ExcelWorkerClient worker)
+    private WorkerSnapshot? ApplyWorkerSnapshot(ExcelWorkerClient worker) => ApplyWorkerSnapshotCore(worker, null);
+
+    private WorkerSnapshot? ApplyWorkerSnapshotCore(ExcelWorkerClient worker,
+        WorkbookPathReservations<PathReservation>.PublicationSweep? sweep)
     {
         lock (_shutdownLock)
         {
@@ -790,7 +809,7 @@ internal sealed partial class ExcelController : IDisposable
             foreach (var session in sessions)
                 if (!string.IsNullOrWhiteSpace(session.FilePath))
                     foreach (var ownedPath in RecordedPaths(snapshot, session.SessionId))
-                        RecordPath(worker, ownedPath, session.SessionId);
+                        RecordSnapshotPath(worker, ownedPath, session.SessionId, sweep);
 
             foreach (var session in sessions)
             {
@@ -835,6 +854,7 @@ internal sealed partial class ExcelController : IDisposable
                         _paths.TryRemove(path);
                     BeforeSettledSessionRemovalForTests?.Invoke(removed.Key);
                     _sessions.TryRemove(removed);
+                    RetainSettledClose(removed.Key);
                 }
             }
             // Once a settled row disappears, a targeted retry must see its
@@ -843,6 +863,8 @@ internal sealed partial class ExcelController : IDisposable
             if (_newWorkers.ContainsKey(snapshot.Registration.PipeName))
                 foreach (var session in sessions)
                     _sessions[session.SessionId] = worker;
+            if (settled)
+                SettleCloseReceipts(worker, snapshot);
             return snapshot;
         }
     }
@@ -1298,11 +1320,13 @@ internal sealed partial class ExcelController : IDisposable
             {
                 _sessions.TryRemove(session, out _);
                 _unconfirmedCloseAttempts.Remove(session);
+                RetainSettledClose(session);
             }
             _workers.TryRemove(registration.PipeName, out _);
             _newWorkers.TryRemove(registration.PipeName, out _);
             _abandonedWorkers.TryRemove(registration.PipeName, out _);
             _publishedSnapshots.TryRemove(registration.PipeName, out _);
+            SettleCloseReceipts(worker, settledSnapshot: null);
             AfterExitedWorkerSnapshotRemovalForTests?.Invoke(worker);
         }
         ClearUtilityWorker(worker);
@@ -1363,7 +1387,8 @@ internal sealed partial class ExcelController : IDisposable
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), _stop.Token);
-                await Task.WhenAll(_workers.Values.Select(PollWorkerAsync));
+                var sweep = _paths.BeginPublicationSweep();
+                await Task.WhenAll(_workers.Values.Select(worker => PollWorkerAsync(worker, sweep)));
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested)
             {
@@ -1374,11 +1399,11 @@ internal sealed partial class ExcelController : IDisposable
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("ErrorHandling", "EXL002",
         Justification = "An unconfirmed worker process or failed acknowledgement remains for the next poll. Its status error does not stop other workers.")]
-    private async Task PollWorkerAsync(ExcelWorkerClient worker)
+    private async Task PollWorkerAsync(ExcelWorkerClient worker, WorkbookPathReservations<PathReservation>.PublicationSweep sweep)
     {
         try
         {
-            var applied = await RefreshWorkerAsync(worker, _stop.Token);
+            var applied = await RefreshWorkerSnapshotAsync(worker, _stop.Token, sweep);
             if (applied is { Registration.ReleaseConfirmed: true })
             {
                 try

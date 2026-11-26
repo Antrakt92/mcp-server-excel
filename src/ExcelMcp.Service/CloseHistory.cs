@@ -70,6 +70,12 @@ internal sealed class CloseHistory
             return _entries.Any(entry => entry.Workbook == target && !entry.CloseConfirmed && entry.LastFailure is not null);
     }
 
+    internal HashSet<string> RetainedSessionIds()
+    {
+        lock (_gate)
+            return _entries.Select(entry => entry.Workbook.SessionId).ToHashSet(StringComparer.Ordinal);
+    }
+
     internal ExcelProcessIdentity? FindUniqueOwnedProcess(string sessionId)
     {
         lock (_gate)
