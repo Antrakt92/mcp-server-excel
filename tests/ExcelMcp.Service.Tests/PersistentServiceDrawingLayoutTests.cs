@@ -374,6 +374,40 @@ public sealed class PersistentServiceDrawingLayoutTests(PersistentServiceWorkboo
         Assert.Equal(before, _fixture.Send("drawing.list-objects", new { sheetName = sheet }).Result);
     }
 
+    [Fact]
+    public async Task ProtectedGroup_EmptyChildTextDoesNotBlockGeometryRead()
+    {
+        var sheet = CreateObjects();
+        _fixture.Send("drawing.group-objects", new
+        {
+            sheetName = sheet,
+            objectNames = new List<string> { "First", "Second" },
+            groupName = "Together"
+        });
+        var options = new { sheetName = sheet, objectName = "Together" };
+        var before = _fixture.Send("drawing.get-object", options).Result;
+        _fixture.Send("worksheetstyle.set-protection", new { sheetName = sheet, isProtected = true });
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            Assert.Equal(before, _fixture.Send("drawing.get-object", options).Result);
+            var response = await _fixture.SendForFailureAsync("drawing.update-object", new
+            {
+                sheetName = sheet,
+                objectName = "Together",
+                left = 47,
+                width = 90
+            });
+            Assert.False(response.Success);
+            Assert.Equal(before, _fixture.Send("drawing.get-object", options).Result);
+        });
+        var cleanup = Record.Exception(() =>
+            _fixture.Send("worksheetstyle.set-protection", new { sheetName = sheet, isProtected = false }));
+        if (cleanup is not null)
+            failure = PersistentServiceCleanupFailures.Combine(failure, cleanup);
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
     private string CreateObjects()
     {
         var sheet = _fixture.CreateTestSheet(_fixture.BatchToken);

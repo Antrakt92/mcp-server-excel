@@ -26,6 +26,7 @@ public sealed partial class DrawingCommands
                     FilePath = batch.WorkbookPath
                 };
 
+                var drawingObjectsProtected = sheet.ProtectDrawingObjects;
                 for (var index = 1; index <= shapes.Count; index++)
                 {
                     Excel.Shape? shape = null;
@@ -33,7 +34,7 @@ public sealed partial class DrawingCommands
                     {
                         shape = shapes.Item(index);
                         ct.ThrowIfCancellationRequested();
-                        result.DrawingObjects.Add(ReadDrawingObject(shape, sheetName, ct));
+                        result.DrawingObjects.Add(ReadDrawingObject(shape, sheetName, ct, drawingObjectsProtected));
                     }
                     finally
                     {
@@ -65,7 +66,7 @@ public sealed partial class DrawingCommands
                 shapes = sheet.Shapes;
                 shape = FindShape(shapes, objectName, ct)
                     ?? throw new InvalidOperationException($"Drawing object '{objectName}' not found on sheet '{sheetName}'.");
-                return CreateDrawingObjectResult(batch.WorkbookPath, ReadDrawingObject(shape, sheetName, ct));
+                return CreateDrawingObjectResult(batch.WorkbookPath, ReadDrawingObject(shape, sheetName, ct, sheet.ProtectDrawingObjects));
             }
             finally
             {
@@ -390,6 +391,7 @@ public sealed partial class DrawingCommands
                     ValidateFormControlBindings((DrawingFormControlType)shape.FormControlType, linkedCell, inputRange);
                 }
 
+                var drawingObjectsProtected = sheet.ProtectDrawingObjects;
                 if (newName != null) shape.Name = newName;
                 if (left.HasValue) shape.Left = Convert.ToSingle(left.Value);
                 if (top.HasValue) shape.Top = Convert.ToSingle(top.Value);
@@ -410,7 +412,7 @@ public sealed partial class DrawingCommands
                     if (inputRange != null) controlFormat.ListFillRange = inputRange;
                 }
 
-                return CreateDrawingObjectResult(batch.WorkbookPath, ReadDrawingObject(shape, sheetName));
+                return CreateDrawingObjectResult(batch.WorkbookPath, ReadDrawingObject(shape, sheetName, drawingObjectsProtected: drawingObjectsProtected));
             }
             finally
             {
@@ -502,7 +504,8 @@ public sealed partial class DrawingCommands
         return null;
     }
 
-    private static DrawingObjectInfo ReadDrawingObject(Excel.Shape shape, string sheetName, CancellationToken ct = default)
+    private static DrawingObjectInfo ReadDrawingObject(Excel.Shape shape, string sheetName, CancellationToken ct = default,
+        bool drawingObjectsProtected = false)
     {
         var kind = ReadKind(shape);
         var result = new DrawingObjectInfo
@@ -553,7 +556,7 @@ public sealed partial class DrawingCommands
                     try
                     {
                         child = members.Item(i);
-                        result.Children.Add(ReadDrawingObject(child, sheetName, ct));
+                        result.Children.Add(ReadDrawingObject(child, sheetName, ct, drawingObjectsProtected));
                     }
                     finally
                     {
@@ -571,7 +574,8 @@ public sealed partial class DrawingCommands
                 result.FormControlType is DrawingFormControlType.Button or DrawingFormControlType.CheckBox
                     or DrawingFormControlType.GroupBox or DrawingFormControlType.Label or DrawingFormControlType.OptionButton))
         {
-            ReadTextProperties(shape, result);
+            if (!(drawingObjectsProtected && kind == DrawingObjectKind.AutoShape && HasNoShapeText(shape)))
+                ReadTextProperties(shape, result);
         }
         return result;
     }
@@ -770,6 +774,26 @@ public sealed partial class DrawingCommands
             ComUtilities.Release(ref font);
             ComUtilities.Release(ref characters);
             ComUtilities.Release(ref textFrame);
+        }
+    }
+
+    private static bool HasNoShapeText(Excel.Shape shape)
+    {
+        Excel.TextFrame2? frame = null;
+        try
+        {
+            frame = shape.TextFrame2;
+            // Excel can reject the legacy Characters getter for empty protected
+            // AutoShapes. Confirm the empty state with the independent native flag.
+            return frame.HasText == Office.MsoTriState.msoFalse;
+        }
+        catch (COMException ex) when (ComErrors.IsMemberUnavailable(ex))
+        {
+            return false;
+        }
+        finally
+        {
+            ComUtilities.Release(ref frame);
         }
     }
 
