@@ -340,12 +340,23 @@ public sealed partial class DrawingCommands
         string? linkedCell = null,
         string? inputRange = null)
     {
-        if (width.HasValue && width <= 0)
+        ValidateUpdateNumber(left, nameof(left));
+        ValidateUpdateNumber(top, nameof(top));
+        ValidateUpdateNumber(width, nameof(width));
+        ValidateUpdateNumber(height, nameof(height));
+        ValidateUpdateNumber(rotation, nameof(rotation));
+        ValidateUpdateNumber(lineWeight, nameof(lineWeight));
+        if (fontSize is { } size && !double.IsFinite(size))
+        {
+            throw new ArgumentOutOfRangeException(nameof(fontSize), "Font size must be finite.");
+        }
+
+        if (width.HasValue && (float)width.Value <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(width), "Width must be greater than zero.");
         }
 
-        if (height.HasValue && height <= 0)
+        if (height.HasValue && (float)height.Value <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(height), "Height must be greater than zero.");
         }
@@ -355,6 +366,7 @@ public sealed partial class DrawingCommands
             throw new ArgumentOutOfRangeException(nameof(placement), "Placement must be 1, 2, or 3.");
         }
 
+        ValidateLineWeight(lineWeight);
         ValidateColors(fontColor, fillColor, lineColor);
         return batch.Execute((ctx, ct) =>
         {
@@ -408,6 +420,14 @@ public sealed partial class DrawingCommands
                 ComUtilities.Release(ref sheet);
             }
         });
+    }
+
+    private static void ValidateUpdateNumber(double? value, string parameterName)
+    {
+        if (value is { } number && !float.IsFinite((float)number))
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Value must be representable as a finite Excel drawing number.");
+        }
     }
 
     /// <inheritdoc />
